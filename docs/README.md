@@ -144,6 +144,8 @@ and other documents.
 | [`../CLAUDE.md`](../CLAUDE.md) | Claude Code's instructions file; it imports `AGENTS.md` into every session |
 | [`../.claude/skills/webui-design/SKILL.md`](../.claude/skills/webui-design/SKILL.md) | The WebUI design rules and the checks a UI change picks by its risk (2026-10-25; revised to the reviewer's notes); `AGENTS.md` comes first and the skill adds no scope. A Claude Code project skill, so it sits where Claude Code loads skills |
 | [`../.claude/skills/webui-design/references/sources.md`](../.claude/skills/webui-design/references/sources.md) | The sources behind those rules, by research pass |
+| [`../.claude/skills/webui-design/references/design-brief.md`](../.claude/skills/webui-design/references/design-brief.md) | The design brief: the shared taste behind those rules, written for the 2026-11-22 UI sweep and kept for every later change and its review; the skill wins on any conflict |
+| [`../.claude/skills/webui-design/references/text-brief.md`](../.claude/skills/webui-design/references/text-brief.md) | The text layout brief: how WebUI text is arranged, help bubbles included, written for the same sweep; it governs how text is arranged, not what it says, and the skill wins on any conflict |
 | [`../data/external/README.md`](../data/external/README.md) | How to obtain and place external data sources — belongs with the data |
 | [`../configs/deployment/README.md`](../configs/deployment/README.md) | Deployment config conventions |
 | [`../models/pretrained/README.md`](../models/pretrained/README.md) | What belongs in the pretrained-model directory |

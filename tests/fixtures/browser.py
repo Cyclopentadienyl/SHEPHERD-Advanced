@@ -79,11 +79,13 @@ the layout windows (`layout_stops`, `LAYOUT_SIZES`); a stop measures once the
 page's requests have been answered for ten frames in a row (a page's opening
 chain is idle for an instant between two of its events). **The display
 floor** (`floor_size`, `effective_size`, `at_floor`; the owner's decisions of
-2026-11-23): the floor of the arrangement a window takes, the display floor
-side by side and `style.STACK_FLOOR_WIDTH` no wider than tall; the walk's
-windows are at or above it but one, which is drawn as at the floor
-(``check``'s ``floor``: the layout pass's marks, the frame, the document's
-scroll), and ``in-view`` and ``sideways-scroll`` hold at or above it.
+2026-11-23 and R-ARR, D11 of 2026-11-24): the floor of the arrangement a
+window takes, the display floor where a window wider than tall tries side by
+side (at least `style.FLOOR_WIDTH` wide) and `style.STACK_FLOOR_WIDTH` wide
+with no height floor where it stacks; the walk's windows are at or above it
+but one, which is drawn as at the floor (``check``'s ``floor``: the layout
+pass's marks, the frame, the document's scroll), and ``in-view`` and
+``sideways-scroll`` hold at or above it.
 
 Module: tests/fixtures/browser.py
 """
@@ -119,7 +121,7 @@ def node_with_playwright() -> tuple[str, dict[str, str]] | None:
 #: ``page.addInitScript`` before the page loads.
 QUEUE_JS = r"""
 (() => {
-  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0, direct: 0};
+  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0, direct: 0, directs: [], took: {}};
   /* The listener `fnIndex`'s joins, and how many of them were answered. */
   q.count = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex).length;
   q.answered = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex && j.event_id !== null
@@ -135,8 +137,18 @@ QUEUE_JS = r"""
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);
     const sent = original.apply(this, arguments);
     if (url.includes('/run/predict')) {
+      /* Its listener kept while unanswered (`directs`), for a walk that names what it waited on. */
+      let fn = null;
+      try { fn = JSON.parse((init && init.body) || '{}').fn_index; } catch (e) { fn = null; }
+      const entry = {fn_index: fn, t0: performance.now()};
       q.direct += 1;
-      sent.finally(() => { q.direct -= 1; }).catch(() => {});
+      q.directs.push(entry);
+      sent.finally(() => {
+        q.direct -= 1; q.directs.splice(q.directs.indexOf(entry), 1);
+        /* How long its last answers took (ms), for the same report. */
+        (q.took[fn] = q.took[fn] || []).push(Math.round(performance.now() - entry.t0));
+        if (q.took[fn].length > 5) { q.took[fn].shift(); }
+      }).catch(() => {});
       return sent;
     }
     if (url.includes('/queue/join')) {
@@ -379,6 +391,11 @@ LOOK_JS = r"""
      - notices: each notice key (`data-notice`, `data-notice-also`) and how often it is drawn;
      - tabs: the research tabs' lines, their order, and each separator drawn at a line's start,
        and anything in the tablist that is not a tab. */
+  // D8's conditions in its own short words (`chips.D8_SHORT`), and words that point at a reason
+  // drawn elsewhere (R-WHY: never "see above", "see below", "the reason is with" or a
+  // parenthesised "(see <place>)").
+  const D8_WORDS = __D8_WORDS__;
+  const POINTER = /\bsee (above|below)\b|\bthe reason is with\b|\(see [^)]+\)/i;
   const INTERACTIVE = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
     + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
   const SKIP = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
@@ -480,7 +497,8 @@ LOOK_JS = r"""
       : shownNow.panels.filter((p) => !p.matches('[data-testid="status-tracker"]'));
     const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
       split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null, inview: [], cue: [],
-      wrapEnd: [], disabled: [], token: [], sepEnd: [], chain: [], rowTop: [], rowHeight: [], sideways: [] };
+      wrapEnd: [], disabled: [], token: [], sepEnd: [], chain: [], rowTop: [], rowCtl: [], rowHeight: [],
+      sideways: [], edgeHead: [], reasons: {}, pointer: [], dimmed: [] };
     const panelOf = (e) => panels.findIndex((p) => p.contains(e));
     /* A text's region for `beside`: its panel, else the outermost bar it is in (Training's run
        bar is no panel), else none (-1 on a page with no panels). */
@@ -654,6 +672,29 @@ LOOK_JS = r"""
         if (key) { out.notices[key] = (out.notices[key] || 0) + 1; }
       }
     }
+    // reasons (R-WHY's one source per cause, the owner's D6 of 2026-11-24): each cause's whole
+    // reason drawn on this screen, how often. A notice by its key (as ``notices``); D8's refusal
+    // by the header chip that carries it (``data-reason="d8"``) and every block of the page that
+    // says the chip's condition in D8's own short words (`chips.D8_SHORT`).
+    Object.assign(out.reasons, out.notices);
+    const d8 = [...document.querySelectorAll('[data-reason="d8"]')].find((c) => visible(c));
+    const d8words = d8 ? D8_WORDS.find((w) => (d8.textContent || '').toLowerCase().includes(w.toLowerCase())) : null;
+    // The innermost blocks of the page whose words hold `re` (a block holding another that does
+    // is not counted again).
+    const saying = (test) => {
+      const found = [...new Set(texts.map((x) => blockOf(x.el)))].filter((blk) => blk && scope.contains(blk)
+        && !blk.closest('[data-reason]') && test(blk.innerText || ''));
+      return found.filter((blk) => !found.some((o) => o !== blk && blk.contains(o)));
+    };
+    if (d8words) {
+      out.reasons.d8 = 1 + saying((t) => t.toLowerCase().includes(d8words.toLowerCase())).length;
+    }
+    // pointer: words that point at a reason elsewhere ("see above", "see below", "the reason is
+    // with", "(see Data)"): the place pointed at may have scrolled away or be in another region
+    // (R-WHY).
+    for (const blk of saying((t) => POINTER.test(t))) {
+      out.pointer.push(`${named(blk)} "${clip((blk.innerText.match(POINTER) || [''])[0], 30)}" in "${clip(blk.innerText, 60)}"`);
+    }
     // the research tabs
     const list = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
     if (list && drawn(list)) {
@@ -686,9 +727,16 @@ LOOK_JS = r"""
        the document scrolls down to what is under the window, never sideways;
      - cue: a scroll region (the page's own tab item included, never the document) whose drawn
        content runs past its edge, below it with no scroll cue (the shared R-73 cue,
-       ``shep-scroll-cue``: a mask drawn while more is below), sideways with no sideways cue (a
-       mask, or the drawn cue just before it, Compare's ``shep-rs-cue``); what runs past a
-       nested region is that region's own;
+       ``shep-scroll-cue``: a mask drawn while more is below, or R-CUE's edge cue,
+       ``data-shep-more-edge``, where the edge falls in a gap), or with a fade that lies over no
+       line of text it fades out (a gap, a box's border, a graphic's blank, a line whose foot
+       lies in the fade's upper half, left whole, or one cut by the edge with less than half its
+       height above it, a sliver: R-CUE, the owner's D4 of 2026-11-24), sideways
+       with no sideways cue (a mask, or the drawn cue just before it,
+       Compare's ``shep-rs-cue``); what runs past a nested region is that region's own;
+     - edgeHead (R-CUE): a scroll region whose last line in view (half of it above the edge) is a
+       heading or a field's label while all of its controls lie under the edge (a control seen by
+       its value line where it holds one, else by its box, half of it above the edge);
      - clipped (text): a text line cut by an ancestor that hides its overflow in that axis (no
        scroll region of that axis between them), a cut to an ellipsis included unless the whole
        words are its ``title``;
@@ -708,6 +756,9 @@ LOOK_JS = r"""
      - rowTop: two labelled fields side by side in one row of fields (their nearest shared box
        a row; each the one labelled field of its branch) whose labels do not share a top line
        (a quarter of the label's height apart or more);
+     - rowCtl (R-ALIGN): the same pairs, each label on one line, whose first controls' tops are
+       more than 2 px apart (a note between one field's label and its control); bottoms are never
+       compared, so a note after a control or a taller control passes;
      - rowHeight: a table row inside a sideways scroll box whose height is set by a cell out of
        the box's view (its words over one and a half times as tall as every cell in view, the
        row at least that tall);
@@ -744,6 +795,23 @@ LOOK_JS = r"""
       quiet.set(e, found);
       return found;
     };
+    // The lines of text a page draws (each line box of its words, and a field's value or
+    // placeholder line: its content box), with the element each belongs to (R-CUE).
+    const valueLine = (c) => {
+      if (!c.matches('input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), textarea, select')
+          || !(c.value || c.placeholder)) { return null; }
+      const r = c.getBoundingClientRect(), s = getComputedStyle(c);
+      const above = parseFloat(s.paddingTop) + parseFloat(s.borderTopWidth), under = parseFloat(s.paddingBottom) + parseFloat(s.borderBottomWidth);
+      return { left: r.left, right: r.right, width: r.width, top: r.top + above, bottom: r.bottom - under, height: r.height - above - under };
+    };
+    const lines = [...texts.flatMap((x) => x.rects.map((r) => ({ el: x.el, r, t: x.t }))),
+                   ...ctl.map((c) => ({ el: c, r: valueLine(c), t: say(c) })).filter((it) => it.r)]
+      .filter((it) => it.r.width > 0.5 && it.r.height > 0.5 && !unseen(it.el));
+    // The edge cue the shell draws where a region's edge falls in a gap (R-CUE): its mark and the
+    // style sheet's inset shadow, drawn.
+    const edgeCue = (e) => e.hasAttribute('data-shep-more-edge') && /inset/.test(getComputedStyle(e).boxShadow);
+    // A heading or a field's label (what a region must not end at alone, R-CUE).
+    const HEADS = 'h1, h2, h3, h4, h5, h6, [role=heading], legend, [data-testid="block-info"]';
     // What a page draws, each line of text and each control, with the element it belongs to.
     const items = [...texts.flatMap((x) => x.rects.map((r) => ({ el: x.el, r, t: x.t }))),
                    ...ctl.map((c) => ({ el: c, r: c.getBoundingClientRect(), t: say(c) }))]
@@ -816,29 +884,70 @@ LOOK_JS = r"""
       const box = pad(g), mine = items.filter((it) => g.contains(it.el));
       const below = sy ? mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + past(it.r))
         .sort((a, b) => a.r.top - b.r.top) : [];
-      if (sy && !masked(g)) {
+      if (sy && below.length && edgeCue(g)) {
+        // R-CUE's gap case: the region's foot draws the one content-independent edge cue.
+      } else if (sy && !masked(g)) {
         if (below.length) {
           out.cue.push(`${named(g)} holds ${Math.round(Math.max(...below.map((it) => it.r.bottom)) - box.bottom)} px `
             + `of content under its edge with no scroll cue (first: "${clip(below[0].t, 30)}")`);
         }
       } else if (below.length) {
-        // A cue is seen only where it fades something drawn: the fade (its length read from the
-        // region's own mask) over a gap between fields reads as nothing, the next field under the
-        // edge unseen (the sweep's L7 check, C1: Diagnosis' fields at 1550 x 830 faded the 22 px
-        // gap under Patient ID, Options and Top-K hidden under it). A line or control of the
-        // region drawn in the fade by a quarter of its own height or more shows it, and so does a
-        // drawn graphic (a chart's plot: an svg, a canvas or an image) by a quarter of the fade.
+        // A cue is seen only where it fades a text line (R-CUE, the owner's D4 of 2026-11-24; the
+        // sweep's L7 check, C1, before it): the fade (its length read from the region's own mask)
+        // over a gap between fields, a box's lower border or a graphic's blank reads as nothing,
+        // the next field under the edge unseen. A line of words or a field's value line drawn in
+        // the fade by a quarter of its own height or more, and shown above the edge by half of it
+        // (its words read, not a sliver of their tops), shows it, where the fade draws it out:
+        // its foot in the fade's lower half or under the edge (LOOK5 of the L8 sweep, L8-2 and
+        // L8-4: a 32 px fade whose top 10 px met a title 22 px over the edge left the title whole
+        // and faded only blank, Settings' torch.compile and Test's last rows hidden under it; the
+        // L8 close's final check, F3: at first use at 1366 x 768 Data locations' 28 px fade lay
+        // over the top 6 px of "Create suggested folder", the region read as ended).
         const m = /calc\(100% - ([\d.]+)px\)/.exec(String(getComputedStyle(g).maskImage || getComputedStyle(g).webkitMaskImage));
         const fade = m ? parseFloat(m[1]) : 0, top = box.bottom - fade;
         const into = (r) => Math.min(r.bottom, box.bottom) - Math.max(r.top, top);
-        const seen = mine.some((it) => scroller(it.el, 'y') === g && into(it.r) >= past(it.r))
-          || [...g.querySelectorAll('svg, canvas, img')].some((x) => drawn(x) && visible(x)
-            && x.getBoundingClientRect().width > 1 && scroller(x, 'y') === g
-            && into(x.getBoundingClientRect()) >= fade / 4);
+        const shown = (r) => r.top <= box.bottom - Math.max(1, r.height / 2);
+        const inFade = lines.filter((it) => g.contains(it.el) && scroller(it.el, 'y') === g && into(it.r) >= past(it.r));
+        const seen = inFade.some((it) => shown(it.r) && it.r.bottom >= box.bottom - fade / 2);
         if (fade > 0 && !seen) {
-          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over nothing drawn: what lies under `
-            + `its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen (first: `
-            + `"${clip(below[0].t, 30)}")`);
+          const last = inFade.reduce((a, b) => (!a || b.r.bottom > a.r.bottom ? b : a), null);
+          const why = !last ? '' : shown(last.r)
+            ? ` it fades out (its last line ends ${Math.round(box.bottom - last.r.bottom)} px over the edge, in the `
+              + `fade's upper half)`
+            : ` it fades out (its last line, "${clip(last.t, 30)}", shows ${Math.round(box.bottom - last.r.top)} of its `
+              + `${Math.round(last.r.height)} px above the edge)`;
+          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over no line of text${why}: what lies `
+            + `under its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen `
+            + `(first: "${clip(below[0].t, 30)}")`);
+        }
+      }
+      // edgeHead (R-CUE): the last line in view is a heading or a field's label while everything
+      // it heads (its controls: a field's own, a heading's up to the next heading) lies under the
+      // edge, so the region seems to end at a title.
+      if (sy && below.length) {
+        // A line is shown by half of it, as a control is seen (`seenAt`; the shell's `shows`).
+        const shownLines = lines.filter((it) => g.contains(it.el) && scroller(it.el, 'y') === g
+          && it.r.top <= box.bottom - Math.max(1, it.r.height / 2) && it.r.bottom > box.top);
+        const lastShown = shownLines.reduce((a, b) => (!a || b.r.top > a.r.top ? b : a), null);
+        const head = lastShown && lastShown.el.closest(HEADS);
+        if (head && g.contains(head)) {
+          const field = head.matches('[data-testid="block-info"]') ? head.closest('.block') : null;
+          const next = field ? null : [...g.querySelectorAll(HEADS)].find((h) => h !== head
+            && !h.matches('[data-testid="block-info"]')
+            && (head.compareDocumentPosition(h) & Node.DOCUMENT_POSITION_FOLLOWING));
+          const own = ctl.filter((c) => !c.matches('.shep-i, .shep-copy, .shep-help, button.shep-why')
+            && (field ? field.contains(c) : ((head.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING)
+              && !head.contains(c) && (!next || (c.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)))));
+          // A control is seen by its value line where it holds one (its content box), else by
+          // its box, half of it above the edge (the L8 close, CK8-2: Top-K's box showed its top
+          // border under the fade, its value and its label under the edge).
+          const seenAt = (c) => { const q = valueLine(c) || c.getBoundingClientRect();
+            return q.top < box.bottom - Math.max(1, q.height / 2); };
+          if (own.length && !own.some(seenAt)) {
+            out.edgeHead.push(`${named(g)} ends in view at ${field ? 'the label' : 'the heading'} "${clip(lastShown.t, 30)}" `
+              + `(${named(head)}), its ${own.length} control${own.length > 1 ? 's' : ''} all under the edge `
+              + `(first: ${named(own[0])})`);
+          }
         }
       }
       const before = g.previousElementSibling;
@@ -926,7 +1035,7 @@ LOOK_JS = r"""
     // disabled
     // The shared reason forms: a reason line, a relation to the notice, a bar's note under its
     // group (the skill's §2), each drawn with words.
-    const reasons = [...scope.querySelectorAll('.shep-reason, [data-notice-rel], .shep-bar-note')]
+    const reasons = [...scope.querySelectorAll('.shep-reason, [data-notice-rel], .shep-bar-note, button.shep-why')]
       .filter((e) => visible(e) && drawn(e) && !e.closest(SKIP) && /[A-Za-z0-9]/.test(e.innerText || ''));
     const outermost = (e, sel) => { let found = null;
       for (let b = e.closest(sel); b; b = b.parentElement && b.parentElement.closest(sel)) { found = b; } return found; };
@@ -939,9 +1048,21 @@ LOOK_JS = r"""
       const r = b.getBoundingClientRect();
       if (r.width < 2 || r.height < 2) { continue; }
       const k = regionOf(b), grp = b.closest('.shep-grp'), bar = outermost(b, '.shep-bar');
-      const near = reasons.some((q) => ((grp && grp.contains(q)) || (bar && bar.contains(q)))
+      const nearBy = reasons.filter((q) => ((grp && grp.contains(q)) || (bar && bar.contains(q)))
         || (regionOf(q) === k && besideOrUnder(q.getBoundingClientRect(), r)));
-      if (near) { continue; }
+      // R-WHY's same-bar rule, read from data: the cause's own notice drawn in the same bar names
+      // the controls it dims (``data-for``), and no phrase is added beside them.
+      const sameBar = bar ? [...bar.querySelectorAll('[data-notice][data-for], .shep-nb[data-for]')]
+        .filter((n) => visible(n) && (n.getAttribute('data-for') || '').split(/\s+/).includes(b.id)) : [];
+      // dimmed: the words that describe it (``aria-describedby``) or stand beside it as its
+      // reason never say "disabled" (SW-C11: the dimmed look says it; the words say its need).
+      const described = (b.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+        .map((id) => document.getElementById(id)).filter(Boolean);
+      const said11 = [...described, ...nearBy, ...sameBar].find((q) => /\bdisabled\b/i.test(q.textContent || ''));
+      if (said11) {
+        out.dimmed.push(`${named(b)} "${say(b)}" said "disabled" by ${named(said11)} ("${clip(said11.textContent || '', 40)}")`);
+      }
+      if (nearBy.length || sameBar.length) { continue; }
       const region = typeof k === 'number' ? (k >= 0 ? panels[k] : null) : k;
       const said = !!region && [...region.querySelectorAll('[data-notice], [data-notice-rel]')].some((n) => visible(n) && drawn(n));
       if (said && !b.matches('.primary')) { continue; }
@@ -1084,6 +1205,15 @@ LOOK_JS = r"""
         .find((l) => l.closest('.block') === f && visible(l) && l.getBoundingClientRect().height > 4)])
       .filter(([, l]) => l);
     const layer = (c) => { let e = c; while (e && getComputedStyle(e).display === 'contents') { e = e.parentElement; } return e; };
+    // A field's first control as drawn: its box (a select's frame, a choice's option), never the
+    // dot of a radio or the borderless input inside a select.
+    const firstControl = (f) => {
+      const c = [...f.querySelectorAll('textarea, input:not([type=hidden]), select, [role=combobox]')]
+        .find((x) => visible(x) && !x.closest(SKIP));
+      if (!c) { return null; }
+      return c.closest('.wrap:has(> .wrap-inner)')
+        || (c.matches('input[type=radio], input[type=checkbox]') ? c.closest('label') || c : c);
+    };
     for (let i = 0; i < fieldsDrawn.length; i++) {
       for (let j = i + 1; j < fieldsDrawn.length; j++) {
         const [a, la] = fieldsDrawn[i], [b, lb] = fieldsDrawn[j];
@@ -1102,6 +1232,16 @@ LOOK_JS = r"""
         if (dy >= 0.25 * Math.min(pa.height, pb.height)) {
           out.rowTop.push(`${named(a)} "${clip(la.textContent, 20)}" and ${named(b)} "${clip(lb.textContent, 20)}": `
             + `labels ${Math.round(dy)} px apart in one row (${named(c)})`);
+        }
+        // rowCtl (R-ALIGN): the same pair, each label on one line (a wrapped label is a width
+        // matter), its first controls' tops within 2 px; bottoms are never compared.
+        const ca = firstControl(a), cb = firstControl(b);
+        if (ca && cb && linesOf(la) === 1 && linesOf(lb) === 1) {
+          const ta = ca.getBoundingClientRect().top, tb = cb.getBoundingClientRect().top;
+          if (Math.abs(ta - tb) > 2) {
+            out.rowCtl.push(`${named(a)} "${clip(la.textContent, 20)}" and ${named(b)} "${clip(lb.textContent, 20)}": `
+              + `first controls ${Math.round(Math.abs(ta - tb))} px apart in one row (${named(c)})`);
+          }
         }
       }
     }
@@ -1280,6 +1420,17 @@ LOOK_JS = r"""
 """
 
 
+def _d8_words() -> str:
+    """D8's conditions in its own short words (`chips.D8_SHORT`, the header chip's), for
+    `LOOK_JS`'s ``reason-repeat``: read from the chips' one table, never written here again."""
+    from src.webui.components.chips import D8_SHORT
+
+    return json.dumps(sorted(D8_SHORT.values()))
+
+
+LOOK_JS = LOOK_JS.replace("__D8_WORDS__", _d8_words())
+
+
 #: The representative windows (D08), all at or above the display floor
 #: (`style.FLOOR_WIDTH` x `FLOOR_HEIGHT`, the owner's decision of 2026-11-23;
 #: a window below it is drawn as at the floor, the layout walk's ``floor``):
@@ -1309,7 +1460,7 @@ UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "s
 #: ``"focus": false`` records no focus walk: a layout measure's own walks). A stop
 #: sets the window, opens its page if another is shown (a click, the tab
 #: selected, the page's requests answered), waits until what the page draws
-#: holds still for two frames and records the caller's `extra`; unless it
+#: holds still for three frames and records the caller's `extra`; unless it
 #: says ``"check": false`` it also records ``check()``, a screenshot (with a
 #: directory for them) and ``focusWalk()`` (after one Tab press, so focus is
 #: a keyboard's); a stop with ``options`` then opens each select drawn and
@@ -1343,26 +1494,79 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
   // `.then`, each joined a moment after the one before is answered) is idle for an instant
   // between two of its events, and a stop measured there missed what its last event drew (the
   // L7 rules: Fine-tune's reason beside its disabled Start, drawn late in the chain).
+  // A wait that runs out names where the walk was (`at`: the stop, its page and size, and the
+  // step) and what the page still had unanswered (each listener by its fn_index), so a walk
+  // that fails says which part of it failed, never only that it timed out.
+  let at = 'the page load';
   const idle = async () => {
     await page.evaluate(() => { window.__shepQuiet = 0; });
-    await page.waitForFunction(() => {
-      if (!(window.__shepQueue && window.__shepQueue.idle())) { window.__shepQuiet = 0; return false; }
-      window.__shepQuiet += 1;
-      return window.__shepQuiet >= 10;
-    }, null, { timeout: 60000, polling: 'raf' });
+    try {
+      await page.waitForFunction(() => {
+        if (!(window.__shepQueue && window.__shepQueue.idle())) { window.__shepQuiet = 0; return false; }
+        window.__shepQuiet += 1;
+        return window.__shepQuiet >= 10;
+      }, null, { timeout: 60000, polling: 'raf' });
+    } catch (e) {
+      const q = await page.evaluate(() => { const Q = window.__shepQueue;
+        const now = performance.now();
+        return Q && { inflight: Q.inflight, fonts: document.fonts.status,
+                      direct: Q.directs.map((d) => [d.fn_index, Math.round(now - d.t0), Q.took[d.fn_index] || []]),
+                      joins: Q.joins.filter((j) => j.event_id === null || !(j.event_id in Q.done))
+                        .map((j) => [j.fn_index, j.event_id === null ? 'not joined' : 'not answered']) }; })
+        .catch(() => null);
+      // And how the page runs then, over 3 s: its frames' gaps, how many of them had nothing
+      // unanswered, and how many elements it holds (a frame never drawn is a busy main thread).
+      const run = await page.evaluate(() => new Promise((done) => {
+        // What changes in the page meanwhile, most changed first (a mark set over and over).
+        const seen = {}, mo = new MutationObserver((records) => { for (const r of records) {
+          const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+          const key = `${(t && (t.id || String(t.className).slice(0, 40))) || '?'}:${r.attributeName || r.type}`;
+          seen[key] = (seen[key] || 0) + 1; } });
+        mo.observe(document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
+        const gaps = []; let quiet = 0, last = performance.now(); const start = last;
+        const f = (t) => { gaps.push(t - last); last = t;
+          if (window.__shepQueue && window.__shepQueue.idle()) { quiet += 1; }
+          if (t - start < 3000) { requestAnimationFrame(f); } else {
+            gaps.sort((a, b) => a - b); mo.disconnect();
+            done({ frames: gaps.length, quiet, p50: Math.round(gaps[gaps.length >> 1]), max: Math.round(gaps[gaps.length - 1]),
+                   elements: document.getElementsByTagName('*').length,
+                   changed: Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 8) }); } };
+        requestAnimationFrame(f); })).catch(() => null);
+      throw new Error(`${e.message} at ${at}, unanswered: ${JSON.stringify(q)}, running: ${JSON.stringify(run)}`);
+    }
   };
+  // What the page draws holds still: the same at three frames in a row, read at every frame (a
+  // reading every other frame saw a page that changes at every frame as still: the L8 LOOK5's
+  // L8-1, Training's fold opening and closing with no input, passed every walk unseen). The
+  // frames waited (``frames``), or -1 when it never held still in 120, with what kept changing
+  // (`layout_problems`' ``settle``).
   const settle = () => page.evaluate(async () => {
     const sign = () => { const { panels } = window.__shepLook.shownPage(), se = document.scrollingElement;
-      return [document.documentElement.getAttribute('data-shep-layout'), se.scrollWidth, se.scrollHeight,
-              ...panels.map((p) => { const r = p.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].join(','); })].join('|'); };
-    let last = null;
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return [['arrangement', document.documentElement.getAttribute('data-shep-layout')],
+              ['document width', se.scrollWidth], ['document height', se.scrollHeight],
+              ...panels.map((p) => { const r = p.getBoundingClientRect();
+                return [`#${p.id || p.className}`, [r.left, r.top, r.width, r.height].join(',')]; })]; };
+    const key = (s) => s.map((p) => p.join('=')).join('|');
+    let last = null, same = 0;
+    const moved = new Set();
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
       const now = sign();
-      if (now === last) { return i; }
+      same = last && key(now) === key(last) ? same + 1 : 0;
+      if (same >= 2) { return { frames: i }; }
+      if (last) { now.forEach((p, k) => { if (!last[k] || String(p[1]) !== String(last[k][1])) { moved.add(p[0]); } }); }
       last = now;
     }
-    return -1;
+    // The marks set over and over meanwhile, most set first (over one more second).
+    const seen = {}, mo = new MutationObserver((records) => { for (const r of records) {
+      const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+      const at = `${(t && (t.id ? '#' + t.id : String(t.className).slice(0, 40))) || '?'}:${r.attributeName || r.type}`;
+      seen[at] = (seen[at] || 0) + 1; } });
+    mo.observe(document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
+    await new Promise((r) => setTimeout(r, 1000));
+    mo.disconnect();
+    return { frames: -1, moved: [...moved],
+             marks: Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([at, n]) => `${at} x${n}`) };
   });
   const button = (id) => (id === 'clinical' || id === 'settings' ? `#shep-tab-${id}-button` : `#shep-page-${id}-button`);
   // A stop's drawer (`stop.open`: its opener, the drawer and its close): opened
@@ -1440,14 +1644,19 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
   const shots = process.argv[4] || null;
   const out = [];
   let shown = null;
-  for (const stop of stops) {
+  for (const [i, stop] of stops.entries()) {
     const [w, h] = stop.size;
+    at = `stop ${i + 1} of ${stops.length} (${stop.page} at ${w}x${h}${stop.open ? ', ' + stop.open.shown + ' open' : ''})`;
+    // Where the walk is, as it goes: a walk stopped at its time limit names the stop it was at.
+    process.stderr.write(`walk: ${at}\n`);
     await page.setViewportSize({ width: w, height: h });
     if (stop.page !== shown) { await open(stop.page); shown = stop.page; }
     await page.evaluate(() => window.scrollTo(0, 0));
     if (stop.diagnose) { await diagnose(stop.diagnose); }
     if (stop.open) { await drawer(stop.open, true); }
-    const seen = { size: `${w}x${h}`, page: stop.page, frames: await settle() };
+    const held = await settle();
+    const seen = { size: `${w}x${h}`, page: stop.page, frames: held.frames };
+    if (held.frames < 0) { seen.restless = { moved: held.moved, marks: held.marks }; }
     if (stop.open) { seen.open = stop.open.shown; }
     // A drawer opened with a row chosen (`stop.open.pick`): the chosen model whose facts it drew,
     // so a walk can show that its row-chosen stops ran with their choice (the sweep's L7, FX-2).
@@ -1481,9 +1690,25 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
 """
 
 
+#: **A walk's time limit, derived from what it walks** (the L8 close, item 6: E1[configured]
+#: needed 2,060 s alone against a fixed 1,500 s for every walk, 94 stops at 14 s each on
+#: average, the drawer stops 4 to 22 s, measured): a start (the browser, the page and its first
+#: answers) and a budget per stop, about twice the slowest stop measured. Each wait inside a
+#: stop has its own bound (`UI_WALK_JS`: 60 s for the page's requests to be answered, naming the
+#: stop and what was unanswered), so a hang fails at its stop, and the walk's limit only stops a
+#: walk slow everywhere; it grows with the stops, so adding stops never needs a new limit.
+WALK_START_SECONDS = 120
+WALK_STOP_SECONDS = 45
+
+
+def walk_limit(stops: list[dict[str, Any]]) -> int:
+    """The time limit of a walk through `stops`, in seconds (`WALK_STOP_SECONDS` each)."""
+    return WALK_START_SECONDS + WALK_STOP_SECONDS * len(stops)
+
+
 def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
             extra_js: str | None = None, shots: Path | None = None,
-            timeout: int = 1500, headers: dict[str, str] | None = None,
+            timeout: int | None = None, headers: dict[str, str] | None = None,
             device_scale: float = 1) -> list[dict[str, Any]]:
     """Walk the dashboard at `page_url` through `stops` (each ``{"size":
     [w, h], "page": id}``, with ``"check": false``, ``"options": true`` or
@@ -1493,7 +1718,8 @@ def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
     the stop's ``extra``); `shots`, a directory for a screenshot of each
     checked stop (``<page>_<w>x<h>.png``); `headers`, sent with every
     request the walk's browser makes (`READ_ONLY_HEADERS`); `device_scale`,
-    the device pixels per CSS pixel (2: a high-DPI screen)."""
+    the device pixels per CSS pixel (2: a high-DPI screen); `timeout`, the
+    walk's limit in seconds, by default its stops' (`walk_limit`)."""
     script = (UI_WALK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
               .replace("__LOOK_JS__", json.dumps(LOOK_JS))
               .replace("__EXTRA_JS__", extra_js or "null")
@@ -1502,7 +1728,7 @@ def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
     plan = tmp_path / "stops.json"
     plan.write_text(json.dumps(stops), encoding="utf-8")
     args = [page_url, str(plan)] + ([str(shots)] if shots else [])
-    return run_node(script, tmp_path, *args, timeout=timeout)
+    return run_node(script, tmp_path, *args, timeout=timeout or walk_limit(stops))
 
 
 #: **The stage hint each research page shows** (`shell.STAGES`, pinned here
@@ -1595,13 +1821,15 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "edge",
                 "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups", "in-view",
                 "scroll-cue", "wrap-end", "disabled-reason", "token-break", "sep-end", "chain-break",
-                "row-top", "row-height", "sideways-scroll", "floor")
+                "row-top", "row-control-top", "row-height", "sideways-scroll", "floor", "edge-heading",
+                "reason-repeat", "pointer-words", "dimmed-words", "settle")
 _LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
                 "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
                 "empty-region": "empty", "help-on-page": "help", "scroll-cue": "cue",
                 "wrap-end": "wrapEnd", "disabled-reason": "disabled", "token-break": "token",
                 "sep-end": "sepEnd", "chain-break": "chain", "row-top": "rowTop",
-                "row-height": "rowHeight"}
+                "row-control-top": "rowCtl", "row-height": "rowHeight", "edge-heading": "edgeHead",
+                "pointer-words": "pointer", "dimmed-words": "dimmed"}
 #: The rules held only at or above the display floor (`at_floor`): below it the layout is the
 #: floor's and the document scrolls, so what lies past the window is reached by that scroll.
 _AT_FLOOR_KEYS = {"in-view": "inview", "sideways-scroll": "sideways"}
@@ -1617,14 +1845,21 @@ def floor_size() -> tuple[int, int]:
 
 def effective_size(size: str) -> tuple[int, int]:
     """**The area a stop's window is drawn at** (``"<w>x<h>"``; the shell's layout pass,
-    ``area()``): the window raised to the floor of the arrangement it takes. No wider than
-    tall, the stacked arrangement's (`style.STACK_FLOOR_WIDTH` in both axes, the owner's
-    decision of 2026-11-23 on portrait windows); wider, the display floor (`floor_size`)."""
+    ``area()``): the window raised to the floor of the arrangement it takes (R-ARR, the owner's
+    D11 of 2026-11-24: the arrangement is chosen by width). A window wider than tall and at
+    least the display floor's width tries side by side: the display floor in both axes
+    (`floor_size`; under its height it is drawn at it). Any other window stacks: the stacked
+    arrangement's width (`style.STACK_FLOOR_WIDTH`) and no height floor (a stacked page flows).
+    Side by side also needs the page's panels to fit, which reads the width alone: a page that
+    stacks instead at such a window stacks at the side floor's stop of the same width too, so a
+    stop is compared with a stop of its own arrangement either way."""
     from src.webui.style import STACK_FLOOR_WIDTH
 
     w, h = (int(n) for n in size.split("x"))
-    fw, fh = (STACK_FLOOR_WIDTH, STACK_FLOOR_WIDTH) if w <= h else floor_size()
-    return max(w, fw), max(h, fh)
+    fw, fh = floor_size()
+    if w > h and w >= fw:
+        return max(w, fw), max(h, fh)
+    return max(w, STACK_FLOOR_WIDTH), h
 
 
 def at_floor(size: str) -> bool:
@@ -1667,8 +1902,26 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       text line of the page drawn past the window's bottom or right edge that no scroll region in
       view holds;
     - ``scroll-cue``: a scroll region whose drawn content runs past its edge with no cue: below
-      it, no R-73 scroll cue (``shep-scroll-cue``'s mask); sideways, no mask and no drawn cue
-      just before it (Compare's ``shep-rs-cue``): a table wider than its panel, its cells cut;
+      it, no R-73 scroll cue (``shep-scroll-cue``'s mask, or R-CUE's edge cue where the edge
+      falls in a gap) or a fade over no line of text it fades out (a gap, a box's border, a
+      graphic's blank, a line whose foot lies in the fade's upper half, a line the edge cuts with
+      less than half of it above the edge);
+      sideways, no mask and no drawn cue just before it (Compare's ``shep-rs-cue``): a table
+      wider than its panel, its cells cut;
+    - ``edge-heading`` (R-CUE, the owner's D4 of 2026-11-24): a scroll region whose last line in
+      view is a heading or a field's label while all of its controls lie under the edge (a
+      control seen by its value line where it holds one, else by its box, half of it above the
+      edge: a box's top border under the fade is no control seen);
+    - ``reason-repeat`` (R-WHY, the owner's D6 of 2026-11-24; it extends ``notice-repeat``, which
+      it reports when both are asked): a cause's whole reason said more than once on one screen,
+      a notice by its key, D8's refusal by the header chip (``data-reason="d8"``) and every block
+      of the page holding the chip's condition in D8's short words (`chips.D8_SHORT`);
+    - ``pointer-words`` (R-WHY): visible words that point at a reason drawn elsewhere: "see
+      above", "see below", "the reason is with" or a parenthesised "(see <place>)";
+    - ``dimmed-words`` (SW-C11; it extends ``disabled-reason``): a disabled button whose
+      describing words (``aria-describedby``) or reason beside it say "disabled"; a phrase
+      (``shep-why``) is a reason beside it, and so is its cause's own notice in the same bar
+      when that notice names it (``data-for``: R-WHY's same-bar rule, read from data);
     - ``clipped`` also holds a text line cut by an ancestor that hides its overflow in that axis,
       a cut to an ellipsis included unless its whole words are its ``title``;
     - ``wrap-end``: a later line of a bar's groups that does not start on the bar's start edge;
@@ -1683,6 +1936,9 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       line of its own (a key split from its value, two chips of one fact apart);
     - ``row-top``: two labelled fields side by side in one row whose labels do not share a top
       line (a quarter of the label's height apart or more);
+    - ``row-control-top`` (R-ALIGN, the owner's A of 2026-11-24): the same pairs, each label on
+      one line, whose first controls' tops are more than 2 px apart (a note drawn between one
+      field's label and its control); a wrapped label is exempt and bottoms are never compared;
     - ``row-height``: a table row in a sideways scroll box whose height a cell out of the box's
       view sets (an empty band across the cells in view);
     - ``sideways-scroll`` (at or above the floor): a region whose content runs past its right
@@ -1690,13 +1946,18 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       table wider than its frame), unless it says so in words just before it (a drawn
       ``shep-rs-cue``: Compare, a column per result);
     - ``floor`` (the floor of the arrangement the window takes, `effective_size`: the display
-      floor, `floor_size`, side by side; `style.STACK_FLOOR_WIDTH` no wider than tall): at or
-      above it, the document never scrolls sideways and, side by side, never at all (the frame
-      never scrolls); below it in either axis, the layout pass's marks (side or stack, short, the
+      floor, `floor_size`, where a window wider than tall tries side by side; elsewhere
+      `style.STACK_FLOOR_WIDTH` wide, with no height floor): at or above it, the document never
+      scrolls sideways and, side by side, never at all (the frame never scrolls); below it in
+      either axis, the layout pass's marks (side or stack, short, the
       header's classes, each box marked narrow, folded or alone) and the frame are those of the
       stop of the same page and drawer at the area the window is drawn at (raised to its
       arrangement's floor), and the document scrolls in each axis the window is under that
-      floor (drawn as at the floor, never shrunk)."""
+      floor (drawn as at the floor, never shrunk);
+    - ``settle`` (the L8 LOOK5's L8-1: Training's fold opened and closed about 24 times a second
+      at 1050 x 1100 with no input, and the walk measured it anyway): what the page draws (its
+      arrangement, the document's size, its panels' boxes) never held still over three frames in
+      the walk's 120, with what kept moving and the marks set most meanwhile."""
     from src.webui.shell import RESEARCH_PAGES
 
     problems: list[str] = []
@@ -1747,7 +2008,15 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
                     if short and facts["scroll"][axis] <= 0:
                         problems.append(f"{where}: floor: {room} than its floor and the document does not "
                                         "scroll that way (the layout shrank to the window)")
-        if "notice-repeat" in rules:
+        if "settle" in rules and stop.get("frames", 0) < 0:
+            restless = stop.get("restless", {})
+            problems.append(f"{where}: settle: what the page draws never held still over three frames "
+                            f"(moving: {restless.get('moved')}; set most: {restless.get('marks')})")
+        if "reason-repeat" in rules:
+            for key, times in found.get("reasons", {}).items():
+                if times > 1:
+                    problems.append(f"{where}: reason-repeat: {key} said {times} times")
+        elif "notice-repeat" in rules:
             for key, times in found.get("notices", {}).items():
                 if times > 1:
                     problems.append(f"{where}: notice-repeat: {key} drawn {times} times")
@@ -1794,15 +2063,19 @@ def state_settings(state: str, root: Path) -> dict[str, str]:
     raise ValueError(f"no walk state {state!r}")
 
 
-#: The layout measure's windows (the owner's decisions of 2026-11-23): the owner's two windows
-#: (1850 x 960, 1550 x 830), a laptop (1366 x 768), the display floor (1280 x 720), a large
-#: screen (2560 x 1440: nothing stretched past readability), one window below the floor
-#: (1024 x 640: drawn as at the floor, the document scrolls), two portrait windows (a 1080p and a
-#: 1440p screen turned upright, 1080 x 1920 and 1440 x 2560: the stacked arrangement, at or above
-#: its floor, `style.STACK_FLOOR_WIDTH`), then the owner's again (back from below the floor and
-#: from stacked).
-LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (2560, 1440), (1024, 640),
-                (1080, 1920), (1440, 2560), (1850, 960))
+#: The layout measure's windows (the owner's decisions of 2026-11-23 and R-ARR, D11 of
+#: 2026-11-24): the owner's two windows (1850 x 960, 1550 x 830), a laptop (1366 x 768), the
+#: display floor (1280 x 720), a large screen (2560 x 1440: nothing stretched past readability),
+#: one window below the floor (1280 x 640, 150 % of 1920 x 960: side by side, drawn as at the
+#: floor, the document scrolls down), a window wider than tall that stacks (1100 x 1050: under
+#: the side-by-side floor's width, never scrolled sideways) and its twin a little taller than
+#: wide (1050 x 1100: the owner's other D11 example; the L8 LOOK5's L8-1, Training's fold opening
+#: and closing there with no input, was in no walk), two portrait windows (a 1080p and a 1440p
+#: screen turned upright, 1080 x 1920 and 1440 x 2560: the stacked arrangement, at or above its
+#: floor, `style.STACK_FLOOR_WIDTH`), then the owner's again (back from below the floor and from
+#: stacked).
+LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (2560, 1440), (1280, 640),
+                (1100, 1050), (1050, 1100), (1080, 1920), (1440, 2560), (1850, 960))
 
 
 def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int], ...] = LAYOUT_SIZES,
@@ -1815,7 +2088,7 @@ def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int]
 
 def walk_state(state: str, tmp_path: Path, stops: list[dict[str, Any]], *,
                shots: Path | None = None, extra_js: str | None = None,
-               timeout: int = 1500) -> list[dict[str, Any]]:
+               timeout: int | None = None) -> list[dict[str, Any]]:
     """**Serve the dashboard in a walk state and walk it** (`WALK_STATES`,
     `state_settings`; `served_page.served_service`, `walk_ui`): what each stop
     recorded. A page's lane measures its own pages at first use with
@@ -1898,6 +2171,14 @@ def repeat_problems(seen: list[dict[str, Any]], allowed: dict[str, int] | None =
     return problems
 
 
+def _said(stderr: str) -> str:
+    """A script's error output with a walk's progress lines (``walk: …``) down to the last."""
+    lines = (stderr or "").splitlines()
+    progress = [line for line in lines if line.startswith("walk: ")]
+    rest = [line for line in lines if not line.startswith("walk: ")]
+    return "\n".join(progress[-1:] + rest)
+
+
 def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any:
     """Run a Node script (Playwright resolvable, `node_with_playwright`; the
     caller skips without it) and return the JSON it prints."""
@@ -1906,13 +2187,18 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     node, env = found
     path = tmp_path / "page.cjs"
     path.write_text(script, encoding="utf-8")
-    result = subprocess.run([node, str(path), *args], env=env, capture_output=True, text=True,
-                            timeout=timeout)
-    assert result.returncode == 0, result.stderr
+    try:
+        result = subprocess.run([node, str(path), *args], env=env, capture_output=True, text=True,
+                                timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        # Stopped at its limit: where it was (a walk names each stop as it reaches it).
+        said = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""
+        raise AssertionError(f"the script ran past its {timeout} s; {_said(said)}") from exc
+    assert result.returncode == 0, _said(result.stderr)
     return json.loads(result.stdout)
 
 
 __all__ = ["LAYOUT_RULES", "LAYOUT_SIZES", "LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS",
            "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
-           "WALK_STATES", "at_floor", "effective_size", "floor_size", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
-           "run_node", "state_settings", "ui_problems", "walk_state", "walk_ui"]
+           "WALK_START_SECONDS", "WALK_STATES", "WALK_STOP_SECONDS", "at_floor", "effective_size", "floor_size", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
+           "run_node", "state_settings", "ui_problems", "walk_limit", "walk_state", "walk_ui"]

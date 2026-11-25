@@ -21,8 +21,10 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   ``textContent`` and is given to the mount's ``head`` (Gradio 6 drops a
   head given to ``gr.Blocks``); in a real headless browser (Node and
   Playwright, skipped without): a hover previews after a delay as a tooltip
-  without "Esc to close", a click pins a dialog named by its title with it,
-  the pinned bubble never covers the field it explains (beside, then above,
+  whose close control is its × alone, a click pins a dialog named by its
+  title whose close control holds the framed Esc keycap beside the × (one
+  button, a click on the keycap closes it) and no row under its text, the
+  title wrapping beside it, the pinned bubble never covers the field it explains (beside, then above,
   then below), a card heading's ⓘ never covers its card, at a wide window
   and the display floor, its width stays within the budget, the ⓘ's hit target is at
   least 24 × 24 px, the lead is bold, "- " lines are one list and a "Term:"
@@ -152,6 +154,9 @@ def test_the_bubble_is_a_tooltip_previewing_and_a_dialog_when_pinned():
     assert h.BUBBLE_MAX_WIDTH == 320 and "max-width: 320px" in h.HELP_CSS
     assert f"MAX_W = {h.BUBBLE_MAX_WIDTH}" in head
     assert h.HIT_TARGET >= 24 and "width: 24px; height: 24px" in h.HELP_CSS
+    # One close control in the head (the owner, 2026-11-25): no row under the text says "Esc".
+    assert "x.setAttribute('aria-keyshortcuts', 'Escape')" in head and "shep-bubble-ft" not in head + h.HELP_CSS
+    assert ".shep-bubble-x:focus-visible { outline: 2px solid" in h.HELP_CSS
     # Beside, then above, then below the field it explains, never over it.
     assert "['right', 'left', 'above', 'below']" in head and "overlaps(" in head
 
@@ -239,8 +244,9 @@ def _exempt_source(key: str, text: str):
     from src.evaluation import caveats
 
     if key.startswith("test-mode-"):
+        # The note's words as the bubble reads them: its lead, then its items or paragraphs.
         mode = key[len("test-mode-"):]
-        return " ".join(text.split("\n")), caveats.MODE_RESULT_NOTES.get(mode)
+        return " ".join(line.text for line in h.help_lines(text)), caveats.MODE_RESULT_NOTES.get(mode)
     found = _FIELD_KEY.fullmatch(key)
     spec = {f.name: f for f in tf.FIELDS}.get(found.group("name")) if found else None
     lead = h.help_lines(text)[0].text
@@ -256,10 +262,26 @@ def test_every_registered_help_text_meets_the_text_budget_but_its_verbatim_sourc
     The one exemption is words the WebUI may not change: a lead that is its field's API wording
     (`FieldSpec.description`, equal to it exactly; the rest of its text, its source line and
     term rows, meets the budget) and a governed measurement note (`caveats.MODE_RESULT_NOTES`,
-    the whole text equal to it, a sentence a line). A lead over 78 characters (three bubble
-    lines) stays a note (`help.budget_notes`), not a failure."""
+    the whole text equal to it). A lead over 78 characters (three bubble lines) stays a note
+    (`help.budget_notes`), not a failure. **A governed note's layout** (MODE_RESULT_NOTES, the
+    owner of 2026-11-24: keep its meaning and limits, adjust the layout first): its first
+    sentence is the lead; two to four further sentences are the bubble's items, one further
+    sentence a paragraph (`help.sentence_items`), each its own words; they were all paragraphs,
+    a sentence a line."""
+    from src.evaluation import caveats
+
     texts = _dashboard_help(monkeypatch)
     assert len(texts) >= 140, len(texts)
+    modes = {key[len("test-mode-"):]: text for key, text in texts.items()
+             if key.startswith("test-mode-")}
+    assert modes and set(modes) <= set(caveats.MODE_RESULT_NOTES), sorted(modes)
+    for mode, text in modes.items():
+        lines = h.help_lines(text)
+        further = len(re.split(r"(?<=[.!?])\s+", caveats.MODE_RESULT_NOTES[mode].strip())) - 1
+        form = ["item"] * further if 2 <= further <= 4 else ["para"] * further
+        assert [line.kind for line in lines] == ["lead", *form], (mode, text)
+        assert " ".join(line.text for line in lines) == caveats.MODE_RESULT_NOTES[mode], mode
+    assert any(len(h.help_lines(text)) > 2 for text in modes.values()), modes
     exempt, over = {}, {}
     for key, text in texts.items():
         problems = h.budget_problems(text, h.TEXT_BUDGET)
@@ -278,6 +300,47 @@ def test_every_registered_help_text_meets_the_text_budget_but_its_verbatim_sourc
     assert all(k.startswith("test-mode-") or _FIELD_KEY.fullmatch(k) for k in exempt), sorted(exempt)
 
 
+#: A setup step a general user cannot take from the dashboard: an SSH forward or a server
+#: variable (R-HELP). The GUI's own place for a setting, or the desktop start, comes first.
+_SETUP_STEP = re.compile(r"\bSSH\b|\bssh\b|SHEPHERD_[A-Z_]+")
+
+
+def test_setup_topics_name_the_gui_and_the_desktop_start_before_variables_and_ssh(monkeypatch):
+    """R-HELP (the owner's C9 of 2026-11-24): for general users the GUI entry and the desktop
+    start come before environment variables and SSH. Every registered text, and every header
+    chip state (composed per request), that names SSH or a ``SHEPHERD_`` variable outside its
+    Ref line names a GUI place (`server_settings.PLACE_NAMES`) or the desktop entry before it.
+    The operator controls' bubble said "Arrives on this machine's loopback, directly or through
+    an SSH forward" with no desktop start at all. D8's refusal for a request is the API's own
+    words, which the WebUI may not change; it is read apart (it says "on the machine itself"
+    before any SSH forward)."""
+    from src.config.server_settings import PLACE_NAMES
+    from src.utils.operator_access import reason_parts
+    from tests.unit.test_operator_access import every_refusal
+    from tests.unit.test_webui_chips import _every_chip
+
+    first = re.compile("|".join(["desktop entry", *map(re.escape, PLACE_NAMES.values())]))
+    refusals = [part for decision in every_refusal().values()
+                for part in reason_parts(decision.reason) if part]
+    texts = {**_dashboard_help(monkeypatch),
+             **{f"chip {name}": chip.detail for name, chip in _every_chip()}}
+    late, setup = {}, []
+    for key, text in texts.items():
+        body = "\n".join(f"{line.term}: {line.text}" if line.term else line.text
+                         for line in h.help_lines(text) if line.kind != "ref")
+        for refusal in refusals:
+            body = body.replace(refusal, "")
+        step = _SETUP_STEP.search(body)
+        if step is None:
+            continue
+        setup.append(key)
+        gui = first.search(body)
+        if gui is None or gui.start() > step.start():
+            late[key] = body[:step.end()][-90:]
+    assert "chip on" in setup and "chip placeholder d8" in setup, setup
+    assert late == {}, late
+
+
 def test_the_budget_names_what_a_text_runs_over():
     assert h.budget_problems("A short lead.\n- one\n- two\nRef: D5; SHEPHERD_DEVICE") == ()
     long_lead = h.budget_problems("x" * 101)
@@ -292,13 +355,17 @@ def test_the_budget_names_what_a_text_runs_over():
                    for p in h.budget_problems(f"Lead.\nIt names {code} here.")), code
     assert any("'•' bullet" in p for p in h.budget_problems("Lead.\n• old bullet"))
     assert any("not the last line" in p for p in h.budget_problems("Lead.\nRef: x\nmore"))
-    # A governed note shown elsewhere as one line keeps its words, a sentence a line.
-    assert h.sentence_lines("One. Two words? Three!") == "One.\nTwo words?\nThree!"
-    assert h.sentence_lines(None) is None
+    # A governed note shown elsewhere as one line keeps its words: its first sentence the lead,
+    # two to four further sentences the list, one further sentence a paragraph.
+    assert h.sentence_items("One. Two words? Three!") == "One.\n- Two words?\n- Three!"
+    assert h.sentence_items("One. Two words?") == "One.\nTwo words?"
+    assert h.sentence_items("One. A. B. C. D. E.") == "One.\nA.\nB.\nC.\nD.\nE."
+    assert h.sentence_items(None) is None
 
 
 # --------------------------------------------------------------------------- in a real browser
 HOSTILE = "<img src=x onerror=window.__pwned=true> & more"
+LONG_TITLE = "A help title long enough to wrap beside the close control"
 HOST = Path(__file__).resolve().parent.parent / "fixtures" / "help_host.cjs"
 
 
@@ -316,6 +383,10 @@ def _page(tmp_path: Path) -> Path:
     registry.topic("row-help", "A row", "What the row says.")
     registry.topic("card-help", "A card", "What the card shows.\n\n- Its state.\n- When it "
                    "is read.\n- Why it can be grey.")
+    # A title that wraps beside the close control, and a text taller than the window.
+    registry.topic("long-help", LONG_TITLE, "\n".join(
+        ["What a long text says first."] + [f"Paragraph {i} runs on for long enough that it takes "
+                                             "two lines of the bubble." for i in range(1, 19)]))
     page = f"""<!doctype html><html><head><meta charset="utf-8">
 <style>:root {{ --shep-accent: #5558e3; --shep-accent-50: #eef0ff; --shep-accent-text: #3a3dbd;
 --shep-border: #e1e4ea; --shep-border-2: #cdd2da; --shep-text: #1d2230; --shep-muted: #5b6270; }}
@@ -339,6 +410,7 @@ style="flex: 0 0 auto"><span>A card</span>{h.help_button("card-help", "A card")}
 <span style="margin-left: auto">read 12:00</span></div><p>Its state, read now, and long lines
 that fill the card's width so a bubble beside its title would cover them.</p>
 <p>More of the card.</p></div>
+<p id="long" style="margin: 24px 40px">A long one{h.help_button("long-help", LONG_TITLE)}</p>
 <div style="height: 1400px"></div>
 {registry.texts_html()}</body></html>"""
     path = tmp_path / "help.html"
@@ -356,8 +428,17 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
     field's (measured here, by the test's own rule) and is not under the
     field's centre (``document.elementsFromPoint``); a card heading's ⓘ (a
     region, R-10) never covers its card; it is at most 320 px wide; the ⓘ's
-    hit target is at least 24 × 24; "Esc to close" shows only pinned
-    (R-29); the field's text shows a bold lead, its "- " lines as one list,
+    hit target is at least 24 × 24. **Its one close control** (the owner,
+    2026-11-25: "Esc to close" under the text repeated the × above it, R-29):
+    pinned, the head holds the framed Esc keycap (14 px, a 2 px bottom edge,
+    hidden from the accessibility tree) beside the ×, both inside one button
+    named "Close help" with ``aria-keyshortcuts="Escape"``, at the head's right
+    end, centred on the title's first line; a preview's is the × alone; it is
+    at least `help.HIT_TARGET` square both ways; a click on the keycap closes
+    the bubble; focused after a key press it shows its ring; nothing lies
+    under the body, so a bubble whose text is taller than the window gives
+    the foot's old room to its text, and a title too long for one line wraps
+    beside the control, never under it. The field's text shows a bold lead, its "- " lines as one list,
     a bold "Term:" and a muted Ref line (R-9), a hostile text in each part is
     literal text and runs nothing; Esc closes it back to a tooltip. The parts
     are set apart by the text tokens (the UI sweep of 2026-11-22): a
@@ -372,14 +453,20 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
                             capture_output=True, text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     sizes = json.loads(result.stdout)
-    assert set(sizes) == {"1850x960", "1280x720"}
+    long = sizes.pop("long")
+    assert set(sizes) == {"1850x960", "1280x720"} and set(long) == set(sizes)
     for size, targets in sizes.items():
         assert set(targets) == {"field", "grid", "kv", "row", "region"}
         for which, seen in targets.items():
             where = f"{size} {which}"
             assert seen["hit"]["width"] >= 24 and seen["hit"]["height"] >= 24, where
             assert seen["early"] is False and seen["hover"] == "tooltip", where
-            assert seen["hoverFooter"] is False and seen["pinnedFooter"] is True, where
+            # The Esc keycap beside the × only pinned; the close control a hit target both ways.
+            assert seen["hoverKey"]["key"] is False and seen["pinnedKey"]["key"] is True, where
+            for state in ("hoverKey", "pinnedKey"):
+                close = seen[state]["close"]
+                assert min(close["width"], close["height"]) >= h.HIT_TARGET, (where, state, close)
+            _assert_one_close_control(seen["head"], where)
             pinned = seen["pinned"]
             assert not pinned["hidden"] and pinned["role"] == "dialog", where
             assert pinned["labelledby"] and pinned["title"] in ("Epochs", "Top-K", "A key",
@@ -397,6 +484,11 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
             parts = pinned["parts"]
             assert parts[0]["tag"] == "p" and parts[0]["cls"] == "shep-bubble-lead", where
             assert int(parts[0]["weight"]) >= 600, where
+        # A click on the keycap closes the bubble (it is part of the one close control); the
+        # close control focused by a keyboard shows its ring.
+        assert targets["field"]["closedBy"] == "keycap", size
+        ring = targets["row"]["ring"]
+        assert ring["focused"] and ring["visible"] and ring["style"] == "solid" and ring["width"] >= 2, (size, ring)
         # The structured text, part by part: each hostile text literal in it.
         field = targets["field"]["pinned"]["parts"]
         assert [(p["tag"], p["cls"]) for p in field] == [
@@ -411,6 +503,40 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
         assert [p["above"] for p in field] == [0, 8, 8, 8], size        # --shep-space-para
         assert field[1]["itemsAbove"] == [0, 4], size                    # --shep-space-item
         assert [p["tag"] for p in targets["region"]["pinned"]["parts"]] == ["p", "ul"]
+    # A long title wraps beside the close control; a text taller than the window is capped and
+    # scrolls, its body reaching the bubble's padding (the foot's old room is the text's).
+    for size, head in long.items():
+        _assert_one_close_control(head, f"{size} long")
+        assert head["titleLines"] >= 2 and head["capped"], (size, head)
+
+
+def _assert_one_close_control(head, where):
+    """A pinned bubble's head and body as `help_host.cjs`'s ``closeOf`` reads them: a head and a
+    body and nothing under it; one close control at the head's right end, its framed Esc keycap
+    beside its × inside it; the title beside it, the control centred on its first line."""
+    assert head["rows"] == ["shep-bubble-hd", "shep-bubble-bd"] and head["foot"] is False, (where, head)
+    assert head["label"] == "Close help" and head["keys"] == "Escape", (where, head)
+    assert head["keyHidden"] == "true" and head["keyText"] == "Esc" and head["markText"] == "×", (where, head)
+    assert head["keySize"] >= 14, (where, head)                                      # the text floor
+    style, top, bottom = head["keyFrame"]
+    assert style == "solid" and top >= 1 and bottom >= 2, (where, head)              # framed as a key
+    close, key, mark, title, hd = head["close"], head["key"], head["mark"], head["title"], head["head"]
+
+    def inside(a, b):
+        return a["left"] >= b["left"] - 0.5 and a["right"] <= b["right"] + 0.5 and \
+            a["top"] >= b["top"] - 0.5 and a["bottom"] <= b["bottom"] + 0.5
+
+    assert inside(key, close) and inside(mark, close), (where, head)
+    assert key["right"] <= mark["left"] + 0.5, (where, head)                        # beside it, before it
+    assert abs((key["top"] + key["bottom"]) - (mark["top"] + mark["bottom"])) <= 2, (where, head)
+    assert abs(close["right"] - hd["right"]) <= 0.5, (where, head)                  # at the head's end
+    assert min(close["right"] - close["left"], close["bottom"] - close["top"]) >= h.HIT_TARGET, (where, head)
+    assert title["right"] <= close["left"] + 0.5, (where, head)                     # never under it
+    line = head["firstLine"]
+    assert abs((close["top"] + close["bottom"]) - (line["top"] + line["bottom"])) / 2 <= 3, (where, head)
+    # Nothing under the body but the bubble's padding; the body right under the head.
+    assert abs(head["innerBottom"] - head["body"]["bottom"]) <= 1, (where, head)
+    assert abs(head["body"]["top"] - hd["bottom"] - head["headGap"]) <= 1, (where, head)
 
 
 _DESCRIBED_JS = r"""
@@ -912,8 +1038,19 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
     registry.field("epochs", "Epochs", "How many passes over the training pairs.")
     registry.field("seed", "Seed", "The random seed of the weights' start and the sampling.\n"
                    "Reference: 33. A provisional default from the source.\n- Default: 42.")
-    radio = ('<label style="display: block; padding: 6px 0"><input type="radio" name="bb" '
-             'value="{v}"{c}> {t}</label>')
+    # The Seed field stands among the Graph backbone's radios on every side (a 3 x 3 grid,
+    # Seed in its middle cell, Seed first in the page's order so Tab from Epochs meets its ⓘ):
+    # wherever the one placement puts the preview (R-HELP: the side over the fewest controls),
+    # it lies over a radio, the scene T08 met.
+    choices = [("keep", " checked", "Trained"), ("graph_side", "", "Frozen"),
+               ("encoder", "", "Encoder only"), ("head", "", "Head only"),
+               ("off_a", "", "Option A"), ("off_b", "", "Option B"), ("off_c", "", "Option C"),
+               ("off_d", "", "Option D")]
+    cells = ["1 / 1", "1 / 2", "1 / 3", "2 / 1", "2 / 3", "3 / 1", "3 / 2", "3 / 3"]
+    radios = "".join(
+        f'<label style="grid-area: {cell}; display: flex; align-items: center; justify-content: '
+        f'center; border: 1px dashed #ccc"><input type="radio" name="bb" value="{v}"{c}> {t}</label>'
+        for (v, c, t), cell in zip(choices, cells))
     page = tmp_path / "through.html"
     page.write_text(
         f"""<!doctype html><html><head><meta charset="utf-8">
@@ -921,13 +1058,11 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
 <div style="padding: 20px 40px">
 <div class="block" id="epochs" style="width: 300px; padding: 12px; border: 1px solid #ccc">
 <label class="block" style="display: block"><span data-testid="block-info">Epochs</span><input id="ep"></label></div>
-<div style="display: flex; flex-wrap: wrap; gap: 24px; margin-top: 16px; align-items: flex-start">
-<div class="block" id="seed" style="width: 300px; padding: 12px; border: 1px solid #ccc">
+<div id="backbone" role="radiogroup" aria-label="Graph backbone" style="display: grid; margin-top: 16px;
+grid-template-columns: 360px 300px 360px; grid-template-rows: 280px auto 280px; gap: 8px">
+<div class="block" id="seed" style="grid-area: 2 / 2; padding: 12px; border: 1px solid #ccc">
 <label class="block" style="display: block"><span data-testid="block-info">Seed</span><input id="sd"></label></div>
-<fieldset id="backbone" style="width: 300px; margin: 0; padding: 8px 12px; border: 1px solid #ccc">
-<legend>Graph backbone</legend>{radio.format(v="keep", c=" checked", t="Trained")}
-{radio.format(v="graph_side", c="", t="Frozen")}{radio.format(v="encoder", c="", t="Encoder only")}
-{radio.format(v="head", c="", t="Head only")}</fieldset></div></div>
+{radios}</div></div>
 {registry.texts_html()}</body></html>""", encoding="utf-8")
     script = tmp_path / "through.cjs"
     script.write_text(_THROUGH_JS, encoding="utf-8")
@@ -1835,25 +1970,18 @@ def _bubble_part_exemption(key: str, kind: str, words: str):
     return None
 
 
-def test_every_registered_help_texts_parts_are_two_lines_at_most_in_the_bubble(tmp_path):
-    """The independent check of the UI sweep (C9): the budget's 76 characters
-    an item let an item wrap to three lines of the 320 px bubble ("Same
-    dataset as served: another workspace with the same full fingerprint.",
-    "Names and stray punctuation are ignored. Only HP:####### ids are
-    used.", Gene's "SP similarity: …", Candidate details' "Evidence, …"),
-    against the text brief's §14 #9 (each item two lines at most). L7 FX-3:
-    it held only the items, and leads (Continue's Device, Diagnosis'
-    phenotypes, similarity and no-cohort run), paragraphs (Diagnosis' score,
-    Extend's learning rate, Fine-tune's "Offered with one task …") and Run
-    name's Ref line took three or four lines. Every registered text is opened
-    in the served dashboard's one bubble, as drawn: its lead, each paragraph,
-    its Ref line and each item are two lines at most, but the parts kept
-    verbatim from their source (`_bubble_part_exemption`, each with its
-    reason, its words held to that source). The sweep's L7 check (C9): the header chips'
-    bubbles, composed per request and named by a hidden element of their own, were never
-    opened (the operator controls' Ref took 5 lines, the GPU chip's 3); every chip state
-    (`test_webui_chips._every_chip`) is drawn in the same bubble and held to the same lines,
-    but D8's refusal, the API's own words."""
+def test_every_registered_help_texts_parts_are_listed_by_their_lines_in_the_bubble(tmp_path):
+    """**A note, not a gate** (R-HELP, the owner's C9 of 2026-11-24: "two lines in the fixed
+    bubble" is a reminder, not an acceptance rule, since fonts and zoom change line counts; the
+    budget test, `help.TEXT_BUDGET`, stays the gate). Every registered text and every header
+    chip state (`test_webui_chips._every_chip`, composed per request) is opened in the served
+    dashboard's one bubble, as drawn, and each part's line count is listed in the test's
+    output: the parts over two lines, each with the reason its words are kept from a source
+    when they are (`_bubble_part_exemption`), so a reviewer reads them. What it asserts is what
+    the bubble must do for every text: it opens, leads with its lead, and a part kept from a
+    source holds that source's words. History: the independent check of the UI sweep (C9) and
+    L7's FX-3 held every lead, paragraph, item and Ref line to two lines; the L7 check (C9)
+    added the chips' bubbles."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import run_node
     from tests.fixtures.served_page import served
@@ -1870,12 +1998,16 @@ def test_every_registered_help_texts_parts_are_two_lines_at_most_in_the_bubble(t
     assert {key[len("chip "):] for key in seen if key.startswith("chip ")} == {
         name for name, _chip in _every_chip()}
     assert all(parts and parts[0][0] == "lead" for parts in seen.values()), seen
-    over = {}
-    for key, parts in seen.items():
+    note = []
+    for key, parts in sorted(seen.items()):
         for kind, words, n in parts:
-            why = _bubble_part_exemption(key, kind, words) if n > 2 else ("", "two lines")
-            if why is None:
-                over.setdefault(key, []).append((kind, words, n))
-            else:
+            if n <= 2:
+                continue
+            why = _bubble_part_exemption(key, kind, words)
+            if why is not None:
                 assert why[1], (key, kind, words, why[0])  # its words are its source's
-    assert over == {}, over
+            note.append(f"{n} lines  {key}  {kind}: {words[:60]}"
+                        + (f"  (kept: {why[0]})" if why else ""))
+    print(f"Bubble parts over two lines at 1850 x 960: {len(note)} of "
+          f"{sum(len(parts) for parts in seen.values())} parts in {len(seen)} texts")
+    print("\n".join(note))

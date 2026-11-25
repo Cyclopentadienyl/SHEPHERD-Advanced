@@ -13,17 +13,19 @@ shell's head script (`src/webui/shell.py`, its layout pass) writes
 ``data-shep-layout="side"`` or ``"stack"`` on the root element, and every
 style sheet keys its side-by-side and stacked rules off it, through `SIDE`
 and `STACK` (``SIDE + " { … }"``, the rules nested inside), never a media
-query on the window's size. The browser's usable area (the window's inner
-size, raised to the floor of the arrangement the window takes: no wider than
-tall, `STACK_FLOOR_WIDTH`; wider, the display floor, `FLOOR_WIDTH` x `FLOOR_HEIGHT`)
-decides it: no wider than it is tall, stacked; wider, side by side when
-the page shown fits by its panels' own minimum widths (each panel's
-``--shep-panel-min``, set in its page's style sheet; side by side, a panel is
-never narrower), else stacked. A short window (`SHORT`, under
-`SHORT_BELOW` px tall) is density only: it never stacks, shrinks text or
-squeezes a chart. Before the first pass nothing is written, which reads as
-stacked. Below the floor the frame keeps the floor's size and the document
-scrolls, so every mark is the floor's.
+query on the window's size. The arrangement is chosen by width (R-ARR, the
+owner's D11 of 2026-11-24): a window wider than tall tries side by side
+first, which needs `FLOOR_WIDTH` and the page shown to fit by its panels' own
+minimum widths (each panel's ``--shep-panel-min``, set in its page's style
+sheet; side by side, a panel is never narrower); otherwise stacked, with the
+stacked floor `STACK_FLOOR_WIDTH`; only when neither fits does the page
+scroll. A short window (`SHORT`, under `SHORT_BELOW` px tall) is density
+only: height never changes the arrangement, shrinks text or squeezes a
+chart. Before the first pass nothing is written, which reads as stacked. The
+usable area is the window's inner size raised to the floor of the
+arrangement chosen (side by side, `FLOOR_WIDTH` x `FLOOR_HEIGHT`; stacked,
+the width `STACK_FLOOR_WIDTH` and no height floor): below it the frame keeps
+the floor's width and the document scrolls, so every mark is the floor's.
 
 This style sheet goes into the page's head as a ``<style>`` element, with the
 shared ⓘ's and each page's own ``PAGE_CSS`` (`src/webui/app.py`,
@@ -79,24 +81,28 @@ SHORT_BELOW = 900
 #: the dashboard is drawn for, in CSS px (a 1080p screen at 150 % gives about 1280 wide). At or
 #: above it in both axes the interface is whole: side by side the frame never scrolls (the
 #: area's one region scrolls inside, with its cue), nothing scrolls sideways and nothing is
-#: compressed to fit. Below it in either axis the layout is drawn as at the floor and shrinks no
-#: further: the app's frame keeps the floor's size in that axis (`SHELL_CSS`: its ``min-width``,
-#: and side by side its height) and the document scrolls as a whole. The shell's layout pass
-#: decides every mark on the window's size raised to the floor in each axis (`shell.py`'s
-#: ``area()``), so below the floor each mark is the floor's. One pair, read by those two only:
-#: no media query on the window's size, no page's own copy.
+#: compressed to fit. It is the side-by-side arrangement's floor: a window wider than tall tries
+#: side by side only at or above this width (R-ARR, the owner's D11 of 2026-11-24), and a window
+#: narrower than it takes the stacked arrangement (`STACK_FLOOR_WIDTH`). Side by side, under its
+#: height the layout is drawn as at the floor and shrinks no further: the app's frame keeps the
+#: floor's height (`SHELL_CSS`, `SIDE`) and the document scrolls down. The shell's layout pass
+#: decides every mark on the window's size raised to the floor of the arrangement chosen
+#: (`shell.py`'s ``area()``), so below the floor each mark is the floor's. One pair, read by
+#: those two only: no media query on the window's size, no page's own copy.
 FLOOR_WIDTH, FLOOR_HEIGHT = 1280, 720
 #: **The stacked arrangement's floor** (the owner's decision of 2026-11-23 on portrait windows): a
-#: window no wider than tall takes the stacked arrangement, and this is its floor, a 1080p screen
-#: turned upright at 125 % (1080 at 100 %). Measured stacked, every page in both states with every
-#: drawer holds every shared rule with nothing compressed at 1080, 1024, 960 and 864 px wide; at
-#: 720 (the same screen at 150 %) Models' tree in its narrow form runs past its panel, and at 800
-#: it has a few px to spare. The display floor above is the side-by-side arrangement's; the layout
-#: pass raises the window to the floor of the arrangement the window takes (`shell.py`'s
-#: ``area()``: no wider than tall, this width in both axes, the narrowest window no wider than
-#: tall; wider, `FLOOR_WIDTH` x `FLOOR_HEIGHT`) and writes that floor's width (`FLOOR_VAR`) for the
-#: frame's ``min-width`` (`SHELL_CSS`), so a portrait window at or above it never scrolls sideways,
-#: and one below it is drawn as at it, the document scrolling.
+#: window no wider than tall takes the stacked arrangement, and so does a window wider than tall
+#: where side by side does not fit (R-ARR, the owner's D11 of 2026-11-24: under `FLOOR_WIDTH`, or
+#: the page's panels wider than the window); this is its floor, a 1080p screen turned upright at
+#: 125 % (1080 at 100 %). Measured stacked, every page in both states with every drawer holds
+#: every shared rule with nothing compressed at 1080, 1024, 960 and 864 px wide; at 720 (the same
+#: screen at 150 %) Models' tree in its narrow form runs past its panel, and at 800 it has a few px
+#: to spare. The display floor above is the side-by-side arrangement's; the layout pass raises the
+#: window to the floor of the arrangement chosen (`shell.py`'s ``area()``: stacked, this width and
+#: no height floor, a stacked page flowing; side by side, `FLOOR_WIDTH` x `FLOOR_HEIGHT`) and
+#: writes that floor's width (`FLOOR_VAR`) for the frame's ``min-width`` (`SHELL_CSS`), so a
+#: stacked window at or above it never scrolls sideways, and one below it is drawn as at it, the
+#: document scrolling.
 STACK_FLOOR_WIDTH = 864
 #: The width of the floor the window's arrangement takes, in px (a custom property on the root
 #: element the layout pass writes): the frame's ``min-width``.
@@ -175,9 +181,12 @@ FIT_WANT = "--shep-fit-want"
 #: and no window size decides it: the box's own height, the column's and the
 #: region's floor do.
 #: **The bottom scroll cue's fade length** (a custom property, px): the shell's layout pass sets
-#: it on a region with more below so the fade reaches back over the nearest thing the region
-#: draws at its edge (28 px at least; the sweep's L7 check, C1: a fade over the gap between two
-#: fields reads as nothing).
+#: it on a region with more below so the fade reaches back over the last text line the region
+#: draws above its edge (28 px at least; the sweep's L7 check, C1: a fade over the gap between two
+#: fields reads as nothing), and at most about one and a half text lines (R-CUE, the owner's D4 of
+#: 2026-11-24). Where no line is in that reach, or that line would end in the fade's upper half
+#: (the fade over more blank than words: LOOK5's L8-2 and L8-4), the region's edge cue
+#: (``data-shep-more-edge``) is drawn instead of a fade.
 FADE_VAR = "--shep-more-fade"
 FOLD = "shep-fold"
 FOLD_ROOM = "shep-fold-room"
@@ -219,6 +228,10 @@ SHELL_CSS = """
   --shep-title-size: 20px; --shep-body-size: 15px; --shep-key-size: 14px;
   --shep-weight-strong: 600;
   --shep-label-size: 14px; --shep-label-weight: 600; --shep-label-color: var(--shep-text);
+  /* **A field's width by its role** (R-WIDTH, the owner's D12 of 2026-11-24), in ``ch`` of each
+     field's own type: a short number modest, a name wider, a path and a search growing from a
+     floor with their container. A choice keeps its longest option (``OPTION_CHARS``). */
+  --shep-w-num: 10ch; --shep-w-name: 28ch; --shep-w-grow-min: 24ch;
   /* A field row's two measures (D03, `.shep-field-row`): a select's or text box's box, 39 px and
      its 1 px border each side, and the room Gradio's padded block leaves under it. */
   --shep-field-box-h: 41px; --shep-field-pad-b: 10px;
@@ -282,13 +295,12 @@ body { color: var(--shep-text); }
    strong weight, never the browser's 700. */
 .gradio-container b, .gradio-container strong, .gradio-container th { font-weight: var(--shep-weight-strong); }
 #shep-shell { position: relative; gap: 0 !important; background: var(--shep-bg); }
-/* **The display floor** (`FLOOR_WIDTH`, `FLOOR_HEIGHT`; a window no wider than tall, the stacked
-   arrangement's, `STACK_FLOOR_WIDTH`): the app's frame is never narrower than the floor of the
-   arrangement the window takes (`FLOOR_VAR`, the layout pass's; the display floor's before its first
-   pass), less the room the window's own scrollbar takes (``100vw - 100%``: a stacked page's), so a
-   window at the floor never scrolls sideways and one below it scrolls as a whole, its layout drawn
-   as at the floor. Side by side its height is the window's and never under the floor's (`SIDE`,
-   below). */
+/* **The display floor** (`FLOOR_WIDTH`, `FLOOR_HEIGHT`; stacked, `STACK_FLOOR_WIDTH`, R-ARR): the
+   app's frame is never narrower than the floor of the arrangement chosen (`FLOOR_VAR`, the layout
+   pass's; the display floor's before its first pass), less the room the window's own scrollbar
+   takes (``100vw - 100%``: a stacked page's), so a window at the floor never scrolls sideways and
+   one below it scrolls as a whole, its layout drawn as at the floor. Side by side its height is the
+   window's and never under the floor's (`SIDE`, below); stacked it has no height floor. */
 gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%)); }
 
 /* ---------------------------------------------------------------- row 1: brand, area switch, chips, Settings */
@@ -311,10 +323,14 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
 .shep-chips { display: flex; align-items: center; gap: 10px; }
 /* The header's chips (R-21; the WebUI skill's §6, normal states are quiet): a
    normal state ("Operator controls: on", "GPU jobs: none") is plain text with
-   its mark, no box; only a state to watch is a lozenge: read-only amber with
-   the lock, a GPU job running in the info colour, a state not read grey. The
-   marks are the status tokens: on a filled green dot, none and not read a
-   hollow grey ring, a job the info colour. */
+   its mark, no box, and so is a chip not read yet (``pending``: grey words, no
+   mark); only a state to watch is a lozenge: read-only amber with the lock, a
+   GPU job running in the info colour, a missing setting (``unset``) and a read
+   that failed (``unreadable``) grey with their own words, a lock that refuses
+   every managed job (``blocked``) red with the cross (R-STATE: four states,
+   never one ``unread``). The marks are the status tokens: on a filled green
+   dot, none, not set up and could not be read a hollow grey ring, a job the
+   info colour, the lock problem the error's cross. */
 .shep-chip {
   display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 2px; border-radius: 999px;
   font-size: 14px; line-height: 1; white-space: nowrap; border: 1px solid transparent;
@@ -326,9 +342,13 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
 #shep-chips > div, #shep-chips > div > div { min-width: 0; max-width: 100%; }
 .shep-chip button.shep-i { margin: 0 -3px 0 -1px; color: inherit; }
 .shep-chip button.shep-i::before { inset: 3px; border-color: currentColor; background: transparent; }
-.shep-chip-readonly, .shep-chip-unread, .shep-chip-busy { padding: 0 4px 0 10px; }
+.shep-chip-readonly, .shep-chip-unset, .shep-chip-unreadable, .shep-chip-blocked, .shep-chip-busy { padding: 0 4px 0 10px; }
 .shep-chip-readonly { background: var(--shep-amber-50); border-color: var(--shep-amber-300); color: var(--shep-amber-800); }
-.shep-chip-unread { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }
+.shep-chip-unset { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-status-neutral); }
+.shep-chip-pending { color: var(--shep-status-neutral); }
+.shep-chip-unreadable { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-status-neutral); }
+.shep-chip-blocked { background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-status-error); }
+.shep-chip-mark { flex: none; line-height: 1; }
 .shep-chip-busy { background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }
 .shep-dot {
   width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; flex: none;
@@ -378,13 +398,17 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
   outline: 2px solid var(--shep-focus-ring) !important; outline-offset: 2px; box-shadow: none;
 }
 #shep-research-nav > .tab-wrapper button[role="tab"]:focus-visible { outline-offset: -2px; }
-/* Not enough room for one row: the chips and Settings go onto a second line. */
+/* Not enough room for one row: the chips and Settings go onto a second line (D10, the owner of
+   2026-11-24): the states start at the line's left, on the brand's edge (the layout pass's
+   ``--shep-chips-left``), and Settings ends it at the right; the chips never reach Settings. */
 #shep-shell.shep-nav-wrapped #shep-nav > .tab-wrapper > .tab-container { row-gap: 10px; padding-bottom: 0; }
 #shep-shell.shep-nav-wrapped #shep-nav > .tab-wrapper .right-tab-group {
   flex-basis: 100%; justify-content: flex-end; min-height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
 }
 #shep-shell.shep-nav-wrapped #shep-chips {
   top: var(--shep-chips-top, var(--shep-row1-h)); height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
+  left: var(--shep-chips-left, 16px); right: auto; justify-content: flex-start;
+  max-width: calc(100% - var(--shep-chips-left, 16px) - var(--shep-settings-w, 120px) - 32px);
 }
 
 /* ---------------------------------------------------------------- row 2: the research pages, the stage hint */
@@ -648,7 +672,7 @@ span.shep-note { display: inline-block; }
    columns (M5: as a flex box its text and each element in it were columns of their own), at the
    measure, start-aligned. Led by a mark hidden from a screen reader (a lock, a status shape), the
    mark keeps a column of its own and every line of the words starts on one edge: the mark and
-   one element of words after it (`data_locations.reason_line`, `renderers.see_above`), as every
+   one element of words after it (`data_locations.reason_line`, `renderers.phrase_line`), as every
    producer draws it. Both columns are as wide as what they hold (the words' at most the line): an
    ``auto`` mark column took the room the words left, so on a line wider than them the words
    started far from their mark (74 px on Fine-tune, 209 px on Test), and a page's own
@@ -702,6 +726,29 @@ span.shep-note { display: inline-block; }
    accordion: the turn is set here over Gradio's inline one. */
 .gradio-container button.label-wrap > .icon { transform: rotate(-90deg) !important; }
 .gradio-container button.label-wrap.open > .icon { transform: none !important; }
+/* Its mark by its title (R-WIDTH, the owner's D12): within 1em after the words, as "Details ›"
+   reads, never across the panel; the whole title row stays the one button that toggles it. One
+   choice for the app. */
+.gradio-container button.label-wrap { justify-content: flex-start !important; gap: 8px !important; }
+
+/* **Widths by role** (R-WIDTH): the class on a field's block sets its box's width by what it
+   holds; the block keeps its cell, so white space beside a short field is fine. A number is at
+   most its token wide (and its padding and border); a name at most its token; a path and a search
+   grow with their container from their floor (a floor never wider than the container). */
+.shep-w-num :is(input[type=number], input[type=text]) {
+  max-width: calc(var(--shep-w-num) + 2 * var(--input-padding, 10px) + 2 * var(--input-border-width, 1px));
+}
+.shep-w-name :is(input[type=text], textarea) {
+  max-width: calc(var(--shep-w-name) + 2 * var(--input-padding, 10px) + 2 * var(--input-border-width, 1px));
+}
+.shep-w-path, .shep-w-search { min-width: min(var(--shep-w-grow-min), 100%) !important; }
+/* Their grow is along a row's line (a row, a bar, a bar's group, or the form Gradio wraps a row's
+   fields in, whose direction is its row's): in a column a flex basis is a height, and a path box
+   stood 24ch tall (the L8 close; lane T put its path in a row to avoid it). The container part
+   counts for nothing (``:where``), so the role keeps its weight against a row's own rules. */
+:where(.row, .shep-bar, .shep-grp, :is(.row, .shep-bar, .shep-grp) > .form) > :is(.shep-w-path, .shep-w-search) {
+  flex: 1 1 var(--shep-w-grow-min) !important;
+}
 
 /* **A field row** (D03, the WebUI ledger's UI-03): labelled fields with an action beside them
    (Fine-tune's base picker, Training's Continue drawer, Test's Run, the Diagnosis load drawer's
@@ -759,6 +806,28 @@ span.shep-note { display: inline-block; }
    measure that caps it, in a row wide enough to hold the measure and the control: 2560 px) take
    the row's next line: the shell's layout pass marks them (``data-shep-own-line``). */
 .shep-beside-row > .shep-beside[data-shep-own-line] { flex-basis: 100% !important; }
+/* **R-WIDTH: a button is its words' width, full width only as the single action of an area no
+   wider than its fields** (the owner's D12 of 2026-11-24: "whether a button is full width depends
+   on its action area"): in a row (a panel's footer, a bar and a bar's group are rows) or a column,
+   an action never takes the room its area has left (Gradio grows a button with its row and
+   stretches it in a column), and its words stay on one line (the row wraps whole actions). The
+   area the shell's layout pass marks (``data-shep-span``: one action with nothing beside it and
+   no field in the area, no wider than its panel's widest field; never a group) is spanned by its
+   action, as a form's one action under its fields is. The default is the least specific rule
+   (``:where``), so a role's own size still applies (an icon-only button's square,
+   ``shep-icon-btn``; a field row's button). */
+.gradio-container :where(.row, .column, .shep-panel-ft, .shep-bar, .shep-grp) > :where(button.lg, button.md, button.sm) {
+  flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap;
+}
+.gradio-container :where(.column:not(.row)) > :where(button.lg, button.md, button.sm) { align-self: flex-start; }
+.gradio-container [data-shep-span] > :is(button.lg, button.md, button.sm),
+.gradio-container [data-shep-span] > .column > :is(button.lg, button.md, button.sm) {
+  flex: 1 1 auto !important; width: 100% !important; min-width: max-content !important; align-self: stretch;
+}
+/* A column in a row that only wraps one action (the layout pass's ``data-shep-wrap``: no field,
+   nothing else in its flow, the row not spanned) is its action's width, so the row's actions
+   stand together (the L8 close: Run Diagnosis stood a 230 px hole away from Clear). */
+.gradio-container .row > .column[data-shep-wrap] { flex: none !important; width: auto !important; }
 .shep-intro { padding: 12px 16px 0; margin: 0; font-size: 14px; color: var(--shep-text-2); }
 .shep-card { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-card-hd .shep-muted { font-weight: 400; font-size: 14px; }
@@ -847,7 +916,7 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-digest .shep-dl { grid-column: 1 / -1; font-size: 14px; font-weight: 600; color: var(--shep-text-2); }
 
 /* ---------------------------------------------------------------- the notice (M1) */
-/* **The one notice** (`renderers.notice_block`, `notices_block`, `see_above`; the text brief's
+/* **The one notice** (`renderers.notice_block`, `notices_block`, `phrase_line`; the text brief's
    §1): one line at the body size, its status mark in a column of its own so a wrapped line
    starts under the words; the page's consequence and the next step, a link to its place, in the
    same flow; the why and how under "Details ›" at 14 px, its references muted. Prose at the
@@ -876,6 +945,23 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-nb-steps > li::marker { color: var(--shep-muted); }
 .shep-nb-more { font-size: 14px; line-height: var(--shep-lh-prose); }
 .shep-nb-more[open] > summary { margin-bottom: var(--shep-space-item); }
+/* **R-DETAILS** (`renderers._with_details`): a notice's "Details ›" closes its last line, after
+   the words where the line has room (one unit, moved to the next line whole where it has none);
+   opened, its rows go under the line on the words' edge. The summary reads at the line's size. */
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline !important; margin: 0; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more > summary {
+  display: inline !important; white-space: nowrap; min-height: 0; line-height: inherit; font-size: inherit;
+  margin: 0 0 0 0.25em;
+}
+/* The measure is the words' (prose, 56ch); a line that closes with "Details ›" keeps room for the
+   control after them, so a one-line notice says its Details on that line (the owner's C: at 1850
+   wide the run bar's notice drew "Details ›" alone on a second line). */
+.shep-nb:has(> :is(.shep-nb-line, .shep-nb-next) > .shep-nb-text > .shep-nb-more),
+.shep-nb:has(> .shep-nb-next > .shep-nb-more) { max-width: calc(var(--shep-measure) + 6em); }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more::details-content { display: none; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open]::details-content { display: block; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > :not(summary):first-of-type,
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > summary + * { margin-top: var(--shep-space-item); }
 .shep-nb .shep-nb-kv { gap: var(--shep-space-item) 12px; font-size: 14px; }
 .shep-nb .shep-nb-kv > .shep-v { font-size: 14px; overflow-wrap: break-word; }
 .shep-nb .shep-nb-ref { margin: var(--shep-space-item) 0 0; font-size: 14px; color: var(--shep-muted); }
@@ -889,6 +975,18 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
 }
 .gradio-container button.shep-nb-go:hover { text-decoration-thickness: 2px; }
+/* **R-WHY: a dimmed control's phrase** (`renderers.reason_phrase`): five words at most beside the
+   control, a link in the accent text (4.5:1 on the page's ground), focusable, one unit on its
+   line; activated, its whole reason comes into view (a notice) or opens in the one help bubble
+   (a header chip's). The words say the need or who can act, never "disabled". */
+.gradio-container button.shep-why {
+  display: inline; margin: 0; padding: 0; border: 0; background: none; font: inherit;
+  color: var(--shep-accent-text); text-align: start; cursor: pointer; white-space: nowrap;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+}
+.gradio-container button.shep-why:hover, .gradio-container button.shep-why[aria-expanded="true"] {
+  text-decoration-thickness: 2px;
+}
 /* A literal token in a sentence (`renderers.token_html`): breaks only at its <wbr>, no hyphen. */
 .gradio-container code.shep-tok { hyphens: none; white-space: normal; overflow-wrap: normal; }
 .gradio-container code.shep-tok > span { white-space: nowrap; }
@@ -907,6 +1005,34 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    1850 and 106 at 2560, its Acceleration sentence to 67 (the sweep's L7 check, C12). The muted
    line is a box only there, so a muted word inside a line still wraps with it. */
 :where(.gradio-container .info-text) { max-width: var(--shep-measure); }
+/* **A field's note follows its control** (R-ALIGN, the owner's A of 2026-11-24; Carbon's helper
+   text, Material's supporting text): Gradio draws a field's ``info=`` line between its label and
+   its control, so in a row of fields the control of the one field with a note stood a line under
+   its neighbours' (Fine-tune's Device beside Run name, 16 to 35 px). The box that holds the label,
+   the note and the control (a text box's, a number's, a select's) is drawn as a table whose
+   caption, at its foot, is the note: its label and ⓘ stay one line of text as before (their own
+   line box, wrapping as they did), its control follows, and the note comes last; a caption never
+   sets its table's width beyond its longest word. A choice group's fieldset cannot be drawn as a
+   table, so it lays the same order out as flex lines with no gap (Gradio gives the fieldset one,
+   unused while it is a block): its label line (with the strut a line of text has, ``::before``),
+   a break (``::after``), its options, its note; its title is short and stays one line. Either way the note never sets its field's width (``width: 0`` in the flex
+   form: a choice group stays its options' width, the sweep's L7, SW-LK2). The label keeps a plain label's room under it (Gradio gives a label with a
+   note under it less: ``span.has-info``), so the control's top is a plain field's; the note sits
+   an item's space under the control. Only the order drawn changes: the note keeps its place in the
+   page and its ``aria-describedby``.
+   A note already after its control (a checkbox's) is not matched. */
+.gradio-container :not(fieldset):has(> .info-text + *) { display: table !important; width: 100%; }
+.gradio-container :not(fieldset):has(> .info-text + *) > .info-text {
+  display: table-caption; caption-side: bottom; margin: var(--shep-space-item) 0 0;
+}
+.gradio-container fieldset:has(> .info-text + *) { display: flex !important; flex-wrap: wrap; align-items: baseline; gap: 0 !important; }
+.gradio-container fieldset:has(> .info-text + *)::before { content: "\\200b"; flex: 0 0 0; }
+.gradio-container fieldset:has(> .info-text + *)::after { content: ""; order: 1; flex: 1 0 100%; height: 0; }
+.gradio-container fieldset:has(> .info-text + *) > .info-text ~ * { order: 2; flex: 1 1 100%; }
+.gradio-container fieldset:has(> .info-text + *) > .info-text {
+  order: 3; flex: 1 1 100%; width: 0; margin: var(--shep-space-item) 0 0;
+}
+.gradio-container :has(> .info-text + *) > [data-testid="block-info"] { margin-bottom: var(--spacing-lg); }
 :where(br + .shep-muted) { display: inline-block; max-width: var(--shep-measure); }
 :where(.shep-panel h2, .shep-panel h3, .shep-edge h2, .shep-edge h3) { text-wrap: balance; }
 
@@ -940,7 +1066,10 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-bar > .shep-bar-note { flex: 1 1 100% !important; min-width: 0 !important; }
 .shep-bar > .shep-bar-note:not(:has(> .html-container > :not(:empty), .prose > *)) { display: none !important; }
 .shep-grp :is(input[type=text], input[type=search], textarea):not([role=combobox]) { min-width: var(--shep-input-floor); }
-.shep-grp > :is(.block, .form):has(input[type=text]:not([role=combobox]), textarea) {
+/* A group's text box grows from 18ch over its floor: a default, the least specific rule
+   (``:where``), so a box that carries its width role (``shep-w-search``, ``shep-w-path``) takes
+   the role's (the L8 close: this rule, 0,3,1, overrode every role in a group). */
+:where(.shep-grp) > :where(.block, .form):where(:has(input[type=text]:not([role=combobox]), textarea)) {
   flex: 1 1 18ch !important; min-width: calc(var(--shep-input-floor) + 24px) !important;
 }
 .shep-grp > button { flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap; }
@@ -1252,14 +1381,19 @@ button.shep-row {
 .shep-search-row > :first-child, .shep-search-row > button { flex: none !important; width: auto !important; min-width: max-content !important; }
 /* The box is a group's text box (M2): it takes the line's room and never goes under its floor;
    where the row has not that room its parent wraps it whole (a bar) or it scrolls in its region,
-   never a 22 px box with Clear over it (B-03: every child here was allowed to shrink to 0). */
-.shep-search-row > :not(:first-child):not(button) {
+   never a 22 px box with Clear over it (B-03: every child here was allowed to shrink to 0). A
+   default, so the least specific rule (``:where``, as the button rule's default): a box that
+   carries its width role (``shep-w-search``) takes the role's width (the L8 close: this rule,
+   0,2,1, overrode the role's, 0,1,0, both !important). */
+:where(.shep-search-row) > :where(:not(:first-child):not(button)) {
   flex: 1 1 18ch !important; min-width: calc(var(--shep-input-floor) + 24px) !important;
 }
 /* In a bar (whose groups stand on one bottom line) "Search" and Clear stay on the box's middle
    line: a label beside its box is no label above it. */
 .shep-bar > .shep-grp.shep-search-row { align-items: center !important; }
-.shep-search-lbl { font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }
+/* **A bar's label** (D14): a search row's "Search" and any other group's label in the same bar
+   ("Order" on Models) read as one label style, every field label's tokens. */
+.shep-search-lbl, .shep-bar-lbl { font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); white-space: nowrap; }
 .shep-list-outside { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
 /* Its "↑ Back to the list" (`model_list.BACK_TO_LIST`), shown stacked only, at the title's end. */
@@ -1329,6 +1463,28 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
     linear-gradient(to right, #000 calc(100% - 28px), transparent);
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
+}
+/* **The edge cue** (R-CUE, the owner's D4 of 2026-11-24): where a region's edge falls in a gap
+   (the shell's ``fadeOf``: no text line over it, within about one and a half lines, whose foot a
+   fade would draw at half strength or less), no fade is drawn over the blank; the region's foot
+   draws one shared cue that says nothing of its content, a hairline and a soft shadow inside its
+   edge (Material's scrolled-under state, Apple's scroll edge effect), while more lies below
+   (``data-shep-more-edge``, kept by the same pass). A region whose last line in view would be a
+   lone title (a heading or a field's label, every control it heads under the edge) ends in the
+   gap above it instead (``data-shep-more-cut``: the shell's ``recut`` gives its foot that much, a
+   footer after it staying put) and draws this cue; so does one whose edge falls in a gap a field's
+   box starts in, above that box (its ground would hide the cue). A fade sideways
+   stays. The cue is drawn on whatever region ``fadeOf`` marks, whatever else styles it: a
+   ``gr.HTML`` block's container rule (Gradio's ``.hide-container…:not(.fullscreen)``, three classes)
+   clears every block's shadow, so the cue's shadow is ``!important`` (it was never drawn on a
+   ``gr.HTML`` region: the Diagnosis Load drawer's facts, the L8 close). */
+[data-shep-more][data-shep-more-edge] {
+  -webkit-mask-image: none; mask-image: none;
+  box-shadow: inset 0 -1px 0 var(--shep-border-2), inset 0 -16px 12px -12px rgba(20, 24, 40, .16) !important;
+}
+[data-shep-more][data-shep-more-edge][data-shep-more-x] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 /* **A box folded** (`FOLD`, OPS-FIX-N1): its column has not the room for it whole beside the region
    at its floor (`FOLD_FLOOR`), so its long parts are not drawn; the box's own details hold them. */

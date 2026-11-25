@@ -200,7 +200,7 @@ def test_a_read_only_request_lists_nothing_and_opens_nothing(root, serving, monk
     assert listing["refused"] is True and "did not arrive on this machine" in listing["problem"]
     # A listing is no act (M5-3 review UI-6): the short line every page uses.
     shown = ml.list_html(listing, None, ml.PRESETS["clinical"])
-    assert "Operator controls only: request not local." in shown
+    assert "Operator controls only</button>" in shown and 'data-why="d8"' in shown
     assert "Refused" not in shown and "Nothing was done" not in shown
 
 
@@ -500,6 +500,128 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     assert stacked["layout"] == "stack"
     assert stacked["list"][1] <= stacked["facts"][0] < stacked["load"][0], stacked
     assert seen["picked"] is True and seen["back"] is True, seen
+
+
+def _both_pages(root, monkeypatch):
+    """Diagnosis (its Load drawer, the clinical preset) and Models (the research preset) in
+    one shell, the other pages empty, for an operator, the demo workspace's model served."""
+    from src.webui import shell
+    from src.webui.components import diagnosis_panel as dp
+    from src.webui.components import models_page as mp
+
+    operator_mode(monkeypatch)
+    status = _status(root)
+    monkeypatch.setattr(mp, "read_status", lambda: (status, None))
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab,
+                                 shell.MODELS: mp.create_models_page})
+    return demo
+
+
+#: Each preset's tools bar as drawn (Models, then Diagnosis' Load drawer): its labels' type
+#: and bottom edge, the bar's children on the search group's line and after it, the bar's
+#: content edge, and the search box against its role's floor (`--shep-w-grow-min`, resolved
+#: in the box's own type by a probe beside it).
+_TOOLBAR_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const measure = (p) => {
+  const q = (s) => document.querySelector(s);
+  const search = q(`#${p}-searchrow`), bar = search.parentElement;
+  const lbl = (e) => { if (!e) { return null; } const cs = getComputedStyle(e), b = e.getBoundingClientRect();
+    return { size: cs.fontSize, weight: cs.fontWeight, family: cs.fontFamily, bottom: b.bottom }; };
+  const s = search.getBoundingClientRect();
+  const kids = [...bar.children].filter((c) => c.getBoundingClientRect().height > 0).map((c) => {
+    const b = c.getBoundingClientRect();
+    return { id: c.id, grp: c.classList.contains('shep-grp'), note: c.classList.contains('shep-bar-note'),
+             top: b.top, bottom: b.bottom, left: b.left, right: b.right,
+             onLine: Math.min(b.bottom, s.bottom) - Math.max(b.top, s.top) > (s.bottom - s.top) / 2 };
+  });
+  const cs = getComputedStyle(bar), bb = bar.getBoundingClientRect();
+  const input = q(`#${p}-search input, #${p}-search textarea`);
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;visibility:hidden;width:var(--shep-w-grow-min)';
+  probe.style.font = getComputedStyle(input).font;
+  input.parentElement.appendChild(probe);
+  const floor = probe.getBoundingClientRect().width; probe.remove();
+  return { search: lbl(q(`#${p}-search-lbl .shep-search-lbl`)), order: lbl(q('#shep-mp-order-lbl .shep-bar-lbl')),
+           kids, barRight: bb.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth),
+           box: input.getBoundingClientRect().width, floor };
+};
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(), null, { timeout: 30000 });
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-dx-change-btn:not([disabled])', { timeout: 60000 });
+    await idle();
+    await page.click('#shep-tab-research-button');
+    await page.click('#shep-page-models-button');
+    await page.waitForSelector('#shep-models-research-rows [data-key]', { state: 'attached', timeout: 30000 });
+    await idle();
+    const models = await page.evaluate(measure, 'shep-models-research');
+    await page.click('#shep-tab-clinical-button');
+    await page.click('#shep-dx-change-btn');
+    await page.waitForSelector('#shep-models-clinical-rows [data-key]', { state: 'attached', timeout: 30000 });
+    await idle();
+    const drawer = await page.evaluate(measure, 'shep-models-clinical');
+    out[`${w}x${h}`] = { models, drawer };
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_search_and_order_share_one_line_one_label_style_in_both_presets(
+        root, serving, monkeypatch, tmp_path):
+    """D14 / SW-LK4d (the owner's decision of 2026-11-24): Search and Order are one toolbar
+    line through one component in Models and in Diagnosis' Load drawer. The drawer's tools
+    were a row of fields of their own (the count squeezed beside the search box) where Models'
+    are the shared bar. Now both presets draw the one bar (``shep-bar``): on the search
+    group's line only groups (Search with its box and Clear; Models' Order), the search taking
+    the line's free width to the bar's end, the bar's notes (the count) a row of their own
+    under the line; the labels in one type (size, weight, family) on one bottom edge (±1 px);
+    the search box at or above its role's floor (``shep-w-search``). At 1850 x 960 and the
+    display floor. Fails before: the drawer's count shared the search's line and the search
+    stopped short of the bar's end."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    demo, _ctx, clinical, research = _component("clinical", both=True)
+    for handle in (clinical, research):
+        assert "shep-w-search" in (handle.search.elem_classes or []), handle.search.elem_classes
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(_both_pages(root, monkeypatch), **mount_options()) as base:
+        seen = run_node(_TOOLBAR_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    for size, at in seen.items():
+        labels = [at["models"]["search"], at["models"]["order"], at["drawer"]["search"]]
+        assert len({(lb["size"], lb["weight"], lb["family"]) for lb in labels}) == 1, (size, labels)
+        assert abs(labels[0]["bottom"] - labels[1]["bottom"]) <= 1, (size, labels)
+        for preset, bar in (("models", at["models"]), ("drawer", at["drawer"])):
+            line = [k for k in bar["kids"] if k["onLine"]]
+            assert line and all(k["grp"] for k in line), (size, preset, bar["kids"])
+            assert abs(line[-1]["right"] - bar["barRight"]) <= 1, (size, preset, bar)
+            below = max(k["bottom"] for k in line)
+            assert all(k["top"] >= below - 0.5 for k in bar["kids"] if k["note"]), (size, preset, bar)
+            assert bar["box"] >= bar["floor"] - 1, (size, preset, bar)
+        assert [k["id"] for k in at["models"]["kids"] if k["onLine"]] == [
+            "shep-models-research-searchrow", "shep-mp-controls"], (size, at["models"]["kids"])
 
 
 _DRAWER_HEAD_JS = r"""
@@ -1846,6 +1968,62 @@ def test_a_draw_that_fails_changes_nothing_drawn(root, serving, monkeypatch, cap
     assert "could not be drawn" in caplog.text
 
 
+@pytest.mark.parametrize("kind", ["neutral", "error"])
+def test_the_drawers_empty_list_says_its_state_and_the_notices_phrase_never_a_pointer(kind):
+    """The owner's D6 of 2026-11-24 (S1's check, S1C-9): the Load drawer's empty list said
+    "No model to list: no workspaces folder is set (see Model in use).", a pointer to a place
+    that may have scrolled away or be in another region. It says its state and the notice's own
+    phrase (R-WHY: "Needs a workspaces folder", a set folder not usable its own phrase), which
+    brings the notice the screen draws into view and focuses its link, or opens its place; the
+    notice itself is still the card's, said once (a relation here, ``data-notice-rel``).
+    Models' list, whose page shows no card, says the notice itself. Fails before: the pointer."""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components import renderers as r
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    notice = {**notice_view(NOTICES[ENV_WORKSPACES_ROOT], kind)}
+    if kind == "error":
+        notice = {**notice, "summary": "The workspaces folder cannot be used.",
+                  "short": "the workspaces folder cannot be used"}
+    listing = {"notice": notice, "items": []}
+    drawer = ml._no_items_html(listing, None, ml.PRESETS["clinical"])
+    words = re.sub(r"<[^>]+>", " ", drawer)
+    assert not re.search(r"\(see\b|\bsee (above|below)\b", words), words
+    assert 'data-notice-rel="workspaces_root"' in drawer and "data-notice=" not in drawer
+    key = r.reason_key(notice)
+    assert key == ("workspaces_root" if kind == "neutral" else "workspaces_root_unusable")
+    assert f'>{r.REASON_PHRASES[key]}</button>' in drawer and f'data-why="{key}"' in drawer
+    assert " ".join(words.split()).startswith(ml.NO_MODEL_TO_LIST), words
+    assert 'data-notice="workspaces_root"' in ml._no_items_html(listing, None,
+                                                               ml.PRESETS["research"])
+
+
+@pytest.mark.parametrize("preset", ["clinical", "research"])
+def test_a_dimmed_loads_phrase_names_the_load_it_explains_in_both_presets(preset):
+    """R-WHY (the owner's D6 of 2026-11-24; S1's leftover, S1C-7): beside a dimmed Load the
+    list drew its phrase ("Operator controls only" for a request D8 refuses, the notice's
+    phrase beside an empty list's Load) with no ``data-for``: the list did not know which
+    element it explained, so the dimmed Load had no ``aria-describedby``. Each instance names
+    its own Load by its element id (the instance that draws it: Diagnosis' Load drawer and
+    Models, never a page's name), so the shell's head script describes the Load by it. Fails
+    before: no ``data-for``."""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components import renderers as r
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    demo, _ctx, handle, _ = _component(preset)
+    load_id = handle.load_button.elem_id
+    assert load_id == f"shep-models-{preset}-load"
+    refused = {**ml.empty_listing(), "refused": True, "condition": "forwarding_header"}
+    notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
+    for listing, phrase in ((refused, r.REASON_PHRASES["d8"]),
+                            ({**ml.empty_listing(), "notice": notice, "items": []},
+                             r.REASON_PHRASES["workspaces_root"])):
+        reason = _drawn(demo, handle, listing)[id(handle.reason)]
+        assert f'>{phrase}</button>' in reason, reason
+        assert f'data-for="{load_id}"' in reason and f'id="{r.why_id(load_id)}"' in reason, reason
+
+
 def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
         root, serving, monkeypatch):
     """Research › Models lists every row; a base or a refused record selected
@@ -2363,7 +2541,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     # workspace choice; the draw, the rows, the count, the facts, from that
     # session's listing.
     refused = call("http://192.0.2.10")
-    assert "Operator controls only: request not local." in json.dumps(refused)
+    assert "Operator controls only</button>" in json.dumps(refused)
     assert "disease_8c2e7a" not in json.dumps(refused)
     (_listing, _selected, workspace, *_states), (rows, count, *_rest) = call(OPERATOR_BASE_URL)
     assert workspace["value"] == "demo"
@@ -3253,16 +3431,17 @@ def test_the_folds_are_changed_in_place_and_never_written_back(root, serving, mo
 
 
 # --------------------------------------------------------------------------- the UI sweep of 2026-11-22
-def test_a_pages_tools_share_one_bar_with_the_search_and_the_drawer_keeps_its_row():
+def test_a_pages_tools_share_one_bar_with_the_search_and_the_drawer_draws_the_same_bar():
     """GB10-UI-03, B-03 (the sweep's M2): a page's own tools (`tools`) are
     built inside the list's tools row right after the search group, so a
     page's group (Models' Order) and the search share one bar
     (``shep-bar``): the search group (``shep-grp shep-grp-grow``) grows and
     keeps its box's floor, a group that does not fit moves under it whole, and
     the count line is the bar's note (a row of its own). The page's column is
-    on the panel's one content edge (``shep-edge``). The Diagnosis drawer
-    passes no tools and keeps its field row, its search row and its count
-    beside the search, as before."""
+    on the panel's one content edge (``shep-edge``). D14 (the owner's
+    decision of 2026-11-24): the Diagnosis drawer passes no tools and draws
+    the same bar, its search group the same group and its count the bar's
+    note (it kept a field row of its own, the count beside the search box)."""
     from src.webui.shell import standalone_context
 
     def tools_of(preset, tools=None):
@@ -3297,11 +3476,12 @@ def test_a_pages_tools_share_one_bar_with_the_search_and_the_drawer_keeps_its_ro
     assert {"shep-search-row", "shep-grp", "shep-grp-grow"} <= set(kids[0][1])
     assert "shep-bar-note" in kids[2][1]
     assert main and "shep-edge" in main[0]
-    # The drawer: no tools, its field row, its search row and count as they were.
+    # The drawer: no tools, the same bar, its search group and its note.
     classes, kids, main = tools_of("clinical")
-    assert "shep-field-row" in classes and "shep-bar" not in classes and main == []
-    assert kids == [("shep-models-clinical-searchrow", ["shep-search-row"]),
-                    ("shep-models-clinical-count", ["shep-html", "shep-field-aside"])]
+    assert "shep-bar" in classes and "shep-field-row" not in classes and main == []
+    assert [k for k, _c in kids] == ["shep-models-clinical-searchrow", "shep-models-clinical-count"]
+    assert {"shep-search-row", "shep-grp", "shep-grp-grow"} <= set(kids[0][1])
+    assert "shep-bar-note" in kids[1][1]
 
 
 def test_the_trees_optional_columns_are_marked_and_its_frame_is_a_fit_box(root, monkeypatch):
@@ -3380,8 +3560,9 @@ def test_load_says_why_it_is_off_with_no_model_chosen():
     notice = w.notice_view(w.NOTICES[w.ENV_WORKSPACES_ROOT])
     first_use = ml.load_reason_html(None, {"notice": notice, "items": []})
     assert f'data-notice-rel="{notice["key"]}"' in first_use and 'class="shep-reason' in first_use
-    assert r.relation_words(ml.LOAD_LABEL, notice) in first_use
+    assert r.REASON_PHRASES["workspaces_root"] in first_use and "disabled" not in first_use
     assert notice["summary"] not in first_use                       # the notice is not said again
     nothing = ml.load_reason_html(None, {"items": [{"key": "x"}]})
-    assert r.disabled_words(ml.LOAD_LABEL, ml.CHOOSE_A_MODEL) in nothing
+    assert ml.CHOOSE_A_MODEL == r.need_words("choose a model in the list first")
+    assert ml.CHOOSE_A_MODEL in nothing
     assert 'class="shep-reason' in nothing and "data-notice-rel" not in nothing

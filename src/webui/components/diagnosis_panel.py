@@ -128,7 +128,7 @@ from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICA
 from src.webui.components.renderers import OPTION_CHARS
 from src.webui.components.renderers import chain_html as _chain_html
 from src.webui.components.renderers import cut_at as _cut_at
-from src.webui.components.renderers import disabled_words as _disabled_words
+from src.webui.components.renderers import need_words as _need_words
 from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import fingerprint_value as _fingerprint_value
 from src.webui.components.renderers import grapheme_ends as _grapheme_ends
@@ -1636,26 +1636,26 @@ TOPIC_HELP = {
         "- Evidence, explanation, matching phenotypes, paths: this result's own.",
     ),
     "dx-run-no-model": (
-        "Run Diagnosis is disabled",
+        "Run Diagnosis is unavailable",
         "Nothing is served on this server, so nothing would compute a diagnosis.\n\n"
         "- The card above says why.\n"
         "- An operator loads a model with the card's \"Load a model…\".\n"
         "- An API client asking now is refused, with the server's reason.",
     ),
     "dx-run-stopping": (
-        "Run Diagnosis is disabled",
+        "Run Diagnosis is unavailable",
         "Inference is stopping: accepted diagnoses finish, new ones are refused.\n\n"
         "- Then nothing is served until a model is loaded again.\n"
         "- An operator loads one with \"Load a model…\" on the card above.\n"
         "- An API client asking now is refused, with the server's reason.",
     ),
     "dx-run-change": (
-        "Run Diagnosis is disabled",
+        "Run Diagnosis is unavailable",
         "A model change is open: finish it (Reload with …) or cancel it (Keep … or Cancel).\n\n"
         "Until then no result is produced here, as what is served may change.",
     ),
     "dx-run-loading": (
-        "Run Diagnosis is disabled",
+        "Run Diagnosis is unavailable",
         "This page started a model load, which reloads the pipeline for every session.\n\n"
         "- Run Diagnosis waits for the load's answer.\n"
         "- No result is produced here while what is served changes.\n"
@@ -1663,7 +1663,7 @@ TOPIC_HELP = {
         "- Closing the drawer does not stop the load.",
     ),
     "dx-run-no-cohort": (
-        "Run Diagnosis is disabled",
+        "Run Diagnosis is unavailable",
         "This model ranks cohort patients, and no cohort version can be read.\n\n"
         "- The registry may be not set or refused, or hold no version yet.\n"
         "- It may hold only KG edge sets and versions marked \"cannot be read\".\n"
@@ -1674,21 +1674,21 @@ TOPIC_HELP = {
 }
 
 #: Why Run Diagnosis is off, as visible text under it, in the one form every
-#: page says a disabled control in (`renderers.disabled_words`: "<control>
-#: disabled: <cause>", drawn by `renderers.marked_line` with the neutral mark;
-#: L7 SW-LK8: it was a ⊖ and "Disabled until …" of this page's own). Nothing
-#: served (no model, or a stop letting the accepted diagnoses finish) is said
-#: once, by the card's state and the backend's lead above it; this refers to it.
+#: page says a dimmed control's local cause in (`renderers.need_words`: led by
+#: the need, no control's name, never "disabled"; drawn by
+#: `renderers.marked_line` with the neutral mark; L7 SW-LK8: it was a ⊖ and
+#: "Disabled until …" of this page's own). Nothing served (no model, or a stop
+#: letting the accepted diagnoses finish) is said once, by the card's state and
+#: the backend's lead above it; this refers to it.
 RUN_LABEL = "Run Diagnosis"
-RUN_DISABLED_NO_MODEL = _disabled_words(RUN_LABEL, "load a model first.")
-RUN_DISABLED_CHANGE = _disabled_words(RUN_LABEL, "finish or cancel the model change first.")
-RUN_DISABLED_LOADING = _disabled_words(RUN_LABEL,
-                                        "the model load started here has not answered yet.")
+RUN_DISABLED_NO_MODEL = _need_words("load a model first")
+RUN_DISABLED_CHANGE = _need_words("finish or cancel the model change first")
+RUN_DISABLED_LOADING = _need_words("the model load started here has not answered yet")
 #: A patients-like-me model with no reference cohort version to rank: the
 #: lead, then the cause in its own words with who can act (skill §9). The
 #: registry setting's own words (its name, a command's flag) are an
 #: operator's and never reach this reason (Research › Test shows them).
-RUN_DISABLED_NO_COHORT = _disabled_words(RUN_LABEL, "no reference cohort version can be read.")
+RUN_DISABLED_NO_COHORT = _need_words("no reference cohort version can be read")
 NO_COHORT_REGISTRY = ("The server's results registry is not set or cannot be used. An operator "
                       "sets it in Settings\u00a0› Data locations.")
 NO_COHORT_VERSION = ("The registry holds no cohort version yet. An operator imports one in "
@@ -2798,7 +2798,7 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
         return {"run_btn": gr.update(interactive=True), "run_cover": "", "run_reason": ""}
     title = TOPIC_HELP[key][0]
     cover = (f'<button type="button" class="shep-i shep-i-cover" data-help="{key}" '
-             f'data-help-title="{_e(title)}" aria-label="Run Diagnosis is disabled: why?" '
+             f'data-help-title="{_e(title)}" aria-label="Why Run Diagnosis is unavailable" '
              f'aria-expanded="false" aria-describedby="{text_id(key)}"></button>')
     return {"run_btn": gr.update(interactive=False), "run_cover": cover,
             "run_reason": _marked_line("neutral", why)}
@@ -3746,10 +3746,14 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                                       info=FIELD_INFO["dx_patient_id"],
                                                       max_lines=1, elem_id="dx_patient_id")
                         # Drawn as rows of key, ⓘ and control: the help keeps each
-                        # control after its ⓘ in the page (`help.KEY_FIRST_CLASS`).
+                        # control after its ⓘ in the page (`help.KEY_FIRST_CLASS`). Its
+                        # title is a heading, as every group's is, so a region never ends at
+                        # it alone (the shell's R-CUE reads titles by that role; the L8
+                        # close, CK8-2: drawn as a bare span, the column ended at it with
+                        # Top-K and Explanations under its edge).
                         with gr.Row(elem_id="shep-dx-options",
                                     elem_classes=["shep-dx-options", KEY_FIRST_CLASS]):
-                            plain_html('<span class="shep-dx-opt">Options</span>',
+                            plain_html('<h3 class="shep-dx-opt">Options</h3>',
                                        elem_id="shep-dx-options-label")
                             top_k_input = gr.Number(label="Top-K", value=10, minimum=1,
                                                     maximum=20, step=1, precision=0,
@@ -4369,7 +4373,8 @@ PAGE_CSS = f"""
 {_TAB} :is(#dx_top_k, #dx_explanations) label > :is(span, [data-testid="block-info"]) {{ grid-column: 1; grid-row: 1; margin: 0 !important; }}
 {_TAB} :is(#dx_top_k, #dx_explanations) label > button.shep-i {{ grid-column: 2; grid-row: 1; }}
 {_TAB} :is(#dx_top_k, #dx_explanations) label > input {{ grid-column: 3; grid-row: 1; justify-self: start; margin: 0; }}
-{_TAB} .shep-dx-opt {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
+{_TAB} .shep-dx-opt {{ margin: 0 !important; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight);
+  color: var(--shep-label-color); line-height: inherit; letter-spacing: inherit; }}
 /* Top-K's box holds a value of up to two digits with room to type it, as every text box does
    (the walk's floor: ten widths of "0" in its own type, `ch`), beside its spin arrows. */
 {_TAB} #dx_top_k input[type=number] {{ width: calc(11ch + 16px); }}
@@ -4401,11 +4406,12 @@ PAGE_CSS = f"""
 {_TAB} .shep-tag-dashed {{ border-style: dashed !important; }}
 {_TAB} .shep-dx-state {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-grey-800); margin-bottom: 2px; }}
 {_TAB} .shep-dx-state .shep-dx-retry {{ height: 24px; padding: 0 6px; }}
-/* Nothing served: the backend's lead under the state, its whole reason one click away. */
+/* Nothing served: the backend's lead under the state, its whole reason one click away (the
+   card's own Details ›, or its cause notice's, `diagnosis_card._serving_html`). */
 {_TAB} .shep-dx-serving .shep-st + .shep-st {{ margin-left: 8px; }}
 {_TAB} .shep-dx-serving .shep-dx-when {{ white-space: nowrap; }}
 {_TAB} .shep-dx-why-more {{ font-size: 14px; }}
-{_TAB} .shep-dx-why-more > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
+{_TAB} :is(.shep-dx-why-more, .shep-nb-more) > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
 {_TAB} button.shep-dx-back {{ min-height: 24px; }}
 {_TAB} .shep-dx-change {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; padding: 4px 8px; }}
 {_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }}
@@ -4440,7 +4446,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-reason.shep-dx-why {{ justify-content: end; }}
 {_TAB} #shep-dx-run-why .shep-reason {{ margin: 0 16px 8px; }}
 {_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}
-{_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; flex: 1 1 auto !important; }}
+{_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; }}
 {_TAB} #shep-dx-clear {{ flex: 0 0 auto !important; min-width: 84px !important; padding: 0 18px !important; }}
 {_TAB} #shep-dx-run-cover {{ position: absolute !important; inset: 0; pointer-events: none; z-index: 3; }}
 {_TAB} #shep-dx-run-cover .html-container, {_TAB} #shep-dx-run-cover .prose {{ height: 100%; }}
@@ -4562,9 +4568,8 @@ PAGE_CSS = f"""
    (`renderers.summary_list`: a digest's long label on a line of its own). */
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
 {_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
-/* The search and what the list shows, on a line of their own under the head (R-27). */
-{_TAB} #shep-dx-change .shep-model-tools {{ gap: 8px 14px !important; }}
-{_TAB} #shep-models-clinical-count {{ flex: 1 1 12em !important; }}
+/* The search and what the list shows, on a line of their own under the head (R-27): the shared
+   list's one tools bar (D14), as Models draws it, with nothing of this page's own. */
 /* The head is a field row (D03): the workspace select keeps its own minimum width (Gradio's
    min(160px, 100%)), so a drawer too narrow for the row wraps it rather than squeezing the box
    (at 1280 x 900 it drew 26 px, its label cut to "W"); only the words beside it may shrink. */

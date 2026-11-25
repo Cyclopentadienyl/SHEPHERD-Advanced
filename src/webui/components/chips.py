@@ -14,8 +14,8 @@ repeats no header value). It is a display: each control checks its own request.
 
 **Gated buttons** follow one rule (`gated`; the WebUI skill's §3, a lock means
 refused): no lock while D8 allows the request; disabled, with the lock and
-the visible "Operator controls only: …" reason beside it (`operator_only`),
-while D8 refuses it.
+the visible "Operator controls only" phrase beside it (`operator_only`, which
+opens this chip's whole reason), while D8 refuses it.
 
 **The GPU chip** says what holds the one GPU slot, from the job runner
 (`training_manager.active_job`) and, for a holder outside the runner, the GPU
@@ -23,19 +23,28 @@ lock's descriptive holder record (`src/utils/gpu_lock.py`): "GPU jobs: none",
 "GPU job: training (job runner)", "GPU job: test run (job runner)", "GPU:
 inference (this service)" (this process's CUDA inference, which holds the lock
 while a model is loaded on CUDA, the ops round's I2; with where it is stopped),
-"GPU: inference (pid …, since …)" (another process's), "GPU job:
+"GPU: inference (pid …, since …)" (another process's) or "GPU job:
 train_model.py (pid …, since …)" (what the holder record says: its command, pid
-and start; never "CLI", which the record does not say), or grey "GPU jobs: not
-read". It never says "free": the lock is cooperative (a GPU process that does
-not take it is not stopped by it), and inference on the CPU takes no lock,
-which its ⓘ says. The research start controls repeat its words, with where to
-stop this service's inference (`busy_words`); the job runner's refusal stays
-the authority.
+and start; never "CLI", which the record does not say). It never says "free":
+the lock is cooperative (a GPU process that does not take it is not stopped by
+it), and inference on the CPU takes no lock, which its ⓘ says. The research
+start controls repeat its words, with where to stop this service's inference
+(`busy_words`); the job runner's refusal stays the authority.
+
+**Four states that are no holder, each its own** (R-STATE, the owner's
+"unread" of 2026-11-24: they shared one kind and two of them "not read"):
+"GPU jobs: not set up" (no workspaces folder, so no lock: ``unset``, grey and
+hollow, a missing setting), "… not read yet" (before the first read after a
+page load: ``pending``, grey with no mark), "GPU jobs: could not be read" (the
+read raised: ``unreadable``, grey and hollow, cannot be verified) and "GPU
+jobs: lock not usable" (a lock problem, which refuses every managed job:
+``blocked``, the red cross). Each is its chip's kind, its ``data-state`` and
+its class (`style.py`, the status tokens).
 
 **Nothing here raises and no exception text is shown**: a read that fails is the
-grey "not read" state with a fixed sentence. Every value from a file or a
-request is escaped. A server path (the lock file's, in a lock problem) is named
-only to a request D8 allows.
+grey "could not be read" state with a fixed sentence. Every value from a file
+or a request is escaped. A server path (the lock file's, in a lock problem) is
+named only to a request D8 allows.
 
 Module: src/webui/components/chips.py
 """
@@ -72,16 +81,23 @@ D8_ON = "Operator controls: on (this machine)"
 #: **The lock means "refused"** (the WebUI skill's §3): a gated control shows
 #: it only while D8 refuses the request it was drawn for (`gated`).
 LOCK = "🔒"
-#: The visible reason's lead beside a control D8 refuses (`operator_only`).
-OPERATOR_ONLY = "Operator controls only:"
+#: Who can act, beside a control D8 refuses (`operator_only`; R-WHY's ``d8``
+#: phrase, `renderers.REASON_PHRASES`).
+OPERATOR_ONLY = "Operator controls only"
 
 
-def operator_only(condition: Optional[str]) -> str:
-    """**The visible reason beside a gated control D8 refuses** for this
-    request, in D8's short words: "Operator controls only: request not
-    local" (the header chip's ⓘ gives D8's whole reason). Every page says it
-    in these words, beside the control it turns off."""
-    return f"{OPERATOR_ONLY} {D8_SHORT.get(condition or '', D8_SHORT['unreadable_request'])}"
+def operator_only(condition: Optional[str] = None, *, control: Optional[str] = None) -> str:
+    """**The phrase beside a gated control D8 refuses** for this request
+    (R-WHY, `renderers.reason_phrase`): "Operator controls only", a
+    focusable link that opens the D8 chip's whole reason in the one help
+    bubble (the condition D8 named is the chip's, said there once, so
+    `condition` changes nothing here). `control`: the element id of the
+    control it explains. Every page says it so, beside the control it turns
+    off, after the lock."""
+    from src.webui.components.renderers import reason_phrase
+
+    del condition
+    return reason_phrase("d8", control=control)
 
 
 def gated(label: str, allowed: bool, *, interactive: bool = True) -> Dict[str, Any]:
@@ -103,13 +119,18 @@ D8_SCOPE = (
     "Training: training start and stop\n"
     "Service: saving settings and data locations, restart, stopping the service"
 )
-#: How to reach them; the start-up script, the codes and the SSH command in
-#: the trailing Ref line (each D8 chip's ⓘ ends with it, `d8_chip`).
+#: How to reach them (R-HELP, the owner's C9 of 2026-11-24: for general users
+#: the desktop start comes before SSH and the variables): the service started
+#: from its desktop entry on this computer, in the product's own words
+#: (`server_settings.MODE_NOT_SET_WHY`, the Settings page's Stop service), then
+#: what the request needs, the SSH forward among them; the start-up script,
+#: the variable and the SSH command in the trailing Ref line (each D8 chip's ⓘ
+#: ends with it, `d8_chip`).
 D8_HOW = (
-    "They need a service started here and a request that:\n"
-    "- Arrives on this machine's loopback, directly or through an SSH forward\n"
+    "They need the service started from its desktop entry, and a request that:\n"
+    "- Opens it as localhost here, or through an SSH forward\n"
     "- Has no forwarding header (no reverse proxy), from this dashboard\n"
-    "Ref: SHEPHERD_DEPLOYMENT_MODE=M1, ssh -L 8264:localhost:8264"
+    "Ref: launch_shepherd.sh or SHEPHERD_DEPLOYMENT_MODE=M1, ssh -L 8264:localhost:8264"
 )
 #: Each D8 chip's lead (the bubble's first line, `help.help_lines`), which
 #: the list of controls (`D8_SCOPE`) follows.
@@ -136,7 +157,13 @@ GPU_INFERENCE = "GPU: inference (this service)"
 STOP_INFERENCE_HERE = "stop it with Stop inference on Diagnosis"
 #: The same step as its own sentence, after the chip's words (`busy_words`).
 STOP_INFERENCE_STEP = "Stop it with Stop inference on Diagnosis"
-GPU_NOT_READ = "GPU jobs: not read"
+#: **The states that are no holder** (R-STATE): before the first read, a read
+#: that raised, and a lock that cannot be used; with no workspaces folder,
+#: `GPU_NOT_CONFIGURED`. Each its own words, never "not read" for two of them.
+GPU_PENDING = "GPU jobs: not read yet"
+D8_PENDING = "Operator controls: not read yet"
+GPU_UNREADABLE = "GPU jobs: could not be read"
+GPU_BLOCKED = "GPU jobs: lock not usable"
 #: **No workspaces folder, so no GPU lock** (review of 8242b47, P2-4; the UI
 #: sweep of 2026-11-22): a missing setting in its own short words, grey, the
 #: header on one line at a laptop's width ("GPU jobs: refused, no workspaces
@@ -161,16 +188,36 @@ _LOCK_SVG = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"
              '<path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7" fill="none" stroke="currentColor" '
              'stroke-width="1.6"/></svg>')
 
-#: The ids of the hidden elements holding each chip's ⓘ text.
+#: The ids of the hidden elements holding each chip's ⓘ text: the one source of
+#: a reason a chip says, which a dimmed control's phrase opens by id
+#: (`renderers.reason_phrase`, R-WHY).
 D8_TEXT_ID = "shep-chip-d8-text"
 GPU_TEXT_ID = "shep-chip-gpu-text"
+#: **What the D8 chip's phrase opens** (R-WHY's ``d8`` phrase; R-HELP, the owner's C9 of
+#: 2026-11-24, the L8 close): the hidden part of the same chip that answers the phrase's
+#: question, why this control is off for this request (`Chip.why`), apart from the chip's
+#: whole ⓘ, whose list of every operator control the header's ⓘ keeps. The whole ⓘ in a
+#: phrase's bubble was 320 x 507 px, over the bubble's budget, and covered controls in every
+#: place it could open at 1280 x 720.
+D8_WHY_ID = "shep-chip-d8-why"
+#: Each chip's ⓘ title, its bubble's title wherever it opens.
+CHIP_TITLES = {"d8": "Operator controls", "gpu": "GPU jobs"}
 
 #: How much of a holder record's command the chip repeats.
 _COMMAND_LIMIT = 40
 
 
+#: **The kinds in which the GPU lock cannot be taken now** (R-STATE): not set
+#: up, could not be read, not usable. A start the lock refuses reads them by
+#: kind (the Test page's `start_state`), never by the chip's words; a holder
+#: is ``busy``, nothing held ``none``, before the first read ``pending``.
+LOCK_UNUSABLE = ("unset", "unreadable", "blocked")
+
+
 class Chip(NamedTuple):
-    """One chip: its look (`kind`, a CSS modifier), its words, its ⓘ text and,
+    """One chip: its state (`kind`: its ``data-state`` and its CSS modifier,
+    ``on``, ``readonly``, ``none``, ``busy``, ``unset``, ``pending``,
+    ``unreadable`` or ``blocked``), its words, its ⓘ text and,
     for a holder an operator here can end (this service's inference), where
     to end it (`remedy`, "" otherwise)."""
 
@@ -178,6 +225,13 @@ class Chip(NamedTuple):
     text: str
     detail: str
     remedy: str = ""
+    #: The cause a dimmed control's phrase names this chip's reason by
+    #: (``data-reason``: `renderers.REASONS`, R-WHY), "" for none.
+    reason: str = ""
+    #: What that phrase opens, when it is not the whole ⓘ (`D8_WHY_ID`): the state and
+    #: this request's own reason, never the list of what the chip covers; "" for the
+    #: whole ⓘ.
+    why: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -188,14 +242,19 @@ def d8_chip(access: OperatorAccess) -> Chip:
     need (`D8_HOW`). Refused: the controls, then this request's own reason,
     D8's words (also the API's refusal): what failed and what to do, its
     codes in the bubble's one trailing Ref line (`reason_parts`), so the
-    general conditions are not said again beside the one that failed."""
+    general conditions are not said again beside the one that failed.
+    **What a refused control's phrase opens** (`Chip.why`, `D8_WHY_ID`): the
+    state as its lead, then D8's own reason for this request (what failed,
+    then the next step) and the same Ref line; the list of controls stays in
+    the chip's ⓘ."""
     if access.allowed:
         return Chip("on", D8_ON, f"{D8_ON_LEAD}\n{D8_SCOPE}\n\n{D8_HOW}")
     short = D8_SHORT.get(access.condition, "request not readable")
     text, ref = reason_parts(access.reason)
+    ref_line = f"{REF_PREFIX} {ref or D8_HOW.rpartition(REF_PREFIX)[2].strip()}"
     return Chip("readonly", f"Read-only: {short}",
-                f"{D8_READONLY_LEAD}\n{D8_SCOPE}\n\nFor this request: {text}\n"
-                f"{REF_PREFIX} {ref or D8_HOW.rpartition(REF_PREFIX)[2].strip()}")
+                f"{D8_READONLY_LEAD}\n{D8_SCOPE}\n\nFor this request: {text}\n{ref_line}",
+                reason="d8", why=f"{D8_READONLY_LEAD.rstrip(':')}.\n{text}\n{ref_line}")
 
 
 # ---------------------------------------------------------------------------
@@ -204,13 +263,15 @@ def d8_chip(access: OperatorAccess) -> Chip:
 def gpu_detail(text: str, *refs: str) -> str:
     """**A GPU chip's ⓘ text, the one way every state composes it**: the
     state's own words, then what the lock covers (`GPU_SCOPE`), then one
-    trailing Ref line: the state's own references where it has them, else the
-    scope's (`GPU_SCOPE_REF`), so the line is two lines at most in the bubble (the
-    sweep's L7 check, C9: with both it took three).
-    The bubble shows a "Ref:" line as the muted reference line, the last
-    (`help.help_lines`, the WebUI skill's §7); a state's own Ref line placed before
-    the scope stood mid-bubble (T06 review)."""
-    return f"{text}\n\n{GPU_SCOPE}\nRef: {', '.join(refs or (GPU_SCOPE_REF,))}"
+    trailing Ref line that names every reference the bubble's words lean on:
+    the state's own, then the scope's (`GPU_SCOPE_REF`), each once (R-HELP,
+    the owner's C9 of 2026-11-24: the full reference stays reachable; L7's C9
+    had dropped the scope's to keep the line to two bubble lines, a reminder,
+    not a rule). The bubble shows a "Ref:" line as the muted reference line,
+    the last (`help.help_lines`, the WebUI skill's §7); a state's own Ref line
+    placed before the scope stood mid-bubble (T06 review)."""
+    named = list(dict.fromkeys((*refs, GPU_SCOPE_REF)))
+    return f"{text}\n\n{GPU_SCOPE}\nRef: {', '.join(named)}"
 
 
 def _since(started_at: Any) -> Optional[str]:
@@ -253,16 +314,16 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         text = f"GPU job: {noun} (job runner)"
         if active.get("status") == "stopping":
             text += " · stopping"
-        return Chip("busy", text, gpu_detail(f"Held by the job runner's {noun}."))
+        return Chip("busy", text, gpu_detail(f"Held by the job runner's {noun}."), reason="gpu_busy")
     if lock.get("unset"):
-        return Chip("unread", GPU_NOT_CONFIGURED,
+        return Chip("unset", GPU_NOT_CONFIGURED,
                     gpu_detail(GPU_NOT_CONFIGURED_DETAIL, GPU_NOT_CONFIGURED_REF))
     if lock.get("problem"):
         detail = "The GPU lock cannot be used: managed jobs are refused until it is fixed."
         # An operator reads the problem itself (it says where to correct it);
         # anyone else, where an operator sees why, never the value's words.
         detail += f"\n{lock['problem']}" if operator else f"\n{GPU_LOCK_WHY_HIDDEN}"
-        return Chip("unread", GPU_NOT_READ, gpu_detail(detail))
+        return Chip("blocked", GPU_BLOCKED, gpu_detail(detail), reason="gpu_problem")
     description = str(lock.get("held_by") or "")
     if not description:
         return Chip("none", GPU_NONE, gpu_detail(GPU_FREE_LEAD))
@@ -276,7 +337,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
                     gpu_detail("Held by this service's inference: a model is loaded on CUDA.\n"
                                f"To start a training or a test run, {STOP_INFERENCE_HERE} "
                                "(Model in use).", "POST /api/v1/pipeline/stop"),
-                    remedy=STOP_INFERENCE_STEP)
+                    remedy=STOP_INFERENCE_STEP, reason="gpu_busy")
     if alive:
         # What the holder record says, and only that: its command, pid and
         # start. A formal CLI run and another server's job runner write the
@@ -295,7 +356,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         text = what + (f" ({', '.join(parts)})" if parts else "")
     else:
         text = "GPU job: lock held, holder not described"
-    return Chip("busy", text, gpu_detail(f"Held by {description}."))
+    return Chip("busy", text, gpu_detail(f"Held by {description}."), reason="gpu_busy")
 
 
 def busy_words(chip: Chip) -> str:
@@ -308,12 +369,13 @@ def busy_words(chip: Chip) -> str:
 
 def read_gpu_chip(manager: Any, *, operator: bool,
                   lock_reader: Callable[[], dict] = lock_state) -> Chip:
-    """The GPU chip, read now; the grey "not read" state when anything fails."""
+    """The GPU chip, read now; the grey "could not be read" state when
+    anything fails."""
     try:
         return gpu_chip_from(manager.active_job(), lock_reader(), operator=operator)
     except Exception:  # noqa: BLE001 - a chip that raises would hide the page's state
         logger.exception("The GPU chip could not be read")
-        return Chip("unread", GPU_NOT_READ,
+        return Chip("unreadable", GPU_UNREADABLE,
                     gpu_detail("The job runner or the GPU lock could not be read just now."))
 
 
@@ -324,18 +386,35 @@ def chip_html(chip: Chip, *, which: str) -> str:
     """One chip as HTML: its words (with ``title``, since a long one may end in a
     titled ellipsis), its ⓘ and the ⓘ's hidden text, all escaped."""
     text_id = D8_TEXT_ID if which == "d8" else GPU_TEXT_ID
-    title = "Operator controls" if which == "d8" else "GPU jobs"
+    title = CHIP_TITLES[which]
     # A lock means "refused" (the WebUI skill's §3): only a read-only D8 chip
-    # leads with it; the others with the dot.
-    lead = (_LOCK_SVG if which == "d8" and chip.kind == "readonly"
-            else '<span class="shep-dot" aria-hidden="true"></span>')
+    # leads with it; a lock that refuses every managed job with the error's
+    # cross (the skill's §6); a chip not read yet with no mark; the others
+    # with the dot.
+    if which == "d8" and chip.kind == "readonly":
+        lead = _LOCK_SVG
+    elif chip.kind == "blocked":
+        # The status table's own shape (read here, not at import: the
+        # renderers read this module's ids as they load).
+        from src.webui.components.renderers import STATUS_MARKS
+
+        lead = f'<span class="shep-chip-mark" aria-hidden="true">{STATUS_MARKS["error"][0]}</span>'
+    elif chip.kind == "pending":
+        lead = ""
+    else:
+        lead = '<span class="shep-dot" aria-hidden="true"></span>'
     words = html.escape(chip.text)
+    reason = f' data-reason="{html.escape(chip.reason)}"' if chip.reason else ""
+    # The D8 chip always carries what its phrase opens (a phrase drawn by a page's answer may
+    # meet a chip read on another tick): its `why`, or its whole ⓘ while nothing is refused.
+    why = (f'<span id="{D8_WHY_ID}" hidden>{html.escape(chip.why or chip.detail)}</span>'
+           if which == "d8" else "")
     return (
         f'<span class="shep-chip shep-chip-{which} shep-chip-{chip.kind}" '
-        f'data-state="{chip.kind}">{lead}'
+        f'data-state="{chip.kind}"{reason}>{lead}'
         f'<span class="shep-chip-text" title="{words}">{words}</span>'
         f'{help_button(f"chip-{which}", title, describedby=text_id, extra_class="shep-i-chip")}'
-        f'<span id="{text_id}" hidden>{html.escape(chip.detail)}</span></span>'
+        f'<span id="{text_id}" hidden>{html.escape(chip.detail)}</span>{why}</span>'
     )
 
 
@@ -348,9 +427,8 @@ def chips_html(d8: Chip, gpu: Chip) -> str:
 #: Shown until the first read after a page load (the app is built before the
 #: server serves, so nothing is read at build time).
 CHIPS_PLACEHOLDER = chips_html(
-    Chip("unread", "Operator controls: not read yet",
-         f"{NOT_READ_YET} Operator controls:\n{D8_SCOPE}\n\n{D8_HOW}"),
-    Chip("unread", GPU_NOT_READ, gpu_detail(NOT_READ_YET)))
+    Chip("pending", D8_PENDING, f"{NOT_READ_YET} Operator controls:\n{D8_SCOPE}\n\n{D8_HOW}"),
+    Chip("pending", GPU_PENDING, gpu_detail(NOT_READ_YET)))
 
 
 def chips_on_change(seen: Any, now: Any, request: Any) -> Any:
@@ -386,17 +464,22 @@ __all__ = [
     "CHIPS_PLACEHOLDER",
     "Chip",
     "D8_HOW",
+    "D8_WHY_ID",
     "D8_ON",
     "D8_SCOPE",
     "D8_SHORT",
     "GPU_INFERENCE",
     "GPU_NONE",
     "GPU_LOCK_WHY_HIDDEN",
-    "GPU_NOT_READ",
+    "D8_PENDING",
+    "GPU_BLOCKED",
     "GPU_NOT_CONFIGURED",
+    "GPU_PENDING",
+    "GPU_UNREADABLE",
     "GPU_SCOPE",
     "GPU_SCOPE_REF",
     "LOCK",
+    "LOCK_UNUSABLE",
     "OPERATOR_ONLY",
     "STOP_INFERENCE_HERE",
     "busy_words",

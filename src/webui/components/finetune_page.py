@@ -16,8 +16,8 @@ Module: src/webui/components/finetune_page.py
   at the top of the form it empties (`setup_html`: its state, what it means
   for Start, its next step a link to Settings › Data locations, the rest
   under "Details ›"), the GPU lock's merged into it; the identity, base and
-  task lines then say nothing of it and Start's reason is a one-line
-  relation to it (`renderers.see_above`).
+  task lines then say nothing of it and Start's reason is its phrase
+  (R-WHY, `renderers.phrase_line`).
 - **Dataset**: its own select over the server's workspace list
   (`workspaces.read_workspaces`, the shared option label), starting from the
   Training run bar's selection the first time the page opens and never
@@ -27,12 +27,17 @@ Module: src/webui/components/finetune_page.py
   (`server_lists.list_checkpoints(learning_stage="base")`): a task model (a
   child never chains), a file without a model spec and an unreadable file are
   never offered; a weights-only or early-stopped base is. Listing opens every
-  checkpoint, so it is an operator control (D8). The chosen base's summary
-  (key-value rows) says its run's directory, file, configuration, Trainer
-  validation figure, the dataset it trained on, its split seed and the model
-  fingerprint Start sends: **its split seed and its model are the base's
-  facts, never fields** (`BASE_FACTS`): a finetune trains on its base's split
-  and keeps its base's graph side.
+  checkpoint, so it is an operator control (D8). **The chosen base's summary
+  is one line** (D3, D8 and R2, the owner's decisions of 2026-11-24: one
+  glance tells whether the parent is right): its stage's facts
+  (`PARENT_STAGE_FACTS`: the model fingerprint Start sends, how its dataset
+  stands to the one chosen, a warning of its own record), its name and save
+  being the selects' over it; its run's directory, file, configuration,
+  Trainer validation figure, selection, split seed and the list's count
+  behind its one "Details ›" (`base_summary_html`): **its split seed and its
+  model are the base's facts, never fields** (`BASE_FACTS`): a finetune
+  trains on its base's split and keeps its base's graph side. The list's
+  own line says only what is to act on (`bases_note_html`).
 - **Tasks**: a checkbox group in `TASKS` order whose option text says whether
   each is ready on this workspace (`server_lists.task_readiness`, small JSON
   files only, no D8), and why not in the line under it.
@@ -534,10 +539,8 @@ def identity_html(ws: Mapping[str, Any]) -> str:
             "</div>")
 
 
-#: The control Start's relation to the notice names (`renderers.see_above`,
-#: `actions_view`): "Start disabled: …", the one place the screen says what
-#: the notice means for Start (the notice says no consequence of its own).
-START = "Start"
+#: The element ids of Start and Stop, which a dimmed one's reason names (R-WHY's ``data-for``).
+START_ID, STOP_ID = "ft_start", "ft_stop"
 
 
 def _said_above(ws_notice: Any, gpu: Optional[Mapping[str, Any]]) -> bool:
@@ -565,65 +568,121 @@ def setup_html(ws_notice: Any, gpu: Optional[Mapping[str, Any]] = None) -> str:
     return r.notice_block(ws_notice, also=(gpu["notice"],) if merged else ())
 
 
+def listed_words(parents: Mapping[str, Any]) -> str:
+    """How many bases the server's list holds and in how many runs, in the
+    order the selects offer them ("6 base checkpoints in 4 runs, latest
+    first"): the base summary's "Server list" row (`base_summary_html`)."""
+    runs = len(ml.runs_of(parents))
+    return (f'{len(parents)} base checkpoint{"s" if len(parents) != 1 else ""} in {runs} '
+            f'run{"s" if runs != 1 else ""}, latest first')
+
+
 def bases_note_html(parents: Mapping[str, Any], problem: Optional[str]) -> str:
-    """The base list's line: why it is empty, or how many bases it holds."""
+    """**The base list's line, only while it says something to act on** (the
+    owner's D3/D8 of 2026-11-24): why the list is empty, or could not be
+    read; nothing for a list that holds bases, whose count is a fact of the
+    chosen base's Details (`listed_words`, `base_summary_html`)."""
     if problem:
         return f'<p class="shep-muted">{r.e(problem)}</p>'
     if not parents:
         return ('<p class="shep-muted">No base checkpoint in this dataset\'s runs: train one on '
                 'Research › Training.</p>')
-    runs = len(ml.runs_of(parents))
-    return (f'<p class="shep-muted">Server list: {len(parents)} base checkpoint'
-            f'{"s" if len(parents) != 1 else ""} in {runs} run{"s" if runs != 1 else ""}, '
-            'latest first.</p>')
+    return ""
 
 
-def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
-    """The chosen base's summary in the one summary list
-    (`renderers.summary_list`), saying what the two selects above do not:
-    its run's directory (the Run select gives its name, architecture and
-    time), file, configuration (its model, a fact the children keep, never a
-    field: `BASE_FACTS`: its configuration line, `renderers.configuration_text`,
-    and beside it its whole spec under "Details ›", each field that differs
-    from the reference base spec with the reference's value, the encoder's
-    layers the hop list must fit among them: the one renderer of a recorded
-    spec, `renderers.model_spec_html`, which reads a listed spec), what it
-    holds, its Trainer validation figure, what
-    its run's saves were ranked by (`renderers.selection_value`), how its
-    dataset stands to the one selected (the shared status mark), the split
-    seed its record names, which every child trains on (a fact too), and the
-    model fingerprint Start sends (copyable). Escaped; empty when none is
-    chosen."""
+#: **The parent's facts this stage shows** (D3, D8 and R2, the owner's
+#: decisions of 2026-11-24: one glance tells whether the chosen parent is
+#: right), in the order its line says them, each a ``data-fact`` of the
+#: summary's line (`base_summary_html`): its model fingerprint, which Start
+#: sends; how its dataset stands to the one chosen (`TRAINED_ON_TAGS`); and
+#: what its own record says that changes the choice (`parent_warnings`).
+#: Its name and its save are the Run and Checkpoint selects' over the line
+#: (the WebUI skill's §1.2: each fact once); everything else is behind the
+#: summary's one "Details ›".
+PARENT_STAGE_FACTS = ("fingerprint", "trained_on", "warnings")
+#: **How the parent's dataset stands to the one chosen**, a self-naming tag
+#: by the shared status mark (`listed_record`'s ``trained_on_this_dataset``:
+#: the dataset it records against the workspace's now). Another dataset is a
+#: condition to watch: the start refuses a parent of another knowledge graph
+#: (`TrainingManager.start_finetune`), which another dataset may or may not
+#: be.
+TRAINED_ON_TAGS = {True: ("ok", "same dataset"),
+                   False: ("warn", "another dataset: Start refuses it if its graph differs"),
+                   None: ("neutral", "dataset not recorded")}
+
+
+def parent_warnings(item: Mapping[str, Any]) -> List[str]:
+    """**What the base's own record says that changes the choice**, each a
+    condition to watch: a record this build does not read (its validation and
+    selection are then not read either, `renderers.record_read`), and a model
+    spec it cannot read (the start's hop check reads it, `record.listed_spec`).
+    A hop list that cannot run on the base is the chosen tasks' (it is said
+    beside the hop field, `hops_note_html`, and pointed at beside Start),
+    never here."""
+    out = []
+    if not r.record_read(item):
+        out.append("record not readable")
+    if listed_spec(item.get("spec"))[0] is None:
+        out.append("model spec not readable")
+    return out
+
+
+def base_summary_html(item: Optional[Mapping[str, Any]],
+                      parents: Optional[Mapping[str, Any]] = None) -> str:
+    """**The chosen base's summary: one line of its stage's facts, the rest
+    behind one "Details ›"** (D3, D8 and R2, the owner's decisions of
+    2026-11-24: nine rows and the list's line became one line). The line says
+    `PARENT_STAGE_FACTS` as tags, each a ``data-fact``, with group gaps and no
+    " · " chain: the model fingerprint Start sends (copyable), how its
+    dataset stands to the one chosen (`TRAINED_ON_TAGS`) and any warning of
+    its own record (`parent_warnings`). Its "Details ›" closes the line and
+    opens under it (the one summary list, `renderers.details_list`, kept open
+    across redraws while the same base is shown), with no disclosure inside
+    it (the skill's §1.5): its run's directory (the Run select gives its name,
+    architecture and time), file, configuration (its model, a fact the
+    children keep, never a field, `BASE_FACTS`: the one renderer of a recorded
+    spec in its rows form, `renderers.model_spec_rows`, each field that
+    differs from the reference base spec a row with the reference's value,
+    none counted away), what it holds, its
+    Trainer validation figure, what its run's saves were ranked by
+    (`renderers.selection_value`), the split seed its record names, which
+    every child trains on (a fact too), and how many bases the server lists
+    (`listed_words`, from `parents`). Escaped; empty when none is chosen."""
     if not item:
         return ""
-    trained = item.get("trained_on_this_dataset")
-    if trained is True:
-        on = r.status_mark("ok", "the dataset selected")
-    elif trained is False:
-        on = r.status_mark("warn", "another dataset than the one selected (the start "
-                                   "refuses a parent of another knowledge graph)")
-    else:
-        on = r.status_mark("neutral", r.NOT_RECORDED.lower())
     seed = item.get("split_seed")
     split = (f"{r.setting_words('split_seed', seed)} (every child trains on this split)"
              if seed is not None else r.NOT_RECORDED.lower())
     kind = item.get("checkpoint_kind")
+    warnings = parent_warnings(item)
+    facts = {
+        "fingerprint": r.fingerprint_html("model fingerprint", item.get("sha256")),
+        "trained_on": r.status_mark(*TRAINED_ON_TAGS[item.get("trained_on_this_dataset")]),
+        "warnings": "".join(r.status_mark("warn", words) for words in warnings),
+    }
+    tags = "".join(f'<span class="shep-ft-tag" data-fact="{key}">{facts[key]}</span>'
+                   for key in PARENT_STAGE_FACTS if facts[key])
+    # Its configuration as rows (`renderers.model_spec_rows`): every field that
+    # differs from the reference on a row of its own, none counted away and no
+    # disclosure inside this one.
+    spec_rows, spec_titles = r.model_spec_rows(item.get("spec"), "Configuration")
     rows = [
         # Tokens break only before their own separators (L7 SW-LK7: the run
         # ended a line at a hyphen at 390 px, reading hyphenated).
         ("Run", r.token_html(f"{item.get('architecture')}/{item.get('run')}")),
         ("File", r.token_html(item.get("filename"))),
-        ("Configuration", r.chain_html(*r.configuration_facts(item),
-                                       tail=r.model_spec_html(item.get("spec"))[1])),
+        *spec_rows,
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
         ("Validation", r.e(r.validation_value(r.validation_figure(item),
                                               read=r.record_read(item)))),
         ("Selection", r.e(r.selection_value(item))),
-        ("Trained on", on),
         (r.SETTING_LABELS["split_seed"], r.e(split)),
-        ("Model fingerprint", r.fingerprint_value(item.get("sha256"), what="model fingerprint")),
     ]
-    return f'<div class="shep-ft-base">{r.summary_list(rows)}</div>'
+    if parents:
+        rows.append(("Server list", r.e(listed_words(parents))))
+    details = r.details_list(rows, of=item.get("key") or item.get("sha256"), titles=spec_titles)
+    return (f'<div class="shep-ft-base"><div class="shep-ft-tags">{tags}{details}</div>'
+            "</div>")
 
 
 # =============================================================================
@@ -877,11 +936,13 @@ def refused_html(tasks: Any, values: Mapping[str, Any], touched: Any, *,
             + r.status_mark("error" if tried else "warn", words) + "</span>")
 
 
-def _why(icon: str, text: str) -> str:
+def _why(icon: str, text: str = "", *, phrase: str = "") -> str:
     """A reason in the shared form (`shep-reason`: its mark, hidden from a screen reader, in a
     column of its own; the sweep's L7 check, C5: a page's own form, so the walk read Start and
-    Refresh as off with no reason for a read-only viewer)."""
-    return f'<span class="shep-reason shep-ft-reason">{icon}<span>{r.e(text)}</span></span>'
+    Refresh as off with no reason for a read-only viewer): the page's words (escaped), then a
+    dimmed control's phrase (R-WHY, `renderers.reason_phrase`), either or both."""
+    words = " ".join(part for part in (r.e(text), phrase) if part)
+    return f'<span class="shep-reason shep-ft-reason">{icon}<span>{words}</span></span>'
 
 
 def running_child(status: Mapping[str, Any]) -> Optional[str]:
@@ -913,7 +974,14 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     in the states the Training run bar uses (`training_console.run_bar_view`):
     D8, a training job running or stopping, the GPU slot held elsewhere.
     ``reason`` is beside Start; ``stop_reason`` is beside Stop, which is in
-    the job panel under the card. **Stop is drawn only while a child of this
+    the job panel under the card. **A dimmed control's reason is its cause's
+    phrase or one line in the page's words** (R-WHY, SW-C11): a cause with a
+    key of its own (D8, the GPU lock's notice, the GPU held elsewhere) by its
+    phrase (`renderers.reason_phrase`, keyed to the one place its whole
+    reason is drawn: the header chip, or the form's setup notice, which is
+    not in Start's bar, so the phrase stands beside Start); a local cause (a
+    job running or stopping) by one line led by the need
+    (`renderers.need_words`: no control's name, no pointer). **Stop is drawn only while a child of this
     page's Fine-tune start runs or is stopping** (``stop_shown``, the run
     bar's rule, `training_console.stop_shown`; NEW-training-finetune-7: an
     idle panel showed a disabled Stop with no reason): drawn, it says D8's
@@ -924,36 +992,32 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     beside it.
 
     **The GPU lock's reason is one line** (the text brief's §12): with its
-    notice (`gpu`'s ``notice``), Start's relation to it
-    (`renderers.see_above`: "Start disabled: GPU jobs need a workspaces
-    folder (see above)."), the notice itself said once, in the form's setup
-    notice, while `said_above` (`_said_above`); else its own short words with
-    its why under "Details ›" (an operator's only). A GPU job of the runner's
-    own is said in the lock line's words."""
+    notice (`gpu`'s ``notice``), its phrase beside Start (R-WHY,
+    `renderers.phrase_line`: "Needs a workspaces folder", which brings the
+    notice into view), the notice itself said once, in the form's setup
+    notice; a GPU holder, the GPU chip's phrase ("GPU in use", which opens
+    the chip's reason)."""
     s = status.get("status") or "idle"
     child_running = running_child(status) is not None
     shown = tc.stop_shown(status, child_job)
     view = {"start": False, "stop": False, "stop_reason": "", "stop_shown": shown}
     if not access.allowed:
-        view["reason"] = _why(tc.LOCK_ICON, operator_only(access.condition))
-        view["stop_reason"] = view["reason"] if shown else ""
+        view["reason"] = _why(tc.LOCK_ICON, phrase=operator_only(control=START_ID))
+        view["stop_reason"] = _why(tc.LOCK_ICON, phrase=operator_only(control=STOP_ID)) if shown else ""
     elif s == "stopping":
-        view["reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending. Start waits for it.")
+        view["reason"] = _why(r.DISABLED_MARK, r.need_words("a training job is stopping"))
         if shown:
-            view["stop_reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending.")
+            view["stop_reason"] = _why(r.DISABLED_MARK, r.need_words("this Fine-tune job is stopping"))
     elif child_running:
         view["stop"] = not confirming
-        view["reason"] = _why(r.DISABLED_MARK, r.disabled_words(START, "this Fine-tune job is "
-                                                                       "running."))
+        view["reason"] = _why(r.DISABLED_MARK, r.need_words("this Fine-tune job is running"))
     elif s == "running":
-        view["reason"] = _why(r.DISABLED_MARK, r.disabled_words(START, "a training job is running "
-                                                                       "(Research › Training)."))
+        view["reason"] = _why(r.DISABLED_MARK, r.need_words(
+            "a training job is running: Research › Training shows it"))
     elif gpu and gpu.get("notice"):
-        view["reason"] = r.see_above(START, gpu["notice"],
-                                     where="above" if said_above else None,
-                                     details=not said_above)
+        view["reason"] = r.phrase_line(gpu["notice"], control=START_ID)
     elif gpu:
-        view["reason"] = _why(r.DISABLED_MARK, f"Start {r.DISABLED} — {gpu['text']}.")
+        view["reason"] = _why(r.DISABLED_MARK, phrase=r.reason_phrase("gpu_busy", control=START_ID))
     else:
         view["start"] = True
         view["reason"] = ""
@@ -1073,19 +1137,19 @@ def _on_finetune_bases(request: gr.Request, ws, current):
     empty = gr.update(choices=[], value=None)
     refresh = gr.update(**gated(REFRESH_LABEL, access.allowed))
     if not access.allowed:
-        why = _why(tc.LOCK_ICON, f"Not listed: listing the bases opens them. "
-                                 f"{operator_only(access.condition)}")
+        why = _why(tc.LOCK_ICON, "Not listed: listing the bases opens them.",
+                   phrase=operator_only(control="ft_refresh"))
         return {}, empty, empty, f'<div class="shep-ft-reasons">{why}</div>', refresh
     name = (ws or {}).get("name")
     if not name:
         # With no dataset listed the setup notice says why, once, above
         # (`setup_html`); the empty Run and Checkpoint say their relation to it
-        # (`renderers.see_above`, as Test's do: the sweep's L7 check, C7: they
+        # (its phrase, `renderers.phrase_line`, as Test's do: the sweep's L7 check, C7: they
         # were two empty boxes that said nothing; the skill's §9), else ask
         # for a choice.
         notice = (ws or {}).get("notice")
         if notice:
-            return {}, empty, empty, r.see_above("Run", notice, where="above"), refresh
+            return {}, empty, empty, r.phrase_line(notice, control="ft_run"), refresh
         listed = (ws or {}).get("choices")
         note = bases_note_html({}, "Select a dataset first.") if listed else ""
         return {}, empty, empty, note, refresh
@@ -1097,8 +1161,9 @@ def _on_finetune_bases(request: gr.Request, ws, current):
 
 
 def _on_base_chosen(key, parents):
-    """A checkpoint chosen: the base's summary."""
-    return base_summary_html((parents or {}).get(key) if key else None)
+    """A checkpoint chosen (or the list read again): the base's summary, the
+    list's count among its Details (`base_summary_html`)."""
+    return base_summary_html((parents or {}).get(key) if key else None, parents)
 
 
 def _on_task_view(tasks, key, parents, touched, hops):
@@ -1351,7 +1416,7 @@ FIELD_HELP = {
         "Run",
         "The runs holding a base checkpoint, latest first.\n\n"
         "- Option: its name or start time, then its architecture and time\n"
-        "- Directory: in the base's summary under the lists\n"
+        "- Directory: in the base's Details under the lists\n"
         "- Offered: bases only, never a task model (children never chain)\n"
         "- Never offered: a file without a model spec",
     ),
@@ -1512,8 +1577,12 @@ def create_finetune_page(ctx: Any) -> None:
                                               elem_id="ft_reset")
                         with gr.Row(elem_classes=["shep-ft-settings", "shep-fields"]):
                             device = tc.device_field("ft_device")
+                            # A name's width by its role (R-WIDTH, the owner's D12 of
+                            # 2026-11-24: the shared ``shep-w-name``, `style.py`), not
+                            # the row's share.
                             run_name = gr.Textbox(label="Run name", value="", max_lines=1,
-                                                  elem_id="ft_run_name")
+                                                  elem_id="ft_run_name",
+                                                  elem_classes=["shep-w-name"])
             with gr.Column(elem_id="ft_start_ft", elem_classes=["shep-panel-ft"]):
                 # Start and why it is off, a bar (the skill's §2 and §9): its
                 # reason a one-line relation beside it, on Start's first line
@@ -1711,8 +1780,18 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-ds-row > .form:has(#ft_dataset) {{ flex: 1 1 17.5rem !important; min-width: 0 !important; }}
 /* The dataset's identity beside its select only while it is one line (the shared `shep-beside`). */
 {_PAGE} #ft_identity {{ padding-bottom: 6px; }}
-/* The chosen base's details: the one summary list in the parameters' panel, no box of its own
-   (`base_summary_html`; the skill's §2). */
+/* The chosen base's summary (`base_summary_html`; D3, D8 and R2): its stage's facts as tags on one
+   line, a group's gap between them and no " · " chain, then its one "Details ›" closing the line
+   (one unit, moved to the next line whole where the line has no room for it); opened, its one
+   summary list goes under the line, on the line's edge, with no box of its own (the skill's §2). */
+{_PAGE} .shep-ft-tags {{ margin: 0; font-size: 15px; line-height: var(--shep-lh-prose); }}
+{_PAGE} .shep-ft-tag {{ display: inline-block; margin-inline-end: var(--shep-space-5); }}
+{_PAGE} .shep-ft-tag > .shep-st + .shep-st {{ margin-inline-start: var(--shep-space-3); }}
+{_PAGE} .shep-ft-tags > .shep-more {{ display: inline; }}
+{_PAGE} .shep-ft-tags > .shep-more > summary {{ display: inline-block; white-space: nowrap; min-height: 0; line-height: inherit; }}
+{_PAGE} .shep-ft-tags > .shep-more::details-content {{ display: none; }}
+{_PAGE} .shep-ft-tags > .shep-more[open]::details-content {{ display: block; }}
+{_PAGE} .shep-ft-tags > .shep-more[open] > summary + * {{ margin-top: var(--shep-space-item); }}
 {_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 2px 14px; }}
 /* Lines that say nothing take no room (and no gap of their column). */
 {_PAGE} #ft_identity:not(:has(.shep-ft-ds, p)), {_PAGE} #ft_bases_note:not(:has(p, .shep-ft-reason)), {_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)), {_PAGE} #ft_hops_note:not(:has(p)), {_PAGE} #ft_several_note:not(:has(p)) {{ display: none !important; }}
@@ -1730,18 +1809,17 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-hops {{ margin: 0; font-size: 14px; overflow-wrap: anywhere; }}
 /* Start and Stop (`shep-bar`): the reason beside each on the button's first line (baselines
    aligned, so the button stands at the bar's top whatever follows), under it when the row cannot
-   hold both; a note (what Start would refuse, a refusal) the bar's width under them. */
+   hold both; a note (what Start would refuse, a refusal) the bar's width under them. Each button is
+   its words' width by the shared rule (`style.py`; a bar with a reason slot beside its action is never
+   spanned, `shell.py`'s ``spans``), so it keeps one width whether or not its reason shows. */
 {_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: baseline !important; }}
-{_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
+{_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ padding: 0 14px !important; height: 40px; }}
 /* Each reason beside its button only while it is one line (the shared `shep-beside`). */
 {_PAGE} .shep-ft-start-why, {_PAGE} #ft_stop_reason {{ gap: var(--shep-space-1) !important; }}
 {_PAGE} .shep-ft-start-why:not(:has(.shep-ft-reason, .shep-nb-rel, .shep-ft-hops-warn)) {{ display: none !important; }}
 {_PAGE} #ft_hops_warn:not(:has(.shep-ft-hops-warn)), {_PAGE} #ft_reason:not(:has(.shep-ft-reason, .shep-nb-rel)), {_PAGE} #ft_refused:not(:has(.shep-ft-refused)) {{ display: none !important; }}
 {_PAGE} #ft_hops_warn {{ font-size: 14px; line-height: var(--shep-lh-prose); }}
 {_PAGE} #ft_refused {{ font-size: 15px; line-height: var(--shep-lh-prose); }}
-/* The configuration's "Details ›" beside its fact, in that fact's unit (`base_summary_html`,
-   `chain_html`'s tail); opened, the spec's list takes the lines under it. */
-{_PAGE} .shep-ft-base .shep-v .shep-fact > .shep-more {{ display: inline-block; vertical-align: top; }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
 {_PAGE} .shep-ft-reason > .shep-nb-mark {{ flex: none; }}
 /* Start's and Stop's notices, each a note under its button: a refusal carries the shared mark of

@@ -1131,8 +1131,8 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
         view = tc.run_bar_view({"status": "idle"}, c["state"],
                                {"drawer": True, "operation": tc.BRANCH, "parent": mode["parent"]},
                                access=_allowed(), active=None, gpu=None)
-        assert ("Start branch disabled: the check refuses a setting you edited. Change it, then "
-                "check again.") in view["drawer_reason"]
+        assert r.need_words("the check refuses a setting you edited. Change it, then "
+                            "check again.") in view["drawer_reason"]
         assert "cannot be branched" not in view["drawer_reason"]
     assert started == []
     # An edit after a refused check of the settings: the check is stale and

@@ -61,24 +61,31 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   script's layout pass writes ``data-shep-layout`` on the root element, and
   every style sheet keys its side-by-side and stacked rules off it
   (`src/webui/style.py`'s ``SIDE`` and ``STACK``; no media query on the
-  window's size anywhere). The browser's usable area, the window's inner
-  size raised to the floor of the arrangement the window takes (no wider
-  than tall, the stacked arrangement's, ``style.STACK_FLOOR_WIDTH``; wider,
-  the display floor, ``style.FLOOR_WIDTH`` x ``style.FLOOR_HEIGHT``; below
-  it the frame keeps the floor's width and the document scrolls, so every
-  mark is the floor's), decides: no wider than
-  tall, ``stack``; wider, ``side`` when the page
-  shown fits by its panels' own minimum widths (each panel's
+  window's size anywhere). **The arrangement is chosen by width** (R-ARR,
+  the owner's D11 of 2026-11-24): a window wider than tall tries side by
+  side first, which needs the display floor's width (``style.FLOOR_WIDTH``)
+  and the page shown to fit by its panels' own minimum widths (each panel's
   ``--shep-panel-min`` in its page's style sheet, read from the panels as
   drawn: the shown ``.shep-page`` row's shown children, under any wrapper
-  that holds one alone, with the gaps between them), else ``stack``. Side by
+  that holds one alone, with the gaps between them); ``side`` then.
+  Otherwise, a window no wider than tall included, ``stack``: the existing
+  stacked arrangement with its readable floor. Only when neither fits (a
+  window under ``style.STACK_FLOOR_WIDTH``) is the page drawn at the
+  stacked floor and scrolled. Height never changes the arrangement. The
+  browser's usable area is the window's inner size raised to the floor of
+  the arrangement chosen: side by side, the display floor,
+  ``style.FLOOR_WIDTH`` x ``style.FLOOR_HEIGHT`` (a window under its height
+  is drawn at it, the document scrolling down); stacked, the width
+  ``style.STACK_FLOOR_WIDTH`` and no height floor (a stacked page flows).
+  Below it the frame keeps the floor's width and the document scrolls, so
+  every mark is the floor's. Side by
   side the page never scrolls, the selected page fills the space under the
   header and a region too long scrolls inside its own panel; stacked,
   everything flows and the page scrolls, with no region scrolling inside
   (a table wider than its panel scrolls sideways in its own box). A short
   window (``data-shep-short``, under ``style.SHORT_BELOW`` px tall) only
   makes headers denser: height never stacks a page. A page with no
-  ``.shep-page`` row (Settings) is decided by the window's shape alone.
+  ``.shep-page`` row (Settings) fits side by side at the floor's width.
 - **A wide form only while it fits** (OPS-FIX-R2): the same pass measures
   each box of class ``style.FIT`` (the Fine-tune job card): its wide form
   (``style.FIT_WIDE``, a table) laid out at its own narrowest, its
@@ -261,7 +268,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import gradio as gr
 
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
-from src.webui.components.help import HelpRegistry, as_json_for_script
+from src.webui.components.help import DESCRIBED_BY_JS, HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
 from src.webui.style import (FADE_VAR, FIT, FIT_LEAST, FIT_WANT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
                               FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, ROOMY_ATTR, SEG_WHOLE, SHORT_ATTR,
@@ -870,24 +877,30 @@ _SHELL_JS = r"""
   // long holder), the chips and Settings move onto a line of their own, under
   // the area switch: the chips sit where that line starts, measured, so they
   // never cover a tab.
-  // **The one layout decision** (the layout rule, module docstring): the
-  // window's inner size first (no wider than tall: stacked), then whether the
-  // page shown fits side by side by its panels' own minimum widths. Read from
-  // the style sheets (each panel's --shep-panel-min) and the window, never
-  // from the state it sets, so a pass never undoes the one before it; a
-  // scrollbar the stacked page shows is counted back (side by side has none).
+  // **The one layout decision** (the layout rule, R-ARR, module docstring): the arrangement is
+  // chosen by width. A window wider than tall tries side by side first: at least the display
+  // floor's width, and the page shown fits by its panels' own minimum widths. Otherwise the page
+  // takes the stacked arrangement. Height never changes the arrangement. Read from the style
+  // sheets (each panel's --shep-panel-min) and the window, never from the state it sets, so a
+  // pass never undoes the one before it; a scrollbar the stacked page shows is counted back
+  // (side by side has none).
   var LAYOUT = '__LAYOUT__', SHORT = '__SHORT__', SHORT_BELOW = __SHORT_BELOW__;
   // **The display floor** (style.FLOOR_WIDTH x FLOOR_HEIGHT) and **the stacked arrangement's**
   // (style.STACK_FLOOR_WIDTH): the usable area every mark is decided on is the window's inner size
-  // raised to the floor of the arrangement the window takes. No wider than tall, the stacked one,
-  // its floor STACK_FLOOR_W in both axes (the narrowest window no wider than tall); wider, the
-  // display floor. Below its floor the frame keeps the floor's width (FLOOR_VAR, written here for
-  // style.py's frame) and the document scrolls, so each mark is the floor's.
+  // raised to the floor of the arrangement chosen. Side by side, the display floor in both axes
+  // (a window under its height is drawn at it and the document scrolls down). Stacked, the width
+  // STACK_FLOOR_W and no height floor: a stacked page flows. Below its floor the frame keeps the
+  // floor's width (FLOOR_VAR, written here for style.py's frame) and the document scrolls, so
+  // each mark is the floor's.
   var FLOOR_W = __FLOOR_W__, FLOOR_H = __FLOOR_H__, STACK_FLOOR_W = __STACK_FLOOR_W__, FLOOR_VAR = '__FLOOR_VAR__';
+  // The arrangement is decided here too: side by side is tried at or above its floor's width
+  // only, where the frame is the window's own width whatever FLOOR_VAR holds, so the fit never
+  // reads the floor this pass writes.
   function area() {
-    var w = window.innerWidth, h = window.innerHeight, tall = w <= h;
-    var fw = tall ? STACK_FLOOR_W : FLOOR_W, fh = tall ? STACK_FLOOR_W : FLOOR_H;
-    return {w: Math.max(w, fw), h: Math.max(h, fh), floor: fw};
+    var w = window.innerWidth, h = window.innerHeight;
+    var side = w > h && w >= FLOOR_W && sideFits(shownTab());
+    return side ? {side: true, w: Math.max(w, FLOOR_W), h: Math.max(h, FLOOR_H), floor: FLOOR_W}
+      : {side: false, w: Math.max(w, STACK_FLOOR_W), h: h, floor: STACK_FLOOR_W};
   }
   function shownTab() {
     var outer = selected('shep-nav') || 'clinical';
@@ -926,9 +939,8 @@ _SHELL_JS = r"""
     return need <= box.getBoundingClientRect().width + bar + 0.5;
   }
   function orientation() {
-    var root = document.documentElement, a = area();
+    var root = document.documentElement, a = area(), want = a.side ? 'side' : 'stack';
     if (root.style.getPropertyValue(FLOOR_VAR) !== a.floor + 'px') { root.style.setProperty(FLOOR_VAR, a.floor + 'px'); }
-    var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';
     if (root.getAttribute(LAYOUT) !== want) { root.setAttribute(LAYOUT, want); }
     if (root.hasAttribute(SHORT) !== (a.h < SHORT_BELOW)) { root.toggleAttribute(SHORT, a.h < SHORT_BELOW); }
   }
@@ -1093,7 +1105,10 @@ _SHELL_JS = r"""
           var s = getComputedStyle(k);
           if (!drawn(k) || s.position === 'absolute' || s.position === 'fixed') { continue; }
           kids += 1;
-          need += px(s.marginTop) + px(s.marginBottom) + (k === room ? 0 : k.getBoundingClientRect().height);
+          // A region's foot given way to a lone title (`recut`, CUT) is not counted: the measure
+          // never depends on the state the cue pass sets.
+          need += px(s.marginTop) + px(s.marginBottom) - (parseFloat(k.getAttribute('data-shep-more-cut')) || 0)
+            + (k === room ? 0 : k.getBoundingClientRect().height);
         }
         need += Math.max(kids - 1, 0) * px(c.rowGap);
         if (was) { box.setAttribute(FOLDED, ''); }
@@ -1113,43 +1128,233 @@ _SHELL_JS = r"""
   var NOT_REGION = 'textarea, select, input, ul.option-list, #shep-help-bubble, #shep-help-bubble *, '
     + '.shep-rs-top, .shep-rs-wrap';
   function scrolls(v) { return v === 'auto' || v === 'scroll'; }
-  // **The fade reaches what is drawn** (the sweep's L7 check, C1): a fade over the gap between
-  // two fields reads as nothing (Diagnosis' fields at 1550 x 830 faded the gap under Patient ID,
-  // Options and Top-K unseen under it), so the bottom fade starts above the nearest thing the
-  // region draws over its edge (a line of words, a control, a graphic): FADE_VAR, its length,
-  // read by the style sheet's mask. Read along the region's start and middle, up from its edge.
-  var FADE_VAR = '__FADE_VAR__', FADE = 28, DRAWN = 'input, textarea, select, button, svg, canvas, img';
-  function shows(hit) {
-    if (hit.matches(DRAWN) || hit.closest('svg')) { return true; }
-    for (var n = hit.firstChild; n; n = n.nextSibling) {
-      if (n.nodeType === 3 && n.data.trim()) { return true; }
+  // **The cue reaches the last line read, and stays a cue** (R-CUE, the owner's D4 of
+  // 2026-11-24; the sweep's L7 check, C1, before it): a fade over the gap between two fields, or
+  // over a box's lower border, reads as nothing (Diagnosis' fields at 1550 x 830; Training's
+  // parameters and charts at 1280 x 720 ended in a gap and read as complete). The bottom fade
+  // reaches over the last text line the region draws above its edge (a label, a value, a field's
+  // value or placeholder line), by at least a quarter of that line: FADE_VAR, its length, read by
+  // the style sheet's mask. It stays a cue: at most about one and a half of the region's text
+  // lines (its line height), never a whole group. It is drawn only where it fades words out:
+  // that line is cut by the edge or ends in the fade's lower half, drawn at half strength or less
+  // (LOOK5 of the L8 sweep, L8-2 and L8-4: a 32 px fade whose top 10 px met a title 22 px over
+  // the edge left the title whole and faded only blank, so Settings' Runtime settings and Test's
+  // Run at 1280 x 720 showed no cue over whole controls under the edge). Where the edge falls in
+  // a gap (no such line: a field's empty box, a chart's plot, the room between two groups), no
+  // fade is drawn over the blank: the region keeps EDGE, the one content-independent edge cue the
+  // style sheet draws at its foot (Material's scrolled-under state, Apple's scroll edge effect).
+  var FADE_VAR = '__FADE_VAR__', FADE = 28, EDGE = 'data-shep-more-edge';
+  var VALUES = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=range])'
+    + ':not([type=file]), textarea, select';
+  function seenEl(e) {
+    return e.getClientRects().length > 0
+      && (!e.checkVisibility || e.checkVisibility({opacityProperty: true, visibilityProperty: true}));
+  }
+  // **A line shows above an edge where half its height or more lies above it**: its words can
+  // be read, not a sliver of their tops (the L8 close's final check, F3: at first use at
+  // 1366 x 768 Data locations faded "Create suggested folder", 6 of its 19 px above the edge, in
+  // the fade's faintest part, so the region read as ended over the Training evidence row and
+  // "Where these are kept ›"). The same measure as a control seen (`lineOf`).
+  function shows(q, edge) { return q.top <= edge - Math.max(1, q.height / 2); }
+  // The lowest text line box drawn in `el` that shows above its edge (`shows`), among the lines
+  // that end no higher than `reach` above the edge; null for none. Words
+  // kept for a screen reader are no line (UNSAID: LOOK5 of the L8 sweep, Data locations at
+  // 1280 x 720, a text box's hidden label straddled the edge, and a fade lay over boxes' tops).
+  function lastLine(el, top, edge, reach) {
+    var last = null;
+    function take(q) {
+      if (q.width < 1 || q.height < 1 || q.bottom <= top || q.bottom <= edge - reach
+          || !shows(q, edge)) { return; }
+      if (!last || q.bottom > last.bottom) { last = q; }
     }
-    return false;
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
+    for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+      var p = n.parentElement;
+      if (!p || !n.data.trim() || p.closest(UNSAID)) { continue; }
+      var pr = p.getBoundingClientRect();
+      if (pr.bottom <= edge - reach || pr.top > edge || !seenEl(p)) { continue; }
+      range.selectNodeContents(n);
+      var rs = range.getClientRects();
+      for (var i = 0; i < rs.length; i++) { take(rs[i]); }
+    }
+    var fields = el.querySelectorAll(VALUES);
+    for (var j = 0; j < fields.length; j++) {
+      var f = fields[j];
+      if (!(f.value || f.placeholder)) { continue; }
+      var r = f.getBoundingClientRect();
+      if (r.bottom <= edge - reach || r.top > edge || !seenEl(f)) { continue; }
+      var fs = getComputedStyle(f);
+      var above = (parseFloat(fs.paddingTop) || 0) + (parseFloat(fs.borderTopWidth) || 0);
+      var below = (parseFloat(fs.paddingBottom) || 0) + (parseFloat(fs.borderBottomWidth) || 0);
+      take({top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below});
+    }
+    return last;
+  }
+  // The fade's length in px over `edge` (`top` the top of the region's content), or 0 where the
+  // edge falls in a gap (EDGE is drawn instead).
+  function fadeAt(el, top, edge) {
+    var s = getComputedStyle(el), lh = parseFloat(s.lineHeight) || 1.45 * (parseFloat(s.fontSize) || 15);
+    var most = Math.max(1.5 * lh, FADE), line = lastLine(el, top, edge, most);
+    if (!line || edge - line.bottom + line.height / 4 > most) { return 0; }
+    var length = Math.min(most, Math.max(FADE, Math.ceil(edge - line.bottom + line.height / 2)));
+    // Its words fade out: the line's foot lies in the fade's lower half, or under the edge.
+    return edge - line.bottom <= length / 2 ? length : 0;
   }
   function fadeOf(el) {
-    var r = el.getBoundingClientRect(), edge = r.top + el.clientTop + el.clientHeight;
-    var xs = [r.left + el.clientLeft + 20, r.left + el.clientLeft + el.clientWidth / 2];
-    for (var d = 2; d < el.clientHeight / 2; d += 4) {
-      for (var i = 0; i < xs.length; i++) {
-        var hit = document.elementFromPoint(xs[i], edge - d), q = hit && hit.getBoundingClientRect();
-        // Drawn over the edge by a quarter of its own height or more (a row only touching it is
-        // not seen under a fade either).
-        if (hit && hit !== el && el.contains(hit) && shows(hit) && edge - q.top >= q.height / 4 + 1) {
-          return Math.max(FADE, d + 20);
-        }
+    var r = el.getBoundingClientRect(), top = r.top + el.clientTop;
+    return fadeAt(el, top, top + el.clientHeight);
+  }
+  // **A region never ends at a lone title** (R-CUE, the owner's D4 of 2026-11-24: "never show
+  // only a section title with every control under the edge"; the L8 close: Fine-tune's form
+  // ended at its Device and Run name labels, Settings' Data locations at its Import folder
+  // heading, each faded over its title with every control under the edge). Where the region's
+  // last line in view is a heading or a field's label (HEADS) and every control it heads (a
+  // field's own, a heading's up to the next heading) lies under the edge, the region ends in the
+  // gap above that title instead: its foot gives way by CUT px (a bottom margin, so a footer
+  // after it stays where it was), the title goes under the edge with its controls, and the cue
+  // (`fadeOf`) is drawn over the lines above it or, in a gap, as the edge cue. Never a fade over
+  // the title, and never more than half the region. It is measured with the region read whole
+  // at its top (its content never moves with the region's height), so the cut never depends on
+  // the state it sets; scrolled, the region keeps its height (no jump under the reader's hand).
+  var CUT = 'data-shep-more-cut';
+  var HEADS = 'h1, h2, h3, h4, h5, h6, [role=heading], legend, [data-testid="block-info"]';
+  var LABEL = '[data-testid="block-info"]';
+  var CONTROLS = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
+    + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
+  var NOT_OWN = '.shep-i, .shep-copy, .shep-help, button.shep-why';
+  var UNSAID = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
+    + '#shep-help-bubble, ul.option-list';
+  // `p` is drawn in `el`'s own scroll, no region between them scrolling it.
+  function ownScroll(p, el) {
+    for (var a = p; a && a !== el; a = a.parentElement) {
+      if (scrolls(getComputedStyle(a).overflowY) && a.scrollHeight > a.clientHeight + 1) { return false; }
+    }
+    return true;
+  }
+  // The lowest line drawn in `el` that shows above `edge` (`shows`): a line box of its words or a
+  // field's value line, with its element; null for none.
+  function lowestLine(el, top, edge) {
+    var low = null;
+    function take(q, p) {
+      if (q.width < 1 || q.height < 1 || q.bottom <= top || !shows(q, edge)
+          || (low && q.top <= low.r.top) || !ownScroll(p, el)) { return; }
+      low = {r: q, el: p};
+    }
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
+    for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+      var p = n.parentElement;
+      if (!p || !n.data.trim() || p.closest(UNSAID) || !seenEl(p)) { continue; }
+      var pr = p.getBoundingClientRect();
+      if (pr.bottom <= top || pr.top >= edge) { continue; }
+      range.selectNodeContents(n);
+      var rs = range.getClientRects();
+      for (var i = 0; i < rs.length; i++) { take(rs[i], p); }
+    }
+    var fields = el.querySelectorAll(VALUES);
+    for (var j = 0; j < fields.length; j++) {
+      var f = fields[j];
+      if (!(f.value || f.placeholder) || !seenEl(f)) { continue; }
+      var r = f.getBoundingClientRect(), fs = getComputedStyle(f);
+      var above = (parseFloat(fs.paddingTop) || 0) + (parseFloat(fs.borderTopWidth) || 0);
+      var below = (parseFloat(fs.paddingBottom) || 0) + (parseFloat(fs.borderBottomWidth) || 0);
+      var line = {top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below};
+      // A field's value is shown by half its line, as a control is seen (`lineOf`).
+      if (line.top < edge - Math.max(1, line.height / 2)) { take(line, f); }
+    }
+    return low;
+  }
+  // The top of the title `el` would end at alone over `edge` (its last line in view a heading
+  // or a field's label, every control it heads under the edge); null where it ends otherwise.
+  function loneTitle(el, top, edge) {
+    var low = lowestLine(el, top, edge), head = low && low.el.closest(HEADS);
+    if (!head || !el.contains(head)) { return null; }
+    var field = head.matches(LABEL) ? head.closest('.block') : null, own = [];
+    function counts(c) { return !c.matches(NOT_OWN) && !c.closest(UNSAID) && seenEl(c); }
+    if (field) {
+      own = [].filter.call(field.querySelectorAll(CONTROLS), counts);
+    } else {
+      var all = el.querySelectorAll(CONTROLS + ', ' + HEADS), after = false;
+      for (var i = 0; i < all.length; i++) {
+        var x = all[i];
+        if (x === head) { after = true; continue; }
+        if (!after || head.contains(x)) { continue; }
+        if (x.matches(HEADS) && !x.matches(LABEL)) { break; }
+        if (x.matches(CONTROLS) && counts(x)) { own.push(x); }
       }
     }
-    return FADE;
+    if (!own.length) { return null; }
+    for (var k = 0; k < own.length; k++) {
+      var q = lineOf(own[k]);
+      if (q.top < edge - Math.max(1, q.height / 2)) { return null; }
+    }
+    return Math.min(head.getBoundingClientRect().top, low.r.top);
+  }
+  // What of a control must show for it to be seen (the L8 close, CK8-2: Diagnosis' Top-K box
+  // showed its top border, 12 px, under the fade, its value and its label under the edge, and
+  // counted as in view): a field's value line where it holds a value or a placeholder (its
+  // content box), else its box, by half its height (its words readable, not a sliver of them).
+  function lineOf(c) {
+    var r = c.getBoundingClientRect();
+    if (!c.matches(VALUES) || !(c.value || c.placeholder)) { return r; }
+    var s = getComputedStyle(c);
+    var above = (parseFloat(s.paddingTop) || 0) + (parseFloat(s.borderTopWidth) || 0);
+    var below = (parseFloat(s.paddingBottom) || 0) + (parseFloat(s.borderBottomWidth) || 0);
+    return {top: r.top + above, bottom: r.bottom - below, height: r.height - above - below};
+  }
+  // How far `el`'s foot gives way (px) for it to end in the gap above a lone title, or above a
+  // field's box that starts in the gap its edge falls in, read whole (its current cut added
+  // back): 0 for none.
+  function cutOf(el) {
+    var s = getComputedStyle(el), had = parseFloat(el.getAttribute(CUT)) || 0;
+    if (!scrolls(s.overflowY) || el.scrollHeight - el.clientHeight - had <= 1) { return 0; }
+    var r = el.getBoundingClientRect(), top = r.top + el.clientTop, edge = top + el.clientHeight + had;
+    var at = edge;
+    for (var i = 0; i < 3; i++) {   // a title under a title (a section's heading, then its label)
+      var head = loneTitle(el, top, at);
+      if (head === null) { break; }
+      at = head;
+    }
+    if (at < edge || !fadeAt(el, top, edge)) {
+      // A field's box, or a control's, that starts in that gap (under every line still shown)
+      // goes under the edge whole: no box's top is left over it (a block's own background hid the
+      // edge cue's shadow). So too where the edge itself falls in a gap, no line faded out over it
+      // (`fadeAt`; LOOK5 of the L8 sweep: Test's Deterministic box started 12 px over the Run
+      // region's edge at 1280 x 720 and hid half its edge cue; the L8 close's final check, F3:
+      // first-use Data locations at 1366 x 768 kept the top of "Create suggested folder", a
+      // button in a row, over its edge cue).
+      var low = lowestLine(el, top, at), floor = low ? low.r.bottom : top;
+      var boxes = el.querySelectorAll('.block, ' + CONTROLS);
+      for (var b = 0; b < boxes.length; b++) {
+        var q = boxes[b].getBoundingClientRect();
+        if (q.top >= floor && q.top < at && q.bottom > at) { at = q.top; }
+      }
+    }
+    var cut = Math.ceil(edge - at);
+    return cut > 0 && cut <= (el.clientHeight + had) / 2 ? cut : 0;
+  }
+  function recut(el) {
+    var had = parseFloat(el.getAttribute(CUT)) || 0, cut = cutOf(el);
+    if (cut === had) { return; }
+    var base = (parseFloat(getComputedStyle(el).marginBottom) || 0) - had, height = el.clientHeight + had;
+    if (had) { el.style.removeProperty('margin-bottom'); el.removeAttribute(CUT); }
+    if (!cut) { return; }
+    el.style.setProperty('margin-bottom', (base + cut) + 'px', 'important');
+    // A region whose height is not its column's to give (its own height or maximum) keeps it.
+    if (height - el.clientHeight < cut - 1) { el.style.removeProperty('margin-bottom'); return; }
+    el.setAttribute(CUT, String(cut));
   }
   function cue(el) {
+    if (el.scrollTop <= 1) { recut(el); }
     var s = getComputedStyle(el);
     var more = scrolls(s.overflowY) && el.scrollHeight - el.scrollTop - el.clientHeight > 1;
     var side = scrolls(s.overflowX) && el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
-    var fade = more ? fadeOf(el) + 'px' : '';
+    // A foot given way to a lone title (CUT) ends in a gap: its cue is the edge cue.
+    var length = more && !el.hasAttribute(CUT) ? fadeOf(el) : 0, fade = length ? length + 'px' : '';
     if (el.style.getPropertyValue(FADE_VAR) !== fade) {
       if (fade) { el.style.setProperty(FADE_VAR, fade); } else { el.style.removeProperty(FADE_VAR); }
     }
     if (el.hasAttribute(MORE) !== more) { el.toggleAttribute(MORE, more); }
+    if (el.hasAttribute(EDGE) !== (more && !length)) { el.toggleAttribute(EDGE, more && !length); }
     if (el.hasAttribute(MORE_X) !== side) { el.toggleAttribute(MORE_X, side); }
     // Its content may change size with no change this pass listens to (a chart drawn again at
     // its new width): a region marked once is watched for that too.
@@ -1166,7 +1371,8 @@ _SHELL_JS = r"""
     for (var i = 0; i < all.length; i++) {
       var e = all[i];
       if ((e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1
-           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X)) && !e.matches(NOT_REGION)) { cue(e); }
+           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X) || e.hasAttribute(CUT))
+          && !e.matches(NOT_REGION)) { cue(e); }
     }
   }
   document.addEventListener('scroll', function (e) {
@@ -1275,6 +1481,110 @@ _SHELL_JS = r"""
       if (box.hasAttribute(OWN_LINE) !== own) { box.toggleAttribute(OWN_LINE, own); }
     }
   }
+  // **R-WIDTH: a button is full width only as the single action of an area no wider than its
+  // fields** (the owner's D12 of 2026-11-24: "whether a button is full width depends on its
+  // action area"; style.py: every action is its words' width): an action area (a column, a
+  // panel's footer or a bar the layout sizes, never a group sized by what it holds) that holds
+  // one drawn action and no field, nothing beside that action (a row or a bar: nothing else
+  // drawn in it, whether or not it wrapped; a column: nothing else on the action's line), and is
+  // no wider than the widest field of its panel, is marked SPAN, and its action spans it (a
+  // form's one action under a column of fields). The area is the action's parent, or, where that
+  // is a column that only wraps the action inside a row of actions, that row. Each is measured
+  // with its mark off (put back before anything is painted), so the mark never changes what it
+  // measured. **A row or bar that holds words beside its action is no one-action area** (the L8
+  // close, S2's open item 6): a reason or phrase slot of the shared kind (``shep-beside``), drawn
+  // or not, so the action keeps one width whether or not its reason shows (Fine-tune's Start
+  // spanned its bar while its reason slot was empty, and kept its words' width only by a page
+  // copy of the button rule).
+  var SPAN = 'data-shep-span', ACTION = 'button.lg, button.md, button.sm';
+  var ACTION_AREA = ':is(.row, .column, .shep-panel-ft, .shep-bar) > :is(' + ACTION + ')';
+  var FIELD = '.block:has(textarea, select, input:not([type=hidden]):not([type=radio]):not([type=checkbox]))';
+  // An area's drawn actions, each with the child of the area it stands in.
+  function actionsOf(area) {
+    var out = [];
+    for (var c = area.firstElementChild; c; c = c.nextElementSibling) {
+      if (!drawn(c)) { continue; }
+      if (c.matches(ACTION)) { out.push([c, c]); }
+      else if (c.matches('.column') && !c.querySelector(FIELD)) {
+        for (var k = c.firstElementChild; k; k = k.nextElementSibling) { if (drawn(k) && k.matches(ACTION)) { out.push([k, c]); } }
+      }
+    }
+    return out;
+  }
+  function areaOf(button) {
+    var area = button.parentElement, up = area.parentElement;
+    if (area.matches('.column') && up && up.matches('.row') && !area.querySelector(FIELD)) { return up; }
+    return area;
+  }
+  function holdsWords(box) {
+    if (!box.matches('.row, .shep-bar')) { return false; }
+    for (var c = box.firstElementChild; c; c = c.nextElementSibling) {
+      if (c.matches('.shep-beside')) { return true; }
+    }
+    return false;
+  }
+  function spanned(box) {
+    if (box.matches('.shep-grp') || box.querySelector(FIELD) || holdsWords(box)) { return false; }
+    var acts = actionsOf(box);
+    if (acts.length !== 1) { return false; }
+    var a = acts[0][0].getBoundingClientRect(), across = box.matches('.row, .shep-bar');
+    for (var c = box.firstElementChild; c; c = c.nextElementSibling) {
+      if (c === acts[0][1] || !drawn(c)) { continue; }
+      var q = c.getBoundingClientRect();
+      if (q.width < 1 || q.height < 1) { continue; }
+      if (across || (q.top < a.bottom - 1 && q.bottom > a.top + 1)) { return false; }
+    }
+    var panel = box.closest('.shep-panel') || box.parentElement, widest = 0;
+    var fields = panel ? panel.querySelectorAll(FIELD) : [];
+    for (var f = 0; f < fields.length; f++) {
+      if (drawn(fields[f])) { widest = Math.max(widest, fields[f].getBoundingClientRect().width); }
+    }
+    var s = getComputedStyle(box);
+    var room = box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+    return widest > 0 && room <= widest + 1;
+  }
+  // **A column that only wraps an action is that action's own box** (WRAP; the L8 close, CK8-3):
+  // a column with no field, in a row, that holds one drawn action and nothing else in its flow (a
+  // cover laid over the action aside: Diagnosis' Run Diagnosis under its ⓘ's cover) is sized by
+  // its action, as the action is by its words, unless the row is spanned (its action then spans
+  // it, the column with it). It grew as any column does, and Run Diagnosis, its words' width,
+  // stood a 230 px hole away from Clear, its companion in the row.
+  var WRAP = 'data-shep-wrap';
+  function wrapsOne(col) {
+    var up = col.parentElement, one = 0;
+    if (!col.matches('.column') || !up || !up.matches('.row') || up.hasAttribute(SPAN)
+        || col.querySelector(FIELD)) { return false; }
+    for (var c = col.firstElementChild; c; c = c.nextElementSibling) {
+      if (!drawn(c) || /^(absolute|fixed)$/.test(getComputedStyle(c).position)) { continue; }
+      if (!c.matches(ACTION) || ++one > 1) { return false; }
+    }
+    return one === 1;
+  }
+  function spans() {
+    var areas = [], all = document.querySelectorAll(ACTION_AREA);
+    for (var i = 0; i < all.length; i++) {
+      if (!drawn(all[i])) { continue; }
+      var area = areaOf(all[i]);
+      if (areas.indexOf(area) < 0) { areas.push(area); }
+    }
+    for (var a = 0; a < areas.length; a++) {
+      var box = areas[a], was = box.hasAttribute(SPAN);
+      if (was) { box.removeAttribute(SPAN); }
+      var span = spanned(box);
+      if (was) { box.setAttribute(SPAN, ''); }
+      if (box.hasAttribute(SPAN) !== span) { box.toggleAttribute(SPAN, span); }
+    }
+    var marked = document.querySelectorAll('[' + SPAN + ']');
+    for (var m = 0; m < marked.length; m++) { if (areas.indexOf(marked[m]) < 0) { marked[m].removeAttribute(SPAN); } }
+    var wraps = [];
+    for (var w = 0; w < all.length; w++) {
+      var col = all[w].parentElement;
+      if (drawn(all[w]) && wraps.indexOf(col) < 0 && wrapsOne(col)) { wraps.push(col); }
+    }
+    for (var n = 0; n < wraps.length; n++) { if (!wraps[n].hasAttribute(WRAP)) { wraps[n].setAttribute(WRAP, ''); } }
+    var had = document.querySelectorAll('[' + WRAP + ']');
+    for (var h = 0; h < had.length; h++) { if (wraps.indexOf(had[h]) < 0) { had[h].removeAttribute(WRAP); } }
+  }
   function layout() {
     orientation();
     fits();
@@ -1283,6 +1593,7 @@ _SHELL_JS = r"""
     seps();
     ends();
     besides();
+    spans();
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');
@@ -1301,6 +1612,9 @@ _SHELL_JS = r"""
     shell.style.setProperty('--shep-chips-h', chips.offsetHeight + 'px');
     var line = Math.round(right.getBoundingClientRect().top - shell.getBoundingClientRect().top);
     shell.style.setProperty('--shep-chips-top', line + 'px');
+    // D10: on the wrapped second line the states start on the brand's edge (Settings ends it).
+    var edge = brand ? Math.round(brand.getBoundingClientRect().left - shell.getBoundingClientRect().left) : 16;
+    shell.style.setProperty('--shep-chips-left', edge + 'px');
   }
   // The layout rule's titled ellipsis, on every page: a select's value or a
   // segmented control's label cut to an ellipsis has its whole text as its
@@ -1334,10 +1648,28 @@ _SHELL_JS = r"""
     queued = true;
     requestAnimationFrame(function () { queued = false; title(); labels(); stage(); layout(); titles(); });
   }
+  // Gradio's status tracker (each output's progress overlay, hidden for a hidden progress)
+  // changes on every event sent, a timer's poll included: its own nodes lay nothing out, so a
+  // change inside one never lays the page out again (the L8 close: every timer poll laid the
+  // whole page out, a frame grew to 200 ms once every page was drawn, and the page never rested).
+  // So too the help bubble, fixed over the page: a change of its side (its class) laid the page
+  // out again under a region the reader had scrolled, and the region went back to its top (the
+  // L8 close's final fix: Training at 1366 x 768, a ⓘ's preview re-placed as Parameters scrolled
+  // to "Reset to reference", the focused Reset left under the edge).
+  var LAYS_NOTHING = '[data-testid="status-tracker"], #shep-help-bubble';
+  function laysOut(records) {
+    for (var i = 0; i < records.length; i++) {
+      var t = records[i].target;
+      var el = t && t.nodeType === 1 ? t : (t ? t.parentElement : null);
+      if (!el || !el.closest(LAYS_NOTHING)) { return true; }
+    }
+    return false;
+  }
   // A page shown, a panel shown or hidden (a drawer; Gradio's hidden class),
   // the page's own class that changes its panels: each lays the page out again.
-  new MutationObserver(update).observe(document.documentElement,
-    {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected', 'class']});
+  new MutationObserver(function (records) { if (laysOut(records)) { update(); } })
+    .observe(document.documentElement,
+      {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected', 'class']});
   window.addEventListener('resize', update);
   // A font arriving redraws text in its own widths: the fit is measured again.
   if (document.fonts && document.fonts.addEventListener) {
@@ -1393,8 +1725,83 @@ _SHELL_JS = r"""
     restoring = false;
     goTo(page, focusId, 120);
   });
-  window.ShepShell = {update: update, title: title, titles: titles, kept: kept, sent: sent, go: goTo,
-                     restored: function () { restoring = false; update(); }};
+  // **R-WHY, a dimmed control's reason** (`renderers.reason_phrase`): an element that says why
+  // controls are dimmed names them by id (data-for: a phrase beside them, or the cause's own
+  // notice in the same bar); each such control is described by it (aria-describedby), by every
+  // element that names it, and a description whose element is gone is taken back.
+  // Its ids are merged with the field help's (`help.DESCRIBED_BY_JS`): each script adds and
+  // takes back only its own, so a dimmed field with a ⓘ keeps its info line, its help text and
+  // its phrase.
+__DESCRIBED_BY__
+  var BY = 'data-shep-why-by', WHY_FOR = 'button.shep-why[data-for], .shep-nb[data-for]';
+  function describeDimmed() {
+    var want = {}, done = [];
+    var els = document.querySelectorAll(WHY_FOR);
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i], ids = (el.getAttribute('data-for') || '').split(/\s+/).filter(Boolean);
+      if (!ids.length) { continue; }
+      if (!el.id) { el.id = 'shep-why-' + ids[0]; }
+      for (var j = 0; j < ids.length; j++) { (want[ids[j]] = want[ids[j]] || []).push(el.id); }
+    }
+    Object.keys(want).forEach(function (id) {
+      var c = document.getElementById(id);
+      if (!c) { return; }
+      // A field's block: its own control, never the help's ⓘ drawn in its label.
+      var b = c.matches('button, input, textarea, select') ? c
+        : (c.querySelector('input:not([type=hidden]), textarea, select') || c.querySelector('button:not(.shep-i)') || c);
+      describedBy(b, BY, want[id]);
+      done.push(b);
+    });
+    // A control no element names any more: its own ids taken back, every other kept.
+    var stale = document.querySelectorAll('[' + BY + ']');
+    for (var k = 0; k < stale.length; k++) {
+      if (done.indexOf(stale[k]) < 0) { describedBy(stale[k], BY, []); }
+    }
+  }
+  var whyPending = false;
+  new MutationObserver(function (records) {
+    if (whyPending || !laysOut(records)) { return; }
+    whyPending = true;
+    requestAnimationFrame(function () { whyPending = false; describeDimmed(); });
+  }).observe(document.documentElement, {childList: true, subtree: true});
+  // A phrase whose reason is a notice: the notice drawn on this screen (its key, or one it is
+  // drawn with: data-why-notice) comes into view at its nearest edge and its link takes the
+  // focus; with none drawn, the notice's place in the GUI opens (data-why-go), as its link does.
+  function drawnNotice(keys) {
+    var all = document.querySelectorAll('.shep-nb[data-notice], .shep-nb[data-notice-also]');
+    for (var i = 0; i < all.length; i++) {
+      var n = all[i];
+      var has = ((n.getAttribute('data-notice') || '') + ' ' + (n.getAttribute('data-notice-also') || ''))
+        .split(/\s+/);
+      if (keys.some(function (k) { return k && has.indexOf(k) >= 0; }) && drawn(n)) { return n; }
+    }
+    return null;
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('button.shep-why[data-why-notice]') : null;
+    if (!b) { return; }
+    e.preventDefault();
+    var notice = drawnNotice((b.getAttribute('data-why-notice') || '').split(/\s+/));
+    if (notice) {
+      notice.scrollIntoView({block: 'nearest', inline: 'nearest'});
+      var link = notice.querySelector('button.shep-nb-go, .shep-nb-more > summary');
+      if (!link) { link = notice; if (!link.hasAttribute('tabindex')) { link.setAttribute('tabindex', '-1'); } }
+      link.focus({preventScroll: true});
+      return;
+    }
+    var page = b.getAttribute('data-why-go') || '', focusId = b.getAttribute('data-why-focus') || '';
+    if (!Object.prototype.hasOwnProperty.call(GO, page)) { return; }
+    if (GO[page].indexOf(focusId) < 0) { focusId = ''; }
+    restoring = false;
+    goTo(page, focusId, 120);
+  });
+  // ``layOut``: the layout pass now, no frame waited for, for a page that draws a part shown for
+  // a measure alone. The marks inside that part are then those of it shown, so the measure never
+  // reads a mark the pass set while the part was hidden (Training's fold, the L8 LOOK5's L8-1:
+  // the "Set by you" line's own line is measured only while drawn, and the fold read its own
+  // result back, opening and closing about 24 times a second).
+  window.ShepShell = {update: update, layOut: layout, title: title, titles: titles, kept: kept, sent: sent,
+                      go: goTo, restored: function () { restoring = false; update(); }};
 })();
 """
 
@@ -1418,6 +1825,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
               .replace("__FADE_VAR__", FADE_VAR)
               .replace("__GO__", as_json_for_script({k: list(v) for k, v in GO_TARGETS.items()}))
+              .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS)
               + "</script>")
 
 

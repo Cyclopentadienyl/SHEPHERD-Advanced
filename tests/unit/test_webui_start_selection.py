@@ -204,8 +204,10 @@ const { chromium } = require('playwright');
     const ids = fns[where];
     const before = await page.evaluate((i) => window.__shepQueue.count(i), ids.after);
     const shown = await page.evaluate((where) => {
+      // The summary's whole text, its closed "Details ›" too: the run it is
+      // drawn for is a row there (L8 F, 3afb38a), which innerText leaves out.
       const text = (sel) => { const el = document.querySelector(sel);
-                              return el ? el.innerText.replace(/\s+/g, ' ').trim() : null; };
+                              return el ? el.textContent.replace(/\s+/g, ' ').trim() : null; };
       const value = (sel) => { const el = document.querySelector(sel);
                                return el ? el.value : null; };
       return where === 'finetune'

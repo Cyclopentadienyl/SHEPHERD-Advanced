@@ -179,7 +179,6 @@ import re
 import time
 from dataclasses import asdict
 from datetime import datetime
-from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
@@ -196,8 +195,7 @@ from src.evaluation.caveats import (
 )
 from src.webui.components import renderers as r
 from src.webui.components.chips import LOCK, chips_on_change, gated
-from src.webui.components.chips import operator_only as _operator_only
-from src.webui.components.help import help_button, sentence_lines
+from src.webui.components.help import help_button, sentence_items
 from src.webui.components import model_list as ml
 from src.webui.components.model_list import item_key
 from src.webui.components.workspaces import (
@@ -370,7 +368,8 @@ FIELD_HELP = {
 }
 #: Help a rendered ⓘ names. A described measurement's result note is the
 #: governed caveat's own text (`caveats.mode_note`, shown on Models and
-#: Results too), each sentence a line (`sentence_lines`), never reworded here.
+#: Results too), laid out by `sentence_items` (its first sentence the lead),
+#: never reworded here.
 TOPIC_HELP = {
     "test-preview-id": (
         "Preview id",
@@ -380,7 +379,7 @@ TOPIC_HELP = {
         "- Commit: prepares again from the same inputs, refused unless the id matches\n"
         "- So: what is committed is what was previewed",
     ),
-    **{_MODE_HELP[mode]: (f"{words} result", sentence_lines(mode_note(mode)))
+    **{_MODE_HELP[mode]: (f"{words} result", sentence_items(mode_note(mode)))
        for mode, words in _RESULT_WORDS.items()},
     "test-batch": (
         "Batch size",
@@ -478,11 +477,10 @@ def _access(request: Any) -> Dict[str, Any]:
             "reason": decision.reason}
 
 
-def operator_only(access: Mapping[str, Any]) -> str:
-    """The visible reason a control a read-only request cannot use is off
-    (`chips.operator_only`, D8's short words; the header chip's ⓘ gives D8's
-    whole reason), as a sentence."""
-    return f"{_operator_only(access.get('condition'))}."
+#: The cause a control a read-only request cannot use is dimmed for (R-WHY's
+#: ``d8``: its phrase, "Operator controls only", beside it opens the header
+#: chip's whole reason; `chips.operator_only`).
+D8 = "d8"
 
 
 #: The page's gated buttons and their words, shown with no lock while the
@@ -500,16 +498,24 @@ def gated_update(name: str, page: Mapping[str, Any], *, interactive: bool = True
     return gr.update(**gated(GATED_LABELS[name], allowed, interactive=interactive))
 
 
-def _reason_html(text: Optional[str], *, kind: str = "") -> str:
+def _reason_html(text: Optional[str], *, kind: str = "", control: Optional[str] = None,
+                 cause: Any = None) -> str:
     """A reason line: with `kind` "lock", led by the lock (a request D8
-    refuses); "off", by the mark of a disabled control's reason
-    (`renderers.DISABLED_MARK`, as every page leads it)."""
-    if not text:
+    refuses); "off", by the mark of a dimmed control's reason
+    (`renderers.DISABLED_MARK`, as every page leads it). `text`: the page's
+    words, or a cause with a key of its own (`renderers.REASONS`: D8, a
+    setting, the GPU), said by its phrase (R-WHY, `renderers.reason_phrase`)
+    beside the control whose element id is `control`; `cause`: a keyed cause
+    whose phrase follows the page's words."""
+    if isinstance(text, str) and text in r.REASONS:
+        text, cause = None, text
+    phrase = r.reason_phrase(cause, control=control) if cause is not None else ""
+    if not text and not phrase:
         return ""
     mark = (f'<span aria-hidden="true">{LOCK}</span>' if kind == "lock" else
             r.DISABLED_MARK if kind == "off" else "")
-    return (f'<div class="shep-reason shep-test-reason">{mark}<span>{r.bound_html(text)}</span>'
-            '</div>')
+    words = " ".join(part for part in (r.bound_html(text) if text else "", phrase) if part)
+    return f'<div class="shep-reason shep-test-reason">{mark}<span>{words}</span></div>'
 
 
 def run_sha12(run_id: Any) -> Optional[str]:
@@ -595,7 +601,7 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
         # Each setting's state in parts (`workspaces.setting_notice`), from the
         # same reads as the problems beside them (kept for the API-shaped
         # state): the Data panel says each once (`data_notice_html`), every
-        # control it turns off a relation to it (`renderers.see_above`). None
+        # control it dims its phrase (`renderers.reason_phrase`). None
         # while the setting can be used.
         "workspaces_notice": listed["notice"],
         "registry_notice": setting_notice(registry),
@@ -1040,30 +1046,31 @@ def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
 #: once with them (`data_notice_html`; the text brief's §1: the state, its
 #: consequence, then the next step): by how many it names.
 TESTING_WAITS = {1: "Testing waits for it.", 2: "Testing waits for both."}
-#: The controls a disabled reason names (`renderers.disabled_words`): a
-#: relation to the notice (`renderers.see_above`: "Import disabled: no results
-#: registry is set."), never the notice again (the skill's §9), or the page's
-#: own reason ("Start disabled: choose a data version.").
-IMPORT = "Import"
-START = "Start"
-REGISTER = "Register"
-#: The Run select (`listing_why_html`) while no workspace is listed: choose
-#: one in Data, or there is none yet (the Workspace select says so).
-RUN = "Run"
-#: Why the import drawer's Commit is off (L7: a disabled primary action says
+#: The element ids of the controls a dimmed reason explains (R-WHY's
+#: ``data-for``): a keyed cause's phrase (`renderers.reason_phrase`: "Needs a
+#: results registry", never the notice again, the skill's §9) or the page's
+#: own words led by the need (`renderers.need_words`: "Choose a data
+#: version."), beside the control they dim.
+IMPORT_ID = "shep-test-import-open"
+START_ID = "shep-test-start"
+REGISTER_ID = "shep-test-register"
+CANCEL_ID = "shep-test-cancel"
+NOTE_ID = "shep-test-note-add"
+#: The Run select and its ↻ (`listing_why_html`): with no workspace listed,
+#: choose one in Data, or there is none yet (the Workspace select says so).
+RUN_ID = "shep-test-model-run"
+RUN_RELOAD_ID = "shep-test-model-reload"
+#: Why the import drawer's Commit is off (L7: a dimmed primary action says
 #: why beside it in the shared form, the skill's §9): no preview yet, or one
 #: that maps no case.
-COMMIT = "Commit"
-COMMIT_NO_PREVIEW = r.disabled_words(COMMIT, "prepare a preview first.")
-COMMIT_NO_CASES = r.disabled_words(COMMIT, "the preview maps no case.")
-RUN_CHOOSE_WORKSPACE = "choose a workspace in Data first."
-RUN_NO_WORKSPACE = "no workspace yet (see Data)."
+COMMIT_NO_PREVIEW = r.need_words("prepare a preview first")
+COMMIT_NO_CASES = r.need_words("the preview maps no case")
+RUN_CHOOSE_WORKSPACE = r.need_words("choose a workspace in Data first")
+RUN_NO_WORKSPACE = r.need_words("no workspace yet")
 #: Register's cause while no report is chosen (`register_state`): a report to
 #: choose in the list, or none listed yet.
-REGISTER_CHOOSE = "choose a kept report in the list first."
-REGISTER_NONE = "no report is listed yet."
-#: Where Start's relation points: the panel that shows the notice.
-NOTICE_PANEL = "Data"
+REGISTER_CHOOSE = r.need_words("choose a kept report in the list first")
+REGISTER_NONE = r.need_words("no report is listed yet")
 #: Under the Workspace select when the workspaces folder can be used and
 #: holds none (the empty-folder state; the skill's §9).
 NO_WORKSPACE_YET = "The workspaces folder holds no workspace yet."
@@ -1098,10 +1105,10 @@ def data_notice_html(page: Mapping[str, Any]) -> str:
     return r.notices_block(notices, consequence=TESTING_WAITS[min(len(notices), 2)])
 
 
-def relation_html(control: str, notice: Mapping[str, Any], *,
-                  where: Optional[str] = None) -> str:
-    """A control's one line on the notice it waits for (`renderers.see_above`)."""
-    return r.see_above(control, notice, where=where)
+def relation_html(control: str, notice: Mapping[str, Any]) -> str:
+    """A dimmed control's one line on the notice it waits for: the notice's
+    phrase (R-WHY, `renderers.phrase_line`), `control` its element id."""
+    return r.phrase_line(notice, control=control)
 
 
 def cohort_header_html(page: Mapping[str, Any]) -> str:
@@ -1446,7 +1453,7 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
         if status == "failed" and job.get("exit_meaning"):
             how += f" ({job['exit_meaning']})"
         kept = ("no report kept" if outcome.get("kept") is False
-                else "whether a report was kept cannot be checked (see Run)")
+                else "whether a report was kept cannot be checked")
         when = utc_time(job.get("end_time")) or utc_time(job.get("start_time"))
         what = "ended " + when if when else "ended"
         # One fact a line (the owner's decision of 2026-11-23).
@@ -1595,7 +1602,7 @@ NO_CHECKPOINT = "This workspace has no checkpoint to test."
 #: the one place the page asks for the choice, naming its two selects
 #: (NEW-test-1: it said "choose a model", a control the page no longer has,
 #: under the selects' own "Choose the run, then the checkpoint to test.").
-CHOOSE_A_CHECKPOINT = r.disabled_words(START, "choose the run, then the checkpoint to test.")
+CHOOSE_A_CHECKPOINT = r.need_words("choose the run, then the checkpoint to test")
 
 
 def testable(item: Mapping[str, Any]) -> bool:
@@ -1629,19 +1636,19 @@ def listing_why_html(page: Mapping[str, Any], models: Mapping[str, Any]) -> str:
     refuses: listing the checkpoints opens them, an operator control. With no
     workspace listed (L7 SW-LK10: the two selects were empty grey boxes, the
     ↻ off with nothing said; the skill's §9): Run's relation to the Data
-    panel's workspaces notice (`see_above`), else to its Workspace select.
+    panel's workspaces notice (its phrase), else to its Workspace select.
     Empty once a workspace is listed (its checkpoints, or `NO_CHECKPOINT`
     under Checkpoint)."""
     if models.get("refused"):
-        return _reason_html("Not listed: listing the checkpoints opens them. "
-                            + operator_only(page.get("access") or {}), kind="lock")
+        return _reason_html("Not listed: listing the checkpoints opens them.", kind="lock",
+                            cause=D8, control=RUN_RELOAD_ID)
     if models.get("workspace"):
         return ""
     folder = _notice(page, "workspaces_notice")
     if folder is not None:
-        return relation_html(RUN, folder, where=NOTICE_PANEL)
-    return _reason_html(r.disabled_words(RUN, RUN_CHOOSE_WORKSPACE if page.get("workspaces")
-                                         else RUN_NO_WORKSPACE), kind="off")
+        return relation_html(RUN_ID, folder)
+    return _reason_html(RUN_CHOOSE_WORKSPACE if page.get("workspaces") else RUN_NO_WORKSPACE,
+                        kind="off")
 
 
 def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional[str]) -> str:
@@ -1864,27 +1871,26 @@ def import_reason_html(page: Mapping[str, Any], workspace: Optional[str]) -> str
     used."""
     access = page.get("access") or {}
     if not access.get("allowed"):
-        return _reason_html(operator_only(access), kind="lock")
+        return _reason_html(D8, kind="lock", control=IMPORT_ID)
     registry, folder = _notice(page, "registry_notice"), _notice(page, "workspaces_notice")
     if registry is not None:
-        return relation_html(IMPORT, registry)
+        return relation_html(IMPORT_ID, registry)
     if page.get("registry_problem"):
-        return _reason_html(r.disabled_words(IMPORT, "no cohort registry is available."),
-                            kind="off")
+        return _reason_html(r.need_words("no cohort registry is available"), kind="off")
     if workspace:
         return ""
     if folder is not None:
-        return relation_html(IMPORT, folder)
-    return _reason_html(r.disabled_words(IMPORT, "choose a workspace to import against."
-                                         if page.get("workspaces")
-                                         else "no workspace to import against."), kind="off")
+        return relation_html(IMPORT_ID, folder)
+    return _reason_html(r.need_words("choose a workspace to import against"
+                                     if page.get("workspaces")
+                                     else "no workspace to import against"), kind="off")
 
 
 def start_notice(page: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
     """**The setting Start waits for**, as the notice the Data panel shows
     (`data_notices`, its first: the results registry, a run's reports are kept
     in it; then the workspaces folder, which holds every workspace and the GPU
-    lock), or None when both can be used. Start's reason is its relation
+    lock), or None when both can be used. Start's reason is its phrase
     (`start_state`, `start_reason_html`)."""
     found = data_notices(page)
     return found[0] if found else None
@@ -1893,13 +1899,13 @@ def start_notice(page: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
 def start_reason_html(page: Mapping[str, Any], allowed: bool, can_start: bool,
                       why: Optional[str]) -> str:
     """Start's reason as drawn under it: a request D8 refuses, its lock and
-    D8's words; a setting the Data panel's notice names, Start's relation to
-    it (`renderers.see_above`, the words `start_state` gives); else
-    `start_state`'s reason."""
+    its phrase; a setting the Data panel's notice names, its phrase
+    (`renderers.phrase_line`, the notice the Data panel draws); else
+    `start_state`'s reason (a keyed cause's phrase, or the page's words)."""
     notice = start_notice(page) if allowed and not can_start else None
     if notice is not None:
-        return relation_html(START, notice, where=NOTICE_PANEL)
-    return _reason_html(why, kind="lock" if not allowed else "off")
+        return relation_html(START_ID, notice)
+    return _reason_html(why, kind="lock" if not allowed else "off", control=START_ID)
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -1909,54 +1915,59 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     """Whether "Start test" can be used now for the measurement `protocol`
     (the Measurement radio's value; None: none chosen), and why not, in the
     order an operator fixes things: a setting the Data panel's notice names
-    first, as Start's relation to it (`start_notice`, `relation_words`: its
-    short words, never the notice again), then a busy or unread GPU lock
-    before the choices, since no choice would enable Start while it lasts.
-    Only a display: the handler checks D8 and the runner refuses again at
-    start."""
+    first, as its cause key (`start_notice`, `renderers.reason_key`: its
+    phrase, never the notice again), then a busy or unread GPU lock before
+    the choices, since no choice would enable Start while it lasts (the GPU
+    chip's reason, by its key). A keyed cause (`renderers.REASONS`) is
+    returned as its key, the page's own cause as its words led by the need
+    (`renderers.need_words`). Only a display: the handler checks D8 and the
+    runner refuses again at start."""
     access = page.get("access") or {}
     roots = page.get("roots") or []
     if not access.get("allowed"):
-        return False, operator_only(access)
+        return False, D8
     notice = start_notice(page)
     if notice is not None:
-        return False, r.relation_words(START, notice, where=NOTICE_PANEL)
-    off = partial(r.disabled_words, START)
+        return False, r.reason_key(notice)
+    off = r.need_words
     if page.get("registry_problem"):
-        return False, off("no registry is available (see Data).")
-    kind, words = gpu
+        return False, off("no registry is available")
+    kind, _words = gpu
     if kind == "busy":
-        # The holder in the GPU chip's words, with where to stop this
-        # service's inference when that holds it (`gpu_line`), as Training's
-        # and Fine-tune's starts say it: whatever holds the lock, a job or
-        # inference, Start waits for it.
-        return False, off(f"{words}.")
-    if kind == "unread":
-        return False, off("the GPU lock cannot be read or used just now (see the GPU chip).")
+        # Whatever holds the lock, a job or inference, Start waits for it:
+        # the GPU chip says the holder and where to stop this service's
+        # inference when that holds it, once (R-WHY's ``gpu_busy``).
+        return False, "gpu_busy"
+    from src.webui.components.chips import LOCK_UNUSABLE
+
+    if kind in LOCK_UNUSABLE:
+        # Not set up, could not be read or not usable (R-STATE: by its kind,
+        # never its words): no managed job can take the lock now.
+        return False, "gpu_problem"
     workspace_row = find(page.get("workspaces") or [], "name", workspace)
     if workspace_row is None:
         # An empty folder says so under the Workspace select (`NO_WORKSPACE_YET`).
-        return False, off("choose a workspace." if page.get("workspaces")
-                          else "no workspace is listed (see Data).")
+        return False, off("choose a workspace" if page.get("workspaces")
+                          else "no workspace is listed")
     version = find(page.get("versions") or [], "label", label)
     if version is None:
-        return False, off("choose a data version.")
+        return False, off("choose a data version")
     if version.get("problem"):
-        return False, off("this data version cannot be read.")
+        return False, off("this data version cannot be read")
     bound = binding_state(version, binding)[0]
     if bound == "changed":
         # Its refusal, naming the file, is said beside the version (`CHANGED_FILES`).
-        return False, off("the data version's files changed after its import (see Data).")
+        return False, off("the data version's files changed after its import")
     if bound == "another":
         # Its refusal is said beside the version (`ANOTHER_GRAPH`), once.
-        return False, off("the data version is mapped against another graph (see Data).")
+        return False, off("the data version is mapped against another graph")
     item = find_model(models, key)
     if item is None:
         # Its empty state or its problem is said under the selects (`model_html`).
         return False, (CHOOSE_A_CHECKPOINT if models.get("items")
-                       else off("no checkpoint to test (see Run)."))
+                       else off("no checkpoint to test"))
     if item.get("problem") or not r.is_digest(item.get("sha256")):
-        return False, off("this checkpoint's metadata is not readable.")
+        return False, off("this checkpoint's metadata is not readable")
     refusal = measure_refusal(item, version, protocol)
     if refusal:
         return False, off(said(redact(refusal, roots), ""))
@@ -2461,11 +2472,11 @@ def _store_not_listed(problem: str, roots: Sequence[Tuple[str, str]], what: str)
     """Why Register is off when the store could not be listed (Decision 10):
     no report can be confirmed here, and the command line registers a named
     report it verifies. Who acts: the operator, on the server."""
-    return r.disabled_words(REGISTER, f"the report store could not be listed, so {what}'s "
-                            f"report cannot be confirmed here: "
-                            f"{redact(problem, roots).rstrip('.')}. Register it from the "
-                            "command line by naming its report (scripts/record_evaluation.py "
-                            "--report …).")
+    return r.need_words(f"the report store could not be listed, so {what}'s "
+                        f"report cannot be confirmed here: "
+                        f"{redact(problem, roots).rstrip('.')}. Register it from the "
+                        "command line by naming its report (scripts/record_evaluation.py "
+                        "--report …)")
 
 
 def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
@@ -2486,35 +2497,35 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
     # D8 first, whatever is chosen: a refused request's button shows the lock,
     # and the lock is never without its reason (the one gated-button rule).
     if not access.get("allowed"):
-        return False, operator_only(access)
+        return False, D8
     run = find(reports.get("runs") or [], "run_id", run_id)
     if run is None:
         # The version was read but its store's runs could not be listed.
         listing = reports.get("problem") if reports.get("version_sha256") else None
         if listing and not reports.get("runs"):
             return False, _store_not_listed(listing, roots, "a run")
-        # No report chosen: said in the shared form, never a silent disabled
+        # No report chosen: said in the shared form, never a silent dimmed
         # button (L7 SW-LK6; the skill's §9): the registry the Data panel's
-        # notice names, else what to choose.
+        # notice names (its cause key, `renderers.reason_key`), else what to
+        # choose.
         registry = _notice(page, "registry_notice")
         if registry is not None:
-            return False, r.relation_words(REGISTER, registry, where=NOTICE_PANEL)
-        return False, r.disabled_words(REGISTER, REGISTER_CHOOSE if reports.get("runs")
-                                       else REGISTER_NONE)
+            return False, r.reason_key(registry)
+        return False, REGISTER_CHOOSE if reports.get("runs") else REGISTER_NONE
     state = run.get("state") or {}
     if state.get("kept") != "kept":
-        return False, r.disabled_words(REGISTER, "no report was kept in this run.")
+        return False, r.need_words("no report was kept in this run")
     if state.get("registered") == "registered":
         return False, "Already registered."
     if run.get("record") is None:
         if run.get("unbuilt"):
-            return False, r.disabled_words(REGISTER, "this report cannot be registered: "
-                                                     f"{redact(run['unbuilt'], roots)}")
+            return False, r.need_words("this report cannot be registered: "
+                                       f"{redact(run['unbuilt'], roots)}")
         if reports.get("store_problem"):
             return False, _store_not_listed(reports["store_problem"], roots, "this run")
-        return False, r.disabled_words(REGISTER, "the report store's listing did not read this "
-                                                 "report (it may have been written or replaced "
-                                                 "since). Press ↻ to read it again.")
+        return False, r.need_words("the report store's listing did not read this "
+                                   "report (it may have been written or replaced "
+                                   "since). Press ↻ to read it again.")
     return True, None
 
 
@@ -3323,11 +3334,11 @@ def create_test_page(ctx: Any) -> None:
         status = job.get("status") or "idle"
         busy = status in _BUSY
         can_cancel = allowed and status == "running"
-        cancel_why = None if allowed or not busy else operator_only(page.get("access") or {})
+        cancel_why = None if allowed or not busy else D8
         return [job_head_html(job), job_body_html(job, roots, gpu),
                 gr.update(**gated(GATED_LABELS["cancel"], allowed, interactive=can_cancel),
                           visible=busy),
-                _reason_html(cancel_why, kind="lock")]
+                _reason_html(cancel_why, kind="lock", control=CANCEL_ID)]
 
     def _run_outputs(page, models, binding, ws, label, key, protocol, job, gpu):
         allowed = bool((page.get("access") or {}).get("allowed"))
@@ -3381,13 +3392,12 @@ def create_test_page(ctx: Any) -> None:
                         notes_problems=reports.get("notes_problems") or (), selection=chosen,
                         models=models, workspaces=page.get("workspaces") or []),
             gated_update("register", page, interactive=can),
-            _reason_html(why, kind="lock" if not allowed else "off"),
+            _reason_html(why, kind="lock" if not allowed else "off", control=REGISTER_ID),
             gr.update(visible=show_notes),
             gated_update("note", page),
             gr.update(interactive=allowed),
             gr.update(interactive=allowed),
-            _reason_html(None if allowed else operator_only(page.get("access") or {}),
-                         kind="lock"),
+            _reason_html(None if allowed else D8, kind="lock", control=NOTE_ID),
         ]
 
     result_outputs = [reports_hd, reports_list, result_out, register, register_reason, note_form,
@@ -3934,7 +3944,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-pad {{ padding: var(--shep-space-3) var(--shep-inset); display: flex; flex-direction: column; gap: 10px; }}
 {_PAGE} .shep-test-reason {{ margin: 2px 0; }}
 {_PAGE} .shep-test-actions {{ gap: 10px !important; align-items: center !important; flex-wrap: wrap !important; }}
-{_PAGE} .shep-test-actions > button {{ flex: none !important; }}
 {_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
 {_PAGE} #shep-test-model-why:not(:has(.shep-reason)) {{ display: none !important; }}
@@ -3983,7 +3992,6 @@ PAGE_CSS = f"""
 {_PAGE} #shep-test-import-close {{ flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} .shep-test-form {{ gap: 10px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-form > * {{ min-width: min(11.25rem, 100%) !important; }}
-{_PAGE} #shep-test-start {{ width: 100%; }}
 {_PAGE} .shep-test-runft {{ padding: 10px 16px 12px !important; gap: 10px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
@@ -3992,7 +4000,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-all .shep-test-more-all {{ display: none !important; }}
 {_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 0; }}
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
-{_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
 {_PAGE} .shep-panel-ft > .block:not(.shep-beside):not(.shep-bar-note) {{ flex: 1 1 200px !important; min-width: 0 !important; }}
 {_PAGE} #shep-test-cohort {{ --shep-panel-basis: 22rem; --shep-panel-grow: 1; --shep-panel-min: 19.7rem; }}
 {_PAGE} #shep-test-run {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}

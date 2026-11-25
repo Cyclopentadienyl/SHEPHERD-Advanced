@@ -10,7 +10,8 @@ The header's chips (M5-2, UI-A): operator controls and GPU jobs.
 - **the GPU chip** from the job runner and the lock's holder record: none,
   training or test run (job runner), a CLI holder with pid and start time, a
   holder that exited, a lock not configured, a lock that cannot be used, and
-  grey "not read" when anything fails. Never "free"; no exception text; a
+  grey "could not be read" when anything fails (R-STATE: four states that are
+  no holder, each its own kind and words). Never "free"; no exception text; a
   server path only for a request D8 allows; a holder record's text escaped;
 - **wired as the page contract says**: read on load, on the shell's slow
   timer and after a gated act, each with no queue, for the triggering request.
@@ -20,6 +21,7 @@ Module: tests/unit/test_webui_chips.py
 from __future__ import annotations
 
 import os
+import re
 import socket
 from datetime import datetime, timezone
 
@@ -221,7 +223,7 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
     assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not set up")
+        assert (chip.kind, chip.text) == ("unset", "GPU jobs: not set up")
         # Plain words that point to where a clinician sets it (UI-06, item 9);
         # the variable only as a trailing "Ref:" for the command line.
         assert chip.detail.startswith(f"{GPU_LOCK_NOTICE.summary}\n{GPU_LOCK_NOTICE.action}.\n")
@@ -253,7 +255,7 @@ def test_the_chip_reads_the_lock_s_one_status_reader(monkeypatch, tmp_path):
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "missing"))
     for operator in (True, False):
         chip = read_gpu_chip_now(operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
+        assert (chip.kind, chip.text) == ("blocked", "GPU jobs: lock not usable")
         assert ("The GPU lock under it cannot be used either" in chip.detail) is operator
 
 
@@ -262,7 +264,7 @@ def test_a_lock_that_cannot_be_used_names_its_path_only_to_an_operator():
             "problem": "SHEPHERD_WORKSPACES_ROOT='/srv/secret/x' is not usable"}
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
+        assert (chip.kind, chip.text) == ("blocked", "GPU jobs: lock not usable")
         assert ("/srv/secret/x" in chip.detail) is operator
         # T06: the request that may not read the problem is told where an
         # operator reads it, Settings › Data locations, never the variable.
@@ -286,14 +288,75 @@ def test_the_lock_path_goes_only_to_a_request_d8_allows(monkeypatch):
     assert seen == [True, False, False]
 
 
-def test_a_runner_that_raises_reads_not_read_with_no_exception_text():
+def test_a_runner_that_raises_reads_could_not_be_read_with_no_exception_text():
     class Broken:
         def active_job(self):
             raise RuntimeError("boom: /srv/secret")
 
     chip = c.read_gpu_chip(Broken(), operator=True, lock_reader=lambda: LOCK_FREE)
-    assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
+    assert (chip.kind, chip.text) == ("unreadable", "GPU jobs: could not be read")
     assert "boom" not in chip.detail and "RuntimeError" not in chip.detail
+
+
+def test_each_unread_like_state_has_its_own_kind_and_words():
+    """R-STATE (the owner's "unread" of 2026-11-24): "not set up" (no
+    workspaces folder), "not read yet" (before the first read), "could not be
+    read" (the read raised) and "lock not usable" (a lock problem) are four
+    states. They shared the kind ``unread`` (class ``shep-chip-unread``,
+    ``data-state``) and two of them the words "not read". Each now has its
+    own kind, its own state words and its own look in the status tokens (no
+    new hex): a missing setting and a read that failed grey with the hollow
+    mark, the placeholder grey with no mark, the lock problem red with the
+    cross (it refuses every managed job, the skill's §6)."""
+    from src.webui import style
+    from src.webui.components.renderers import STATUS_MARKS
+
+    class Broken:
+        def active_job(self):
+            raise RuntimeError("boom")
+
+    placeholder = dict(re.findall(r'class="shep-chip shep-chip-(d8|gpu) shep-chip-[a-z]+" '
+                                  r'data-state="([a-z]+)"', c.CHIPS_PLACEHOLDER))
+    words = dict(re.findall(r'class="shep-chip shep-chip-(d8|gpu) .*?'
+                            r'<span class="shep-chip-text" title="([^"]*)"', c.CHIPS_PLACEHOLDER))
+    states = {
+        "unset": c.gpu_chip_from(None, {**LOCK_FREE, "configured": False, "unset": True,
+                                        "path": None, "problem": "x"}, operator=True),
+        "pending": c.Chip(placeholder["gpu"], words["gpu"], ""),
+        "unreadable": c.read_gpu_chip(Broken(), operator=True, lock_reader=lambda: LOCK_FREE),
+        "blocked": c.gpu_chip_from(None, {**LOCK_FREE, "problem": "the folder is read-only"},
+                                   operator=True),
+    }
+    assert {name: chip.kind for name, chip in states.items()} == {
+        name: name for name in states}, states
+    assert placeholder == {"d8": "pending", "gpu": "pending"}
+    # Each state's own words after "GPU jobs: ": four, none a part of another.
+    said = {name: chip.text.split(": ", 1)[1] for name, chip in states.items()}
+    assert said == {"unset": "not set up", "pending": "not read yet",
+                    "unreadable": "could not be read", "blocked": "lock not usable"}
+    assert all(a == b or a not in b for a in said.values() for b in said.values()), said
+    assert words["d8"] == "Operator controls: not read yet"
+    # No chip draws the merged kind; each kind has its own look in the status tokens.
+    drawn = [c.chip_html(chip, which="gpu") for chip in states.values()] + [c.CHIPS_PLACEHOLDER]
+    merged = re.compile(r"shep-chip-unread(?![\w-])")
+    assert not any(merged.search(html_) for html_ in drawn)
+    assert not merged.search(style.SHELL_CSS)
+    rules = {kind: " ".join(re.findall(rf"\.shep-chip-{kind}\b[^{{]*\{{([^}}]*)\}}", style.SHELL_CSS))
+             for kind in states}
+    for kind, body in rules.items():
+        assert body and "var(--shep-" in body, kind
+        assert not re.search(r"#[0-9a-fA-F]{3,6}\b", body), (kind, body)
+    assert "var(--shep-status-error)" in rules["blocked"]
+    assert "var(--shep-status-neutral)" in rules["unset"] + rules["unreadable"]
+    # The marks: hollow for the missing setting and the failed read, none before the read,
+    # the error cross for the lock problem (the status table's own shape).
+    gpu = {name: c.chip_html(chip, which="gpu") for name, chip in states.items()}
+    assert 'class="shep-dot"' in gpu["unset"] and 'class="shep-dot"' in gpu["unreadable"]
+    assert 'class="shep-dot"' not in gpu["pending"] and 'class="shep-dot"' not in gpu["blocked"]
+    assert f'aria-hidden="true">{STATUS_MARKS["error"][0]}</span>' in gpu["blocked"]
+    assert 'data-reason="gpu_problem"' in gpu["blocked"]
+    # A start refused by the lock reads each refusing state by kind, never by its words.
+    assert set(c.LOCK_UNUSABLE) == {"unset", "unreadable", "blocked"}
 
 
 def test_a_holder_records_text_is_escaped_in_the_chip():
@@ -332,6 +395,7 @@ def test_both_chips_render_with_their_i_and_its_hidden_text():
     assert html.count('class="shep-i shep-i-chip"') == 2
     assert 'aria-describedby="shep-chip-d8-text"' in html
     assert '<span id="shep-chip-d8-text" hidden>' in html
+    assert '<span id="shep-chip-d8-why" hidden>' in html          # what its phrase opens
     assert 'role="status"' in html
     assert "free" not in html.lower()
 
@@ -374,14 +438,19 @@ def test_a_gated_button_shows_no_lock_while_allowed_and_the_lock_and_reason_when
     while D8 allows the request, the button's words as they are, with no
     lock, usable when the page's own condition holds; while D8 refuses it,
     disabled whatever the page's condition, with the lock before its words,
-    and the visible reason beside it in D8's short words."""
+    and beside it R-WHY's ``d8`` phrase, "Operator controls only", whatever
+    the condition (the D8 chip it opens says the condition, once)."""
     for interactive in (True, False):
         assert c.gated("▸ Start", True, interactive=interactive) == {
             "value": "▸ Start", "interactive": interactive}
         assert c.gated("▸ Start", False, interactive=interactive) == {
             "value": "🔒 ▸ Start", "interactive": False}
-    assert c.operator_only(condition) == f"Operator controls only: {c.D8_SHORT[condition]}"
-    assert c.operator_only(None) == "Operator controls only: request not readable"
+    from src.webui.components import renderers as r
+
+    assert c.operator_only(condition) == c.operator_only(None) == r.reason_phrase("d8")
+    assert re.sub(r"<[^>]+>", "", c.operator_only(condition)) == "Operator controls only"
+    assert c.D8_SHORT[condition] not in c.operator_only(condition, control="b")
+    assert 'data-for="b"' in c.operator_only(condition, control="b")
 
 
 def test_every_gated_page_labels_its_buttons_by_the_one_rule():
@@ -405,12 +474,13 @@ def test_every_gated_page_labels_its_buttons_by_the_one_rule():
         load = card.change_button(state)
         assert load["value"] == ("Load a model…" if operator else "🔒 Load a model…")
         reason = card.change_reason_html(state)
-        assert ("Operator controls only:" in reason) is not operator
+        assert ("Operator controls only<" in reason) is not operator
         listing = {"refused": not operator, "condition": "not_loopback", "items": []}
         assert ml.load_button(listing, None)["value"] == (
             "Load this model" if operator else "🔒 Load this model")
         beside = ml.load_reason_html(None, listing)
-        assert ("🔒 Operator controls only: request not local." in beside) is not operator
+        said = re.sub(r"<[^>]+>", "", beside)
+        assert ("🔒 Operator controls only" in said) is not operator
 
 
 def _every_chip() -> list:
@@ -459,7 +529,7 @@ def _every_chip() -> list:
     }
     for which, text in re.findall(r'<span id="shep-chip-(d8|gpu)-text" hidden>(.*?)</span>',
                                   c.CHIPS_PLACEHOLDER, re.S):
-        states[f"placeholder {which}"] = c.Chip("unread", "", html.unescape(text))
+        states[f"placeholder {which}"] = c.Chip("pending", "", html.unescape(text))
     return list(states.items())
 
 
@@ -487,6 +557,75 @@ def test_every_chip_bubble_is_within_the_help_budget(state, chip):
         assert h.budget_problems(chip.detail, h.TEXT_BUDGET) == (), (state, chip.detail)
 
 
+#: The rows a bubble draws after its lead (the WebUI skill's §7: "none or 2-4 items or term
+#: rows of one form"): its list items and its term rows, each a row of the bubble.
+def _rows(text: str) -> int:
+    from src.webui.components import help as h
+
+    return sum(line.kind == "item" or (line.kind == "para" and line.term is not None)
+               for line in h.help_lines(text))
+
+
+@pytest.mark.parametrize("state, chip", [(n, ch) for n, ch in _every_chip() if ch.reason],
+                         ids=[n for n, ch in _every_chip() if ch.reason])
+def test_what_a_chips_phrase_opens_answers_it_within_the_bubbles_budget(state, chip):
+    """C9 / R-74 (R-HELP, the owner's C9 of 2026-11-24; the L8 close): a dimmed control's phrase
+    ("Operator controls only", "GPU in use", …) opens its chip's reason in the one bubble, read
+    from the chip's HTML by the id `renderers.REASONS` names. The D8 phrase opened the chip's
+    whole ⓘ: its lead, the four rows of every operator control and the request's reason, five
+    term rows, a bubble of 320 x 507 px that covered controls wherever it could open at 1280 x 720
+    and 1850 x 960 (17 of 28 phrases in the read-only probe). What a phrase opens is now within
+    the bubble's budget (a lead, at most four rows, `help.TEXT_BUDGET`), leads with the state,
+    keeps the request's own reason word for word and ends in the chip's Ref line, so the full
+    reference stays reachable; the list of controls stays in the chip's ⓘ."""
+    import html
+    import re
+
+    from src.webui.components import help as h
+    from src.webui.components import renderers as r
+
+    reason = r.REASONS[chip.reason]
+    which = "d8" if chip.reason == "d8" else "gpu"
+    drawn = re.search(rf'<span id="{re.escape(reason.ref)}" hidden>(.*?)</span>',
+                      c.chip_html(chip, which=which), re.S)
+    assert drawn, (state, reason.ref)
+    opened = html.unescape(drawn.group(1))
+    assert h.budget_problems(opened, h.TEXT_BUDGET) == (), (state, opened)
+    assert _rows(opened) <= h.TEXT_BUDGET.items, (state, _rows(opened), opened)
+    lines = h.help_lines(opened)
+    assert lines[-1].kind == "ref" and lines[-1].text == h.help_lines(chip.detail)[-1].text, state
+    if chip.reason == "d8":
+        from src.utils.operator_access import reason_parts
+
+        assert lines[0].text == "This request may not use the operator controls.", lines[0]
+        said = reason_parts(chip.detail.split("For this request: ", 1)[1].split("\nRef:")[0])[0]
+        assert said in opened, (state, said)
+
+
+def test_the_gpu_chips_ref_line_names_the_states_and_the_scopes_references():
+    """R-HELP (the owner's C9 of 2026-11-24: the full reference stays
+    reachable): every GPU chip state's bubble ends in one Ref line that names
+    the references its words lean on, the state's own (the workspaces folder's
+    variable and guide section, inference's stop route) and the scope's (the
+    formal scripts `GPU_SCOPE` names in words). L7's C9 kept only the state's
+    own where it had them, to hold the line to two bubble lines: with no
+    workspaces folder (every first start) the scripts were named nowhere."""
+    from src.webui.components import help as h
+
+    own = {"unset": c.GPU_NOT_CONFIGURED_REF, "inference here": "POST /api/v1/pipeline/stop"}
+    gpu = [(name, chip) for name, chip in _every_chip()
+           if not name.startswith(("on", "read-only", "placeholder d8"))]
+    assert len(gpu) >= 12, [name for name, _ in gpu]
+    for name, chip in gpu:
+        ref = h.help_lines(chip.detail)[-1]
+        assert ref.kind == "ref" and ref.term == h.REF_PREFIX[:-1], name
+        named = [part.strip() for part in ref.text.split(",")]
+        assert all(script in named for script in c.GPU_SCOPE_REF.split(", ")), (name, ref.text)
+        if name in own:
+            assert ref.text.startswith(own[name]), (name, ref.text)
+        assert len(named) == len(set(named)), (name, ref.text)
+
+
 def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     """R-9: the chips' ⓘ texts go through the one bubble, whose first line is
     its bold lead (`help.help_lines`): each chip state leads with a short
@@ -507,7 +646,7 @@ def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     assert "M1" in on[-1].text and "SHEPHERD_DEPLOYMENT_MODE" in on[-1].text
     unset = c.gpu_chip_from(None, {**LOCK_FREE, "unset": True}, operator=True).detail
     assert unset.splitlines()[-1] == (
-        "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11")
+        f"Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11, {c.GPU_SCOPE_REF}")
     refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
     assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")
     assert c.gpu_chip_from(None, lock_broken, operator=True).detail.startswith(
@@ -569,8 +708,9 @@ justify-content: flex-end; padding: 12px; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</
             which, classes)
     assert seen["gpu"][0]["text"] == "GPU jobs are refused until a workspaces folder is set."
     assert seen["gpu"][-1]["text"].startswith("Ref: SHEPHERD_WORKSPACES_ROOT")
-    # The state's own references alone (the sweep's L7 check, C9: with the scope's scripts the
-    # line took three lines of the bubble); a script's name is never in the body.
-    assert seen["gpu"][-1]["text"] == f"Ref: {c.GPU_NOT_CONFIGURED_REF}"
-    assert not any("train_model.py" in part["text"] for part in seen["gpu"])
+    # The state's own references, then the scope's (R-HELP, the owner's C9 of 2026-11-24: the
+    # full reference stays reachable; L7's C9 had kept the state's alone); a script's name is
+    # never in the body.
+    assert seen["gpu"][-1]["text"] == f"Ref: {c.GPU_NOT_CONFIGURED_REF}, {c.GPU_SCOPE_REF}"
+    assert not any("train_model.py" in part["text"] for part in seen["gpu"][:-1])
     assert not any("M1" in part["text"] for part in seen["d8"][:-1])

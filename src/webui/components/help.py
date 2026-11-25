@@ -62,10 +62,15 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   the page: focus returns to a ⓘ with ``preventScroll``;
 - places it so it **never covers the field it explains** (the field's
   component, by its ``elem_id``; else the table row, the key-value row's key
-  and value, or the line the ⓘ sits in): beside that field, then above it, then below it, the first that fits
-  the window without overlapping it; failing all, narrower beside it, or on
-  the side with more room with its height capped (a long text scrolls
-  inside); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
+  and value, or the line the ⓘ sits in): beside that field, then above it, then below it; of the sides
+  that fit the window without overlapping it, the one that lies over the fewest drawn controls (R-HELP:
+  a bubble covers no control), the first in that order among equals; where each of those lies over a
+  control, the tallest place that lies over none with its height capped there (never shorter than its
+  head, its lead and two lines after it; Floating UI's ``size``), then the same at a narrower width
+  (220 px at the least) where none of its width is clear, and where none is clear at any size, of
+  every place tried the one over the fewest controls; failing all, narrower beside it, or on
+  the side with more room with its height capped; a capped text scrolls
+  inside under the scroll cue (``data-shep-more``); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
   least 24 × 24 px;
 - fills the bubble by the help text's grammar (`help_lines`, the WebUI
   skill's §7): its first line is the lead, shown bold; a line that starts
@@ -83,7 +88,10 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   after its ⓘ in the page too (Gradio puts a checkbox's box before its
   words), so focus and a screen reader meet them in the order drawn (WCAG
   2.4.3, 1.3.2);
-- shows "Esc to close" only on a pinned bubble (a dialog); a preview has none.
+- closes by one control at the right end of its head, beside its title: the
+  ×, and on a pinned bubble (a dialog) the framed Esc keycap beside it, both
+  one button (``aria-keyshortcuts="Escape"``); a preview shows the × alone.
+  No row under the text says it: that room is the text's.
 
 The same script copies a full value from a ``button.shep-copy`` (``data-copy``)
 to the clipboard: the shared renderers show 12 hex digits and copy all 64.
@@ -103,6 +111,27 @@ _KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
 #: The prefix of a help text's element id (``aria-describedby`` names it).
 TEXT_ID_PREFIX = "shep-help-text-"
+
+#: **One description, several writers** (R-WHY beside the field help): a control's
+#: ``aria-describedby`` is written by this script (a field's info line and its help
+#: text, ``describe``) and by the shell's (a dimmed control's phrase or notice,
+#: ``describeDimmed``). Each writer records the ids it put there in an attribute of
+#: its own (`mark`) and adds or takes back only those, every other id kept in its
+#: place: a writer that replaced the whole attribute dropped the other's ids (the
+#: last one to run won). Both scripts include this one function.
+DESCRIBED_BY_JS = r"""
+  function describedBy(el, mark, want) {
+    var had = (el.getAttribute(mark) || '').split(/\s+/).filter(Boolean);
+    var next = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (x) {
+      return x && (had.indexOf(x) < 0 || want.indexOf(x) >= 0);
+    });
+    for (var i = 0; i < want.length; i++) { if (next.indexOf(want[i]) < 0) { next.push(want[i]); } }
+    var ids = next.join(' '), mine = want.join(' ');
+    if (!ids) { el.removeAttribute('aria-describedby'); }
+    else if (el.getAttribute('aria-describedby') !== ids) { el.setAttribute('aria-describedby', ids); }
+    if (!mine) { el.removeAttribute(mark); } else if (el.getAttribute(mark) !== mine) { el.setAttribute(mark, mine); }
+  }
+"""
 
 #: The bubble's widest (CSS px; the WebUI skill's §7 budget), the delay before
 #: a hover opens its preview (ms), and the ⓘ's smallest hit target (CSS px,
@@ -165,13 +194,21 @@ def help_lines(text: str) -> Tuple[HelpLine, ...]:
     return tuple(out)
 
 
-def sentence_lines(text: Optional[str]) -> Optional[str]:
-    """A text written as one paragraph (a governed note shown elsewhere as a
-    line) with each sentence on a line of its own, so the bubble's lead is its
-    first sentence; its words are unchanged. None stays None."""
+def sentence_items(text: Optional[str]) -> Optional[str]:
+    """**A governed note laid out for the bubble, its words unchanged**
+    (MODE_RESULT_NOTES; the owner of 2026-11-24: keep its meaning and limits,
+    adjust its layout first): a text written as one paragraph (a note shown
+    elsewhere as a line), its first sentence the lead; two to four further
+    sentences the bubble's one list (`BULLET` items, the budget's 2-4), one
+    further sentence a paragraph under the lead, and more than the list holds
+    a sentence a line. Each sentence keeps its words and its full stop. None
+    stays None."""
     if text is None:
         return None
-    return "\n".join(part for part in _SENTENCE_END.split(text.strip()) if part)
+    lead, *rest = [part for part in _SENTENCE_END.split(text.strip()) if part] or [""]
+    if 2 <= len(rest) <= TEXT_BUDGET.items:
+        rest = [f"{BULLET}{part}" for part in rest]
+    return "\n".join([lead, *rest])
 
 
 @dataclass(frozen=True)
@@ -407,8 +444,17 @@ def registered_keys_in(rendered: str) -> Tuple[str, ...]:
 _HELP_JS = r"""
 (function () {
   if (window.ShepHelp) { return; }
-  var SEL = 'button.shep-i';
-  var MAX_W = __MAX_W__, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
+  // The bubble's anchors: every ⓘ, and a dimmed control's phrase whose reason a
+  // header chip holds (`renderers.reason_phrase`, R-WHY: the one bubble, its text
+  // read by the chip text's document id, never a copy and never a second tooltip).
+  var SEL = 'button.shep-i, button.shep-why[data-help]';
+  function anchorByKey(key) {
+    var all = document.querySelectorAll(SEL);
+    for (var i = 0; i < all.length; i++) { if (all[i].getAttribute('data-help') === key) { return all[i]; } }
+    return null;
+  }
+  // The bubble's width: at most MAX_W, at least LEAST_W, narrowed by WIDTH_STEP (`place`).
+  var MAX_W = __MAX_W__, LEAST_W = 220, WIDTH_STEP = 20, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
   var REGION = '__REGION__', KEY_FIRST = '__KEY_FIRST__';
   var BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
   var bubble = null, anchor = null, anchorKey = null, pinned = false;
@@ -476,15 +522,20 @@ _HELP_JS = r"""
     var hd = document.createElement('div'); hd.className = 'shep-bubble-hd';
     var title = document.createElement('span'); title.className = 'shep-bubble-title';
     title.id = 'shep-help-bubble-title';
+    // One close control at the head's right end (the owner, 2026-11-25): the framed Esc
+    // keycap (a pinned bubble's, `setRole`) beside the ×, both in one button, so a click on
+    // either part closes. The keycap is drawn, not read: the button's name says what it
+    // does and aria-keyshortcuts names its key.
     var x = document.createElement('button');
     x.type = 'button'; x.className = 'shep-bubble-x'; x.tabIndex = -1;
-    x.setAttribute('aria-label', 'Close help'); x.textContent = '×';
+    x.setAttribute('aria-label', 'Close help'); x.setAttribute('aria-keyshortcuts', 'Escape');
+    var kbd = document.createElement('span'); kbd.className = 'shep-kbd'; kbd.textContent = 'Esc';
+    kbd.setAttribute('aria-hidden', 'true');
+    var mark = document.createElement('span'); mark.className = 'shep-bubble-x-mark'; mark.textContent = '×';
+    x.appendChild(kbd); x.appendChild(mark);
     hd.appendChild(title); hd.appendChild(x);
     var bd = document.createElement('div'); bd.className = 'shep-bubble-bd';
-    var ft = document.createElement('div'); ft.className = 'shep-bubble-ft';
-    var kbd = document.createElement('span'); kbd.className = 'shep-kbd'; kbd.textContent = 'Esc';
-    ft.appendChild(kbd); ft.appendChild(document.createTextNode(' to close'));
-    bubble.appendChild(hd); bubble.appendChild(bd); bubble.appendChild(ft);
+    bubble.appendChild(hd); bubble.appendChild(bd);
     // The reader's pointer moving in the bubble keeps it (to read on). A
     // bubble that came under a resting pointer (it follows its ⓘ when the
     // page scrolls) gets a "mouseenter" from the browser but no "mousemove":
@@ -532,23 +583,68 @@ _HELP_JS = r"""
     var region = btn.closest('.' + REGION);
     return region ? box(region.getBoundingClientRect()) : null;
   }
+  function join(a, b) {
+    return {left: Math.min(a.left, b.left), top: Math.min(a.top, b.top),
+            right: Math.max(a.right, b.right), bottom: Math.max(a.bottom, b.bottom)};
+  }
+  // A dimmed control's phrase (R-WHY) explains the controls it names (data-for): they are
+  // kept uncovered with the phrase's own line, as a field is for its ⓘ (the phrase's line
+  // alone let the bubble fall on the button it explains).
+  function explained(btn, r) {
+    var ids = (btn.getAttribute('data-for') || '').split(/\s+/).filter(Boolean);
+    for (var i = 0; i < ids.length; i++) {
+      var c = document.getElementById(ids[i]), q = c && rectOf(c);
+      if (q && q.right > q.left && q.bottom > q.top) { r = join(r, q); }
+    }
+    return r;
+  }
   function fieldRect(btn) {
     var el = ownField(btn) || btn.closest('tr');
     if (!el) {
       var key = btn.closest('.shep-k');
       if (key) {
         var k = box(key.getBoundingClientRect()), next = key.nextElementSibling;
-        if (!next) { return k; }
-        var v = next.getBoundingClientRect();
-        return {left: Math.min(k.left, v.left), top: Math.min(k.top, v.top),
-                right: Math.max(k.right, v.right), bottom: Math.max(k.bottom, v.bottom)};
+        return next ? join(k, next.getBoundingClientRect()) : k;
       }
       el = btn.closest('.shep-chip, li, p, dt, dd, h1, h2, h3, h4, label, div') || btn;
     }
-    return rectOf(el);
+    return explained(btn, rectOf(el));
   }
   function overlaps(a, b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  }
+  // **How many drawn controls each placement would lie over** (R-HELP: a bubble covers no
+  // control): every button, field, select, link and choice in view (not inside the bubble,
+  // not its ⓘ, not hidden, not scrolled out of its region), by its box, a pixel's slack at
+  // each edge so a placement that only meets a control's edge is no cover.
+  var CONTROLS = 'button, input:not([type=hidden]), select, textarea, a[href], [role=radio], [role=checkbox]';
+  var lastSide = null, lastWidth = null;
+  // The drawn controls' boxes, read once a placement (`seen` read when a place meets one).
+  function controlBoxes() {
+    var out = [], all = document.querySelectorAll(CONTROLS);
+    for (var i = 0; i < all.length; i++) {
+      var c = all[i];
+      if (c === anchor || (bubble && bubble.contains(c))) { continue; }
+      var r = c.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) { continue; }
+      out.push({el: c, q: {left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1}, seen: null});
+    }
+    return out;
+  }
+  function coveredCounts(places, boxes) {
+    var counts = places.map(function () { return 0; });
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i], hit = [];
+      for (var k = 0; k < places.length; k++) {
+        var p = places[k];
+        if (overlaps(b.q, {left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h})) { hit.push(k); }
+      }
+      if (!hit.length) { continue; }
+      if (b.seen === null) { b.seen = getComputedStyle(b.el).visibility !== 'hidden' && !outOfView(b.el); }
+      if (!b.seen) { continue; }
+      for (var h = 0; h < hit.length; h++) { counts[hit[h]] += 1; }
+    }
+    return counts;
   }
   // Whether a ⓘ is out of view: not drawn, or wholly outside the window or
   // the visible part of a region it scrolls in (an ancestor that clips its
@@ -582,7 +678,7 @@ _HELP_JS = r"""
   function place() {
     if (!bubble || bubble.hidden || !anchor) { return; }
     if (!anchor.isConnected) {
-      var again = anchorKey && document.querySelector(SEL + '[data-help="' + anchorKey + '"]');
+      var again = anchorKey && anchorByKey(anchorKey);
       if (!again) { close(false); return; }
       // A drawing replaced the ⓘ the reader's focus was on: focus goes to
       // the new one, unscrolled, as the shared disclosure keeper does
@@ -601,54 +697,166 @@ _HELP_JS = r"""
     }
     var a = anchor.getBoundingClientRect(), f = fieldRect(anchor), region = regionRect(anchor);
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-    var width = Math.max(220, Math.min(MAX_W, vw - 2 * EDGE));
+    var width = Math.max(LEAST_W, Math.min(MAX_W, vw - 2 * EDGE));
     bubble.style.maxWidth = width + 'px';
-    bubble.style.maxHeight = '';
-    var bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+    // Its whole height read with its cap kept (`whole`): lifting the cap to measure it scrolled a
+    // capped text back to its top on every scroll of it.
+    var text = bubble.querySelector('.shep-bubble-bd');
+    function whole() {
+      return Math.min(bubble.offsetHeight - text.clientHeight + text.scrollHeight, vh - 2 * EDGE);
+    }
+    var bw = bubble.offsetWidth, bh = whole();
     var cx = a.left + a.width / 2, cy = a.top + a.height / 2;
     function x(left, w) { return Math.min(Math.max(EDGE, left), vw - w - EDGE); }
     function y(top, h) { return Math.min(Math.max(EDGE, top), vh - h - EDGE); }
-    function at(side, w, h, g) {
+    // A side, its bubble aligned from the ⓘ (its start) or ending at it (`end`, Floating UI's
+    // "-end" alignment): beside, it runs down from the ⓘ or ends under it; above or below, it
+    // runs right from the ⓘ or ends past it. `slide` (0 to 1) places it between the two along
+    // its side (Floating UI's `shift`), the ⓘ still within its edge: 0 its start, 1 its end.
+    function at(side, w, h, g, end, slide) {
       g = g || f;
-      if (side === 'right') { return {side: side, left: g.right + GAP, top: y(cy - 24, h), w: w, h: h}; }
-      if (side === 'left') { return {side: side, left: g.left - GAP - w, top: y(cy - 24, h), w: w, h: h}; }
-      if (side === 'above') { return {side: side, left: x(cx - 24, w), top: g.top - GAP - h, w: w, h: h}; }
-      return {side: side, left: x(cx - 24, w), top: g.bottom + GAP, w: w, h: h};
+      var t = slide === undefined ? (end ? 1 : 0) : slide;
+      var top = y(cy - 24 + t * (48 - h), h), left = x(cx - 24 + t * (48 - w), w);
+      if (side === 'right') { return {side: side, left: g.right + GAP, top: top, w: w, h: h}; }
+      if (side === 'left') { return {side: side, left: g.left - GAP - w, top: top, w: w, h: h}; }
+      if (side === 'above') { return {side: side, left: left, top: g.top - GAP - h, w: w, h: h}; }
+      return {side: side, left: left, top: g.bottom + GAP, w: w, h: h};
     }
     function fits(p, g) {
       return p.left >= EDGE && p.top >= EDGE && p.left + p.w <= vw - EDGE &&
         p.top + p.h <= vh - EDGE &&
         !overlaps({left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h}, g);
     }
-    // Beside the field, then above it, then below it: the first that fits
-    // the window and leaves the field uncovered; a region's ⓘ tries the
-    // whole region first.
-    var sides = ['right', 'left', 'above', 'below'], chosen = null;
+    // Beside the field, then above it, then below it, each aligned from the
+    // ⓘ, then ending at it, then slid between the two along its side (SLIDES
+    // steps, the ⓘ still within the bubble's edge): of the places that fit the
+    // window and leave the field uncovered, the one that lies over the fewest
+    // drawn controls (R-HELP: a bubble covers no control), the first in that
+    // order among equals, the place it stands in now kept while no other
+    // covers fewer (no flip while the page scrolls); a region's ⓘ tries the
+    // whole region first. The L8 close: in a 720 px window the two alignments
+    // of every side lay over a control while a place between them was clear.
+    var sides = ['right', 'left', 'above', 'below'], chosen = null, SLIDES = 12;
     var guards = region ? [region, f] : [f];
-    for (var k = 0; k < guards.length && !chosen; k++) {
-      for (var i = 0; i < sides.length && !chosen; i++) {
-        var p = at(sides[i], bw, bh, guards[k]);
-        if (fits(p, guards[k])) { chosen = p; }
+    function places(h) {
+      var fitting = [];
+      for (var k = 0; k < guards.length; k++) {
+        for (var i = 0; i < sides.length; i++) {
+          for (var e = 0; e < 2; e++) {
+            var p = at(sides[i], bw, h, guards[k], e === 1);
+            p.place = sides[i] + (e ? '-end' : '');
+            if (fits(p, guards[k])) { fitting.push(p); }
+          }
+        }
+        for (var si = 0; si < sides.length; si++) {
+          for (var n = 1; n < SLIDES; n++) {
+            var q = at(sides[si], bw, h, guards[k], false, n / SLIDES);
+            q.place = sides[si] + '~' + n;
+            if (fits(q, guards[k])) { fitting.push(q); }
+          }
+        }
+      }
+      return fitting;
+    }
+    // Of `fitting`, the one over the fewest controls, the place it stands in now kept among equals.
+    function fewest(fitting, counts) {
+      var best = 0;
+      for (var j = 1; j < fitting.length; j++) {
+        if (counts[j] < counts[best] || (counts[j] === counts[best] && fitting[j].place === lastSide &&
+            fitting[best].place !== lastSide)) { best = j; }
+      }
+      return best;
+    }
+    var boxes = controlBoxes(), fitting = places(bh), fewestSeen = null;
+    // Of the places tried, the one over the fewest controls, with the width it was tried at: among
+    // equals the place and width it stands in now (no flip while the page scrolls: a focus
+    // preview re-placed on each scroll took 220 and 320 px by turns, and each change of its size
+    // laid the page out again under a scrolled region), else the first tried.
+    function consider(p, count) {
+      var w = bubble.style.maxWidth, now = p.place === lastSide && w === lastWidth;
+      if (!fewestSeen || count < fewestSeen.count || (count === fewestSeen.count && now && !fewestSeen.now)) {
+        fewestSeen = {place: p, count: count, width: w, now: now};
       }
     }
+    if (fitting.length) {
+      var counts = coveredCounts(fitting, boxes), best = fewest(fitting, counts);
+      chosen = fitting[best];
+      if (counts[best] > 0) {
+        consider(chosen, counts[best]);
+        chosen = shorter(boxes) || narrower(boxes);
+        if (!chosen) { bubble.style.maxWidth = fewestSeen.width; chosen = fewestSeen.place; }
+      }
+    }
+    // **Shorter where no place of its height is clear** (R-HELP, the owner's C9 of 2026-11-24:
+    // "covers no control, readable, the full reference reachable"; the L8 close, CK8-1: a
+    // read-only phrase's answer, about 300 px tall, lay over a control in 17 of 56 openings from
+    // 1850 x 960 to 1280 x 720, Fine-tune's whole Device field at 1550 x 830, while a shorter
+    // place beside the phrase was clear). Where every place of its whole height lies over a
+    // control, the bubble takes the tallest place that lies over none, its height capped there
+    // (Floating UI's `size`), its text scrolling inside under the scroll cue; never shorter than
+    // its head, its lead and two lines after it, so the answer reads whole and more is seen to
+    // follow.
+    function shorter(boxes) {
+      var lead = text.firstElementChild;
+      if (!lead || !lead.nextElementSibling) { return null; }
+      var lh = parseFloat(getComputedStyle(text).lineHeight) || 22;
+      var least = Math.ceil(bh - text.scrollHeight + lead.offsetTop + lead.offsetHeight - text.offsetTop + 2 * lh);
+      if (least >= bh) { return null; }
+      for (var h = bh - lh; h > least - lh; h -= lh) {
+        var cap = Math.max(least, Math.floor(h)), shown = places(cap);
+        if (!shown.length) { continue; }
+        var counts = coveredCounts(shown, boxes), best = fewest(shown, counts);
+        shown[best].cap = cap;
+        if (counts[best] === 0) { return shown[best]; }
+        consider(shown[best], counts[best]);
+      }
+      return null;
+    }
+    // **Then narrower** (the L8 close's final check, F4: configured at 1850 x 960 the pinned
+    // Dataset bubble lay over the run bar's fingerprint facts, Batch size and the Viewing select:
+    // beside a field in a dense bar every place of the bubble's width met a control at any height
+    // down to its least, while one narrower beside the field was clear). Where no place of its
+    // width is clear, the same search at a narrower width, LEAST_W at the least (Floating UI's
+    // `size` reads the width available too): the widest that has a place over no control, its
+    // whole height first, then shorter. None at any width or height: of every place tried, the
+    // one over the fewest controls (`fewestSeen`; at 1850 x 960 the Dataset bubble then lies over
+    // one ⓘ's top, not six controls), the first tried among equals.
+    function narrower(boxes) {
+      var full = bw, tall = bh;
+      for (var w = full - WIDTH_STEP; w > LEAST_W - WIDTH_STEP; w -= WIDTH_STEP) {
+        bubble.style.maxWidth = Math.max(w, LEAST_W) + 'px';
+        bw = bubble.offsetWidth; bh = whole();
+        var at = places(bh), counts = coveredCounts(at, boxes), best = at.length ? fewest(at, counts) : -1;
+        if (best >= 0 && counts[best] === 0) { return at[best]; }
+        if (best >= 0) { consider(at[best], counts[best]); }
+        var found = shorter(boxes);
+        if (found) { return found; }
+      }
+      bubble.style.maxWidth = width + 'px'; bw = full; bh = tall;
+      return null;
+    }
     if (!chosen) {
-      // Narrower beside it, on the side with room for 220 px or more.
+      // Narrower beside it, on the side with room for LEAST_W px or more.
       var roomR = vw - EDGE - f.right - GAP, roomL = f.left - GAP - EDGE;
       var room = Math.max(roomR, roomL);
-      if (room >= 220) {
+      if (room >= LEAST_W) {
         bubble.style.maxWidth = Math.min(width, room) + 'px';
-        if (bubble.offsetHeight > vh - 2 * EDGE) { bubble.style.maxHeight = (vh - 2 * EDGE) + 'px'; }
-        chosen = at(roomR >= roomL ? 'right' : 'left', bubble.offsetWidth, bubble.offsetHeight);
+        chosen = at(roomR >= roomL ? 'right' : 'left', bubble.offsetWidth, whole());
       }
     }
     if (!chosen) {
       // Above or below, on the side with more room, its height capped to
       // that room (its text then scrolls inside).
       var roomAbove = f.top - GAP - EDGE, roomBelow = vh - EDGE - f.bottom - GAP;
-      var up = roomAbove > roomBelow;
-      bubble.style.maxHeight = Math.max(48, up ? roomAbove : roomBelow) + 'px';
-      chosen = at(up ? 'above' : 'below', bubble.offsetWidth, bubble.offsetHeight);
+      var up = roomAbove > roomBelow, room2 = Math.max(48, up ? roomAbove : roomBelow), tall = whole();
+      chosen = at(up ? 'above' : 'below', bubble.offsetWidth, Math.min(tall, room2));
+      if (tall > room2) { chosen.cap = room2; }
     }
+    // Its cap set only when it changes (bubble.style.maxHeight), so a text scrolled inside it stays.
+    var cap = chosen.cap ? chosen.cap + 'px' : '';
+    if (bubble.style.maxHeight !== cap) { bubble.style.maxHeight = cap; }
+    lastSide = chosen.place || chosen.side;
+    lastWidth = bubble.style.maxWidth;
     bubble.style.left = chosen.left + 'px';
     bubble.style.top = Math.max(EDGE, chosen.top) + 'px';
     bubble.classList.toggle('shep-up', chosen.side === 'above');
@@ -656,14 +864,18 @@ _HELP_JS = r"""
     bubble.classList.toggle('shep-at-left', chosen.side === 'left');
     bubble.style.setProperty('--shep-ax', Math.max(10, Math.min(chosen.w - 22, cx - chosen.left - 6)) + 'px');
     bubble.style.setProperty('--shep-ay', Math.max(10, Math.min(chosen.h - 22, cy - chosen.top - 6)) + 'px');
+    // Its text capped (above, or by the room it has), the scroll cue every region that scrolls
+    // has (R-73, the shell's MORE, drawn by the style sheet) while more lies below.
+    var more = text.scrollHeight - text.scrollTop - text.clientHeight > 1;
+    if (text.hasAttribute('data-shep-more') !== more) { text.toggleAttribute('data-shep-more', more); }
   }
   // Pinned, the bubble is a dialog named by its title; a preview (hover or
   // focus) is a tooltip.
   function setRole() {
     if (!bubble) { return; }
     bubble.setAttribute('role', pinned ? 'dialog' : 'tooltip');
-    // "Esc to close" is a pinned bubble's: a preview closes as the pointer leaves.
-    bubble.querySelector('.shep-bubble-ft').hidden = !pinned;
+    // The Esc keycap beside the × is a pinned bubble's: a preview closes as the pointer leaves.
+    bubble.querySelector('.shep-bubble-x > .shep-kbd').hidden = !pinned;
     if (pinned) { bubble.setAttribute('aria-labelledby', 'shep-help-bubble-title'); }
     else { bubble.removeAttribute('aria-labelledby'); }
   }
@@ -703,6 +915,7 @@ _HELP_JS = r"""
     clearTimeout(openTimer); previewFor = null;
     if (anchor !== btn || !bubble || bubble.hidden) { byPointer = false; yielded = false; }
     if (anchor && anchor !== btn) { anchor.setAttribute('aria-expanded', 'false'); pinned = false; }
+    if (anchor !== btn) { lastSide = null; }
     anchor = btn; anchorKey = btn.getAttribute('data-help');
     pinned = pin ? true : pinned;
     byPointer = byPointer || !!viaPointer;
@@ -735,7 +948,7 @@ _HELP_JS = r"""
       bubble.contains(document.activeElement) ? anchor : null;
     if (bubble) { bubble.hidden = true; bubble.style.visibility = ''; }
     if (anchor) { anchor.setAttribute('aria-expanded', 'false'); }
-    anchor = null; anchorKey = null; pinned = false; byPointer = false; yielded = false;
+    anchor = null; anchorKey = null; pinned = false; byPointer = false; yielded = false; lastSide = null;
     setRole();
     claim();
     if (back) { returning = back; back.focus({preventScroll: true}); returning = null; }
@@ -828,7 +1041,9 @@ _HELP_JS = r"""
   // A field's description: its visible info= line first (Gradio's
   // .info-text, set when it is built or at runtime, which Gradio may draw
   // again), then its help text, so a screen reader reads what the page shows
-  // under the field as well as the bubble's text. Kept on every pass.
+  // under the field as well as the bubble's text. Kept on every pass, merged
+  // with what the shell describes the same control by (`DESCRIBED_BY_JS`).
+__DESCRIBED_BY__
   function describe(target, key, textId) {
     var input = target.querySelector('textarea, input:not([type=radio]):not([type=hidden])');
     if (!input) { return; }
@@ -838,8 +1053,7 @@ _HELP_JS = r"""
       ids.push(info.id);
     }
     ids.push(textId);
-    var want = ids.join(' ');
-    if (input.getAttribute('aria-describedby') !== want) { input.setAttribute('aria-describedby', want); }
+    describedBy(input, 'data-shep-help-by', ids);
   }
   // A field drawn as its key, its ⓘ and its control (in a container marked
   // KEY_FIRST) keeps its control after its ⓘ in the page as well, so focus
@@ -858,7 +1072,7 @@ _HELP_JS = r"""
     for (var i = 0; i < texts.length; i++) {
       var t = texts[i], target = document.getElementById(t.getAttribute('data-help-target'));
       if (!target) { continue; }
-      var key = t.getAttribute('data-help-key'), known = target.querySelector(SEL + '[data-help="' + key + '"]');
+      var key = t.getAttribute('data-help-key'), known = target.querySelector('button.shep-i[data-help="' + key + '"]');
       if (known) {
         keyFirst(target, known); keepLabel(target, key); describe(target, key, t.id); continue;
       }
@@ -925,7 +1139,8 @@ HELP_HEAD = "<script>" + (_HELP_JS.replace("__I_ICON__", _I_ICON.replace("'", "\
                           .replace("__KEY_FIRST__", KEY_FIRST_CLASS)
                           .replace("__BULLET__", json.dumps(BULLET))
                           .replace("__REF__", json.dumps(REF_PREFIX))
-                          .replace("__TERM__", json.dumps(TERM_PATTERN))) + "</script>"
+                          .replace("__TERM__", json.dumps(TERM_PATTERN))
+                          .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS)) + "</script>"
 
 
 #: The look of the ⓘ and its bubble (part of the dashboard's CSS). The ⓘ's
@@ -967,11 +1182,23 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
 .shep-bubble.shep-up::before { top: auto; bottom: -7px; transform: rotate(225deg); }
 .shep-bubble.shep-at-right::before { top: var(--shep-ay, 18px); left: -7px; transform: rotate(-45deg); }
 .shep-bubble.shep-at-left::before { top: var(--shep-ay, 18px); left: auto; right: -7px; transform: rotate(135deg); }
-.shep-bubble-hd { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
+.shep-bubble-hd { display: flex; align-items: flex-start; gap: 8px; font-weight: 600; margin-bottom: 4px; flex: none; }
+/* The title wraps beside the close control, never under or behind it. */
+.shep-bubble-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+/* The one close control (the owner, 2026-11-25): the Esc keycap, pinned only, beside the ×,
+   one button. Its 26 px box is centred on the title's first line (a 15 px line of 1.45: its
+   margins give back the 2 px it stands over the line at each edge); the × keeps its 26 px
+   square, so a preview's control is the × alone as before. */
 .shep-bubble-x {
-  margin-left: auto; width: 26px; height: 26px; border: 0; background: none; color: var(--shep-muted);
-  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 20px; cursor: pointer;
+  flex: none; display: inline-flex; align-items: center; height: 26px; min-width: 26px; margin: -2px 0;
+  padding: 0; border: 0; border-radius: 6px; background: none; color: var(--shep-muted);
+  font-size: 20px; font-weight: 400; cursor: pointer;
 }
+.shep-bubble-x-mark { width: 26px; text-align: center; }
+.shep-bubble-x > .shep-kbd { margin-left: 4px; }
+.shep-bubble-x > .shep-kbd[hidden] { display: none; }
+.shep-bubble-x:hover { background: var(--shep-panel-2); color: var(--shep-text); }
+.shep-bubble-x:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 0; }
 .shep-bubble-bd { overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
 /* Every part starts at no margin (one weight with the rule below, which comes later, so the
    space between parts is the text tokens' and nothing else's). */
@@ -987,9 +1214,7 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
 .shep-bubble-list > li::marker { color: var(--shep-muted); }
 .shep-bubble-list > li + li { margin-top: var(--shep-space-item, 4px); }
 .shep-bubble-bd > .shep-bubble-ref { font-size: 14px; color: var(--shep-muted); }
-.shep-bubble-hd, .shep-bubble-ft { flex: none; }
-.shep-bubble-ft[hidden] { display: none; }
-.shep-bubble-ft { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-muted); }
+/* A keyboard key, framed (the close control's Esc). */
 .shep-kbd {
   display: inline-block; font-size: 14px; padding: 0 6px; border: 1px solid var(--shep-border-2);
   border-bottom-width: 2px; border-radius: 5px; background: var(--shep-panel-2); color: var(--shep-text-2); line-height: 20px;
@@ -1012,6 +1237,7 @@ def as_json_for_script(value: object) -> str:
 
 
 __all__ = [
+    "DESCRIBED_BY_JS",
     "HELP_CSS",
     "HELP_HEAD",
     "BULLET",
@@ -1034,7 +1260,7 @@ __all__ = [
     "copy_button",
     "help_button",
     "help_lines",
-    "sentence_lines",
+    "sentence_items",
     "registered_keys_in",
     "text_id",
 ]

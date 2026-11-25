@@ -275,6 +275,18 @@ ALLOWED = {
         (2, _IN_MEMORY.format(what="the family graph's drawn HTML and of the parts its "
                                    "size is drawn from (data-draw, data-shape), a token "
                                    "for the page's script; owner: the shared model list")),
+    # R-WHY (2f8fbd9): a chip phrase that names no control keys its help
+    # bubble by a short digest of its cause, so two causes never share a key.
+    ("src/webui/components/renderers.py", "_phrase_key", "hashlib.sha1"):
+        (1, _IN_MEMORY.format(what="a chip phrase's cause as given (its key, kind, cause "
+                                   "and words), the phrase's help-bubble key; owner: the "
+                                   "shared renderers")),
+    # Settings › Data locations, Change… (be0033f): the keeper holds a set
+    # row's box open only while the row's values say the same.
+    ("src/webui/components/data_locations.py", "_drawn_as", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the repr of a set row's values (value, configured, "
+                                   "saved, source, pending, overridden), the token its "
+                                   "Change… is drawn for; owner: Settings' data locations")),
     # The PyG install identity (BACKLOG 70, 71; research-comparison Stage 2):
     # the environment's description, never a run's input. Deploy time only;
     # deliberately not file_sha256, which carries the path-form poison.

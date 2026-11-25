@@ -26,6 +26,7 @@ Module: src/webui/components/renderers.py
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import math
 import re
@@ -36,7 +37,15 @@ from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, Name
                     Optional, Sequence, Tuple)
 
 from src.config.recipe import FROZEN_PARTS, unread_settings
-from src.config.server_settings import PLACE_ACTIONS, PLACE_NAMES, SEVERAL_ACTIONS
+from src.config.server_settings import (
+    GPU_LOCK_NOTICE,
+    INTAKE_DIR_NOTICE,
+    PLACE_ACTIONS,
+    PLACE_NAMES,
+    REGISTRY_NOTICE,
+    SEVERAL_ACTIONS,
+    WORKSPACES_ROOT_NOTICE,
+)
 from src.evaluation.caveats import (
     EXPOSURE_EVIDENCE,
     EXPOSURE_NEGATIVES,
@@ -57,6 +66,7 @@ from src.evaluation.caveats import (
 )
 from src.utils.run_environment import native_identity_lines
 from src.utils.run_plan import recorded_frozen_parts
+from src.webui.components.chips import CHIP_TITLES, D8_WHY_ID, GPU_TEXT_ID, LOCK, OPERATOR_ONLY
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -311,8 +321,8 @@ def bound_html(words: Any) -> str:
     (``shep-unit``: moved to the next line whole, wrapped inside only when it
     is wider than its box), so a line breaks at any other space: a narrow cell reads
     "GATv2 2026-10-02 00:00," / "1 epoch completed", never "1" / "epoch
-    completed". Every fact of a chain (`chain_html`), a relation's words
-    (`see_above`) and a notice's sentences (`literal_html`) are drawn so; a
+    completed". Every fact of a chain (`chain_html`) and a notice's
+    sentences (`literal_html`) are drawn so; a
     status mark's words are a state or a sentence, which wrap as prose."""
     text, out, at = "" if words is None else str(words), [], 0
     for found in _BOUND.finditer(text):
@@ -970,16 +980,32 @@ def _as_notice(notice: Any) -> Optional[Dict[str, Any]]:
     return found
 
 
-def _marked(kind: str, inner: str, classes: str, attrs: str = "") -> str:
+def _marked(kind: str, inner: str, classes: str, attrs: str = "", *, tag: str = "p") -> str:
     """A line led by a status mark in a column of its own, so its wrapped
     lines align with its words, never under the mark (the text brief's §4):
     the mark's shape (hidden from a screen reader, which reads the words),
     then the words, coloured by the state's token as `status_mark` colours
-    them. Its text reads shape, space, words (`MARK_SPACE`)."""
+    them. Its text reads shape, space, words (`MARK_SPACE`). `tag` "div" for
+    a line that holds a disclosure (a ``<details>`` is no content of a
+    ``<p>``: `_with_details`)."""
     shape, token = STATUS_MARKS[kind]
     mark = (f'<span class="shep-nb-mark shep-st-{token}" aria-hidden="true">'
             f'{shape or ""}{MARK_SPACE}</span>')
-    return f'<p class="{classes}"{attrs}>{mark}<span class="shep-nb-text">{inner}</span></p>'
+    return (f'<{tag} class="{classes}"{attrs}>{mark}<span class="shep-nb-text">{inner}</span>'
+            f'</{tag}>')
+
+
+def _with_details(kind: str, inner: str, classes: str, more: str) -> str:
+    """**R-DETAILS: a notice's line with its "Details ›" on its last line**
+    (the owner's C of 2026-11-24: "Details ›" stood on a line of its own
+    under a one-line notice): the disclosure closes the line's words, so its
+    summary sits after them where the line has room (it is one unit, moved
+    to the next line whole where it has none), and its rows open under the
+    line, on the words' edge (the words' column). Shared by every notice
+    (`notice_block`, `notices_block`); without rows, the plain line."""
+    if not more:
+        return _marked(kind, inner, classes)
+    return _marked(kind, f"{inner} {more}", classes, tag="div")
 
 
 def marked_line(kind: str, words: Any) -> str:
@@ -1002,7 +1028,7 @@ def _go(notice: Mapping[str, Any], go: bool) -> str:
         return ""
     target = str(notice.get("target") or "")
     page, _, focus = target.partition("#")
-    words = _place_bound(action, PLACE_NAMES.get(target))
+    words = _place_bound(action, target)
     if not go or not page:
         return f'<span class="shep-nb-act">{words}.</span>'
     focus_attr = f' data-shep-focus="{e(focus)}"' if focus else ""
@@ -1010,15 +1036,18 @@ def _go(notice: Mapping[str, Any], go: bool) -> str:
             f'{focus_attr}>{words}</button>')
 
 
-def _place_bound(action: str, place: Optional[str]) -> str:
-    """`action` escaped, the GUI place it names (`server_settings.PLACE_NAMES`, the part the
-    action is built from) drawn as one unit (``shep-unit``): a line breaks the step before the
-    place, never inside it (the sweep's L7: "Choose one in Settings ›" / "Data locations" in
-    Diagnosis' card at 1280 x 720)."""
-    if not place or place not in action:
+def _place_bound(action: str, target: str) -> str:
+    """`action` escaped, the GUI place it leads to drawn as one unit (``shep-unit``): a line
+    breaks the step before the place, never inside it (the sweep's L7: "Choose one in Settings
+    ›" / "Data locations" in Diagnosis' card at 1280 x 720). **The place is the action's tail,
+    given by the notice's target** (`server_settings.PLACE_NAMES[target]`, role data: every
+    action to a place is built ending in its name), never found in the words by a search (K6,
+    the owner of 2026-11-24): an action that does not end with its target's place is drawn
+    unbound (`test_webui_renderers` holds every notice's action to its place)."""
+    place = PLACE_NAMES.get(target)
+    if not place or not action.endswith(place):
         return e(action)
-    before, _, after = action.partition(place)
-    return f'{e(before)}<span class="shep-unit">{e(place)}</span>{e(after)}'
+    return f'{e(action[:-len(place)])}<span class="shep-unit">{e(place)}</span>'
 
 
 def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
@@ -1038,21 +1067,27 @@ def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
     return kv, ref
 
 
-def _details(notices: Sequence[Mapping[str, Any]], *, grouped: bool = False) -> str:
+def _details(notices: Sequence[Mapping[str, Any]], *, grouped: bool = False, lead: str = "",
+             keep: str = "") -> str:
     """The notices' "Details ›": their rows and one Ref line; none when they
     hold no row (a Ref line alone is not worth a disclosure: the notice's link
     leads to where its why is said). `grouped` (several notices said as one
     block): each notice's rows under its setting's name (the notice's
     `name`; its state is said once, on its line above), so a row is read as
-    the fact of the setting it explains; one Ref line under them all."""
+    the fact of the setting it explains; one Ref line under them all.
+    `lead`: the drawing region's own rows (HTML its caller built and
+    escaped), first in the same one disclosure; `keep`: what that region
+    shows (`keep_as`), so its next drawing keeps the disclosure as the
+    reader left it."""
     kv, ref = _detail_rows(notices)
-    if not kv:
+    if not kv and not lead:
         return ""
     if grouped and len(notices) > 1:
         kv = "".join((f'<p class="shep-nb-sub">{e(n["name"])}</p>' if n.get("name") else "") + rows
                      for n in notices for rows in [_detail_rows([n])[0]] if rows)
-    return (f'<details class="shep-more shep-nb-more"><summary>{e(DETAILS_WORD)}</summary>'
-            f'{kv}{ref}</details>')
+    kept = keep_as(keep) if keep else ""
+    return (f'<details class="shep-more shep-nb-more"{kept}><summary>{e(DETAILS_WORD)}</summary>'
+            f'{lead}{kv}{ref}</details>')
 
 
 def _shared_step(notices: Sequence[Mapping[str, Any]]) -> Optional[Dict[str, str]]:
@@ -1076,7 +1111,8 @@ def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
 
 
 def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterable[Any] = (),
-                 steps: Iterable[str] = (), go: bool = True, details: bool = True) -> str:
+                 steps: Iterable[str] = (), go: bool = True, state: str = "", more: str = "",
+                 keep: str = "", describes: str = "") -> str:
     """**The one notice** (a setting's state, said once per screen where it
     empties a region; the text brief's §1 and §10): one line, its status mark
     in a column of its own, the state (`summary`), what it means here
@@ -1088,10 +1124,25 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     (``data-notice-also``). `steps`: further steps, the action then step 1
     of a numbered list (each step's tokens in code style). Every value is
     escaped. ``data-notice`` names the key, so a screen can count each
-    notice once. `details` off: its "Details ›" is said by the region that
-    draws it, in that region's one disclosure (`notice_rows_html`: a card
-    whose own reason has a Details › of its own, two "Details ›" a line
-    apart; the sweep's L7, C1)."""
+    notice once. `state`: **the state of the region this notice is the
+    cause of**, where both say one absence (the Diagnosis card's Not loaded,
+    `NOT_LOADED`, with the workspaces folder unset): said first on the
+    notice's line, the notice's cause after it in its relation words
+    (`short`): "○ Not loaded: no workspaces folder is set.", one line and
+    one mark, never a state's mark above the notice's (the owner, 2026-11-25:
+    the two read as overlapping). The caller says it only for an absence of
+    the notice's own kind; a state of another kind keeps its own mark.
+    `more`: the region's own rows (HTML its caller built and escaped) for
+    the notice's one "Details ›", before the notice's rows, so a region that
+    draws the notice as its state's cause has one disclosure, closing the
+    notice's last line (R-DETAILS), never a second "Details ›" or one alone
+    under it (the sweep's L7, C1; LOOK5); `keep`: what that region shows
+    (`keep_as`), so its next drawing keeps that disclosure as the reader
+    left it. `describes`: the element ids of the controls
+    this notice dims where it is drawn in the same bar as them (R-WHY, the
+    cause said once there: no phrase beside them), space-separated
+    (``data-for``); the shell's head script points their
+    ``aria-describedby`` at it."""
     found = _as_notice(notice)
     if found is None:
         return ""
@@ -1099,7 +1150,10 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     kind = found["kind"]
     act = _go(found, go)
     steps = [str(step) for step in steps if step]
-    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[kind][1]}">{e(found["summary"])}</span>'
+    said = found["summary"]
+    if state:
+        said = f'{state}: {str(found.get("short") or said).rstrip(".")}.'
+    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[kind][1]}">{e(said)}</span>'
     if consequence:
         inner += f' <span class="shep-nb-then">{e(consequence)}</span>'
     if act and not steps:
@@ -1108,23 +1162,14 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     also_keys = _keys(extra)
     if also_keys:
         keys += f' data-notice-also="{e(also_keys)}"'
+    if describes:
+        keys += f' data-for="{e(describes)}"'
     listed = "".join(f"<li>{literal_html(step)}</li>" for step in steps)
     ol = (f'<ol class="shep-nb-steps">{f"<li>{act}</li>" if act else ""}{listed}</ol>'
           if steps else "")
+    disclosure = _details([found, *extra], lead=more, keep=keep)
     return (f'<div class="shep-nb shep-nb-{kind}"{keys}>'
-            f'{_marked(kind, inner, "shep-nb-line")}{ol}'
-            f'{_details([found, *extra]) if details else ""}</div>')
-
-
-def notice_rows_html(notice: Any) -> str:
-    """**A notice's Details, for a region's own disclosure** (`notice_block`
-    with ``details=False``): its term rows as one summary list and its Ref
-    line, as its own "Details ›" holds them; "" for no notice or no row."""
-    found = _as_notice(notice)
-    if found is None:
-        return ""
-    kv, ref = _detail_rows([found])
-    return f"{kv}{ref}" if kv else ""
+            f'{_with_details(kind, inner, "shep-nb-line", disclosure)}{ol}</div>')
 
 
 def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
@@ -1150,61 +1195,208 @@ def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
     after = " ".join(part for part in (
         f'<span class="shep-nb-then">{e(consequence)}</span>' if consequence else "",
         _go(shared, go) if shared else "") if part)
-    next_line = f'<p class="shep-nb-next">{after}</p>' if after else ""
+    more = _details(found, grouped=True)
+    # R-DETAILS: "Details ›" closes the block's last line (the next step's, else the last
+    # notice's), its rows opening under that line.
+    if after:
+        tag = "div" if more else "p"
+        next_line = f'<{tag} class="shep-nb-next">{" ".join(p for p in (after, more) if p)}</{tag}>'
+    else:
+        next_line = ""
+        if more:
+            last = found[-1]
+            inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[last["kind"]][1]}">'
+                     f'{e(last["summary"])}</span>')
+            if shared is None and _go(last, go):
+                inner += f" {_go(last, go)}"
+            lines[-1] = _with_details(last["kind"], inner, "shep-nb-line", more)
     kind = "error" if any(n["kind"] == "error" for n in found) else "neutral"
     return (f'<div class="shep-nb shep-nb-{kind}" data-notice="{e(_keys(found))}">'
-            f'{"".join(lines)}{next_line}{_details(found, grouped=True)}</div>')
+            f'{"".join(lines)}{next_line}</div>')
 
 
-#: **A disabled control's state, said one way on every page**: the control's
-#: name, this word, then why ("Start disabled: no workspaces folder is set.",
-#: `disabled_words`), never "unavailable" on one page and "disabled" on the
-#: next; a reason line a page draws itself leads with `DISABLED_MARK`, the mark
-#: a relation to a setting not yet set leads with (`see_above`).
-DISABLED = "disabled"
-#: The mark a disabled control's reason leads with where its page sets the
-#: mark in a column of its own: the neutral mark (grey, the skill's §6), its
-#: shape and colour as `_marked` draws them, never a page's own glyph.
+#: **The mark a dimmed control's reason leads with** where its page sets the
+#: mark in a column of its own (a phrase's line, `phrase_line`, and a line in
+#: the page's own words, `need_words`): the neutral mark (grey, the skill's
+#: §6), its shape and colour as `_marked` draws them, never a page's own glyph.
 DISABLED_MARK = (f'<span class="shep-nb-mark shep-st-{STATUS_MARKS["neutral"][1]}" '
                  f'aria-hidden="true">{STATUS_MARKS["neutral"][0]}</span>')
 
 
-def disabled_words(control: str, cause: str) -> str:
-    """"<control> disabled: <cause>": a disabled control's state and why,
-    the one form every page says it in (`DISABLED`)."""
-    return f"{control} {DISABLED}: {cause}"
-
-
-def relation_words(control: str, notice: Any, *, where: Optional[str] = None) -> str:
-    """`see_above`'s words as plain text, for a reason a page gives as text:
-    the control disabled, the notice's short words, and where the notice is
-    ("Start disabled: no results registry is set (see Data).")."""
-    found = _as_notice(notice)
-    if found is None:
+def need_words(cause: str) -> str:
+    """**SW-C11: a dimmed control's local cause in its page's words**, led by
+    what it needs ("Choose a dataset to start.", "Load a model first.", "A
+    training job is running."): a sentence, its first letter capitalised and
+    a full stop at its end, with no control's name (the control's
+    ``aria-describedby`` and the line's place beside it say which) and never
+    "disabled" (the dimmed look says the control cannot be used; Apple's
+    style guide). A cause with a key of its own (D8, a setting, the GPU) is
+    said by its phrase (`reason_phrase`), never here. "" for none."""
+    text = " ".join(str(cause or "").split())
+    if not text:
         return ""
-    return disabled_words(control, found["short"]) + (f" (see {where})" if where else "") + "."
+    text = text[:1].upper() + text[1:]
+    return text if text[-1] in ".!?" else f"{text}."
 
 
-def see_above(control: str, notice: Any, *, where: Optional[str] = None,
-              details: bool = False) -> str:
-    """**A control's relation to the notice its screen shows** (said once,
-    `notice_block`): one line beside the control it explains, its status
-    mark, the control disabled and the notice's short words ("Start
-    disabled: no workspaces folder is set.", `relation_words`), with where
-    the notice is when it is not in view of the control (`where`: "see
-    above", "see Data"). With `details`, the notice's "Details ›" under it
-    (where the screen shows the notice's line elsewhere but not its
-    details). ``data-notice-rel`` names the notice: a relation is not the
-    notice said again."""
-    found = _as_notice(notice)
+# ---------------------------------------------------------------------------
+# R-WHY: why a control is dimmed, a phrase beside it keyed to the one reason
+# ---------------------------------------------------------------------------
+class Reason(NamedTuple):
+    """**One cause a control can be dimmed for** (R-WHY, the owner's D6 of
+    2026-11-24): its `phrase` (five words at most, beside each control it
+    dims: the need or who can act, never "disabled"), and where its whole
+    reason is drawn once per screen, its `source`: ``"chip"``, a header
+    chip's hidden text (`ref`, its document id: the chip's ⓘ, or the part of
+    it that answers the phrase, `chips.D8_WHY_ID`; `title`, the bubble's
+    title), or ``"notice"``, the setting's notice (`ref`, its key: the
+    page's ``data-notice``)."""
+
+    phrase: str
+    source: str
+    ref: str
+    title: str = ""
+
+
+#: **Every cause's phrase and source, the one table** (R-WHY): two causes are
+#: always two phrases, never one merged to save words. A setting set and not
+#: usable is a cause of its own (``*_unusable``), apart from the same
+#: setting unset.
+REASONS: Dict[str, Reason] = {
+    "d8": Reason(OPERATOR_ONLY, "chip", D8_WHY_ID, CHIP_TITLES["d8"]),
+    "workspaces_root": Reason("Needs a workspaces folder", "notice", WORKSPACES_ROOT_NOTICE.key),
+    "registry": Reason("Needs a results registry", "notice", REGISTRY_NOTICE.key),
+    "intake": Reason("Needs an import folder", "notice", INTAKE_DIR_NOTICE.key),
+    "workspaces_root_unusable": Reason("Workspaces folder not usable", "notice",
+                                       WORKSPACES_ROOT_NOTICE.key),
+    "registry_unusable": Reason("Results registry not usable", "notice", REGISTRY_NOTICE.key),
+    "intake_unusable": Reason("Import folder not usable", "notice", INTAKE_DIR_NOTICE.key),
+    "gpu_busy": Reason("GPU in use", "chip", GPU_TEXT_ID, CHIP_TITLES["gpu"]),
+    "gpu_problem": Reason("GPU lock not usable", "chip", GPU_TEXT_ID, CHIP_TITLES["gpu"]),
+}
+#: The phrases alone, by cause key.
+REASON_PHRASES: Dict[str, str] = {key: reason.phrase for key, reason in REASONS.items()}
+#: A notice's key as a cause key (``intake_dir`` is the cause ``intake``).
+_NOTICE_CAUSE = {WORKSPACES_ROOT_NOTICE.key: "workspaces_root", REGISTRY_NOTICE.key: "registry",
+                 INTAKE_DIR_NOTICE.key: "intake"}
+#: Where each notice's next step is in the GUI, for a phrase whose notice the
+#: screen does not draw.
+_NOTICE_TARGET = {n.key: n.target for n in (WORKSPACES_ROOT_NOTICE, REGISTRY_NOTICE,
+                                            INTAKE_DIR_NOTICE, GPU_LOCK_NOTICE)}
+
+
+def reason_key(cause: Any) -> Optional[str]:
+    """**The cause key of `cause`**: a key of `REASONS` as it is, or a
+    notice (`_as_notice`) by its key and kind, never by its words: a setting
+    unset is its own cause; set and not usable (kind ``error``), its
+    ``*_unusable`` cause; the GPU lock's notice, the cause it follows from (no
+    workspaces folder) or, set and not usable, ``gpu_problem``. None for no
+    known cause."""
+    if isinstance(cause, str) and cause in REASONS:
+        return cause
+    found = _as_notice(cause)
     if found is None:
+        return None
+    key = str(found.get("key") or "")
+    unusable = found.get("kind") == "error"
+    if key == GPU_LOCK_NOTICE.key:
+        return "gpu_problem" if unusable else _NOTICE_CAUSE.get(str(found.get("cause") or ""))
+    base = _NOTICE_CAUSE.get(key)
+    if base is None:
+        return None
+    return f"{base}_unusable" if unusable else base
+
+
+def why_id(control: str) -> str:
+    """The id of the phrase beside `control` (its element id), which the
+    control's ``aria-describedby`` names (the shell's head script)."""
+    return f"shep-why-{control}"
+
+
+def _phrase_key(key: str, cause: Any, control: Optional[str]) -> str:
+    """**A chip phrase's bubble key** (``data-help``, which the one help
+    bubble re-anchors by after a redraw), one per phrase (the L8 S1 check,
+    S1C-8: every phrase that named no control had one constant key, so the
+    bubble moved to the first of them): ``why-<cause>-`` and the first control
+    the phrase explains (its element id, unique on the page); with no control
+    named, a stable id of the phrase itself, a short digest of its cause as
+    given (a key as it is, or a notice by its key, kind, cause and words), so
+    the same phrase drawn again keeps its key and two phrases of two causes
+    never share one."""
+    if control:
+        return f"why-{key}-{control.split()[0]}"
+    found = {"key": cause} if isinstance(cause, str) else (_as_notice(cause) or {})
+    parts = "\x1f".join(str(found.get(part) or "") for part in ("key", "kind", "cause", "summary", "short"))
+    return f"why-{key}-{hashlib.sha1(parts.encode('utf-8')).hexdigest()[:10]}"
+
+
+def reason_phrase(cause: Any, *, control: Optional[str] = None) -> str:
+    """**R-WHY: the phrase beside a dimmed control** (`REASONS`): its cause's
+    phrase of five words at most, as a focusable link-styled button
+    (``shep-why``, the accent text, 4.5:1), keyed to its one reason source
+    (``data-why``: the cause key). The whole reason is drawn once per screen
+    by its source; the phrase never repeats it and never says "disabled",
+    "see above" or "see below" (the source may have scrolled away or be in
+    another region). Activated, by its source's kind (data, never geometry):
+
+    - a chip's reason: the one help bubble (`help.py`) opens anchored at the
+      phrase and reads the chip's hidden text by its document id
+      (``aria-describedby``), so it always shows the current reason, never
+      a copy;
+    - a notice: the shell's head script brings the notice drawn on the screen
+      into view (the nearest edge) and focuses its link (``data-why-notice``:
+      the keys it may be drawn under); with none drawn, it opens the notice's
+      place in the GUI (``data-why-go``).
+
+    `control`: the element id of the control it explains (``data-for``,
+    several ids space-separated); the shell's head script sets that
+    control's ``aria-describedby`` to the phrase (`why_id`). **One cause
+    said in the same bar**: where the cause's own notice is drawn in the
+    same bar as the dimmed control (the bar's facts slot, the adjacent row of
+    the same component), no phrase is added; the notice names the controls
+    instead (`notice_block`'s ``describes``) and their ``aria-describedby``
+    points at it. Everywhere else a dimmed control has its phrase or a line
+    in its page's words (`need_words`) beside it. "" for no known cause."""
+    key = reason_key(cause)
+    if key is None:
         return ""
-    words = relation_words(control, found, where=where)
-    rel = f' data-notice-rel="{e(found["key"])}"' if found.get("key") else ""
-    inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">'
-             f'{bound_html(words)}</span>')
-    line = _marked(found["kind"], inner, "shep-reason shep-nb-rel", rel)
-    return line + (_details([found]) if details else "")
+    reason = REASONS[key]
+    attrs = [f'data-why="{e(key)}"']
+    if control:
+        attrs += [f'id="{e(why_id(control.split()[0]))}"', f'data-for="{e(control)}"']
+    if reason.source == "chip":
+        attrs += [f'data-help="{e(_phrase_key(key, cause, control))}"',
+                  f'data-help-title="{e(reason.title)}"', 'aria-expanded="false"',
+                  f'aria-describedby="{e(reason.ref)}"']
+    else:
+        found = _as_notice(cause) if not isinstance(cause, str) else None
+        keys = [reason.ref]
+        if found and found.get("key") and found["key"] not in keys:
+            keys.insert(0, str(found["key"]))
+        if found and found.get("cause") and found["cause"] not in keys:
+            keys.append(str(found["cause"]))
+        page, _, focus = _NOTICE_TARGET.get(keys[0], _NOTICE_TARGET[reason.ref]).partition("#")
+        attrs += [f'data-why-notice="{e(" ".join(keys))}"', f'data-why-go="{e(page)}"',
+                  f'data-why-focus="{e(focus)}"']
+    return (f'<button type="button" class="shep-why" {" ".join(attrs)}>'
+            f'{e(reason.phrase)}</button>')
+
+
+def phrase_line(cause: Any, *, control: Optional[str] = None, lock: bool = False) -> str:
+    """**A dimmed control's phrase as a line of its own** (`reason_phrase` in
+    a ``shep-reason`` line, the relation line's form, ``shep-nb-rel``: its
+    mark in a column of its own, `_marked`): led by the neutral mark, or,
+    with `lock` (a request D8 refuses), by the lock, as a gated control's
+    reason is (the skill's §3); "" for no known cause."""
+    phrase = reason_phrase(cause, control=control)
+    if not phrase:
+        return ""
+    reason = REASONS[reason_key(cause)]
+    rel = f' data-notice-rel="{e(reason.ref)}"' if reason.source == "notice" else ""
+    if lock:
+        return (f'<p class="shep-reason shep-why-line"{rel}><span aria-hidden="true">{LOCK}</span>'
+                f'<span class="shep-nb-text">{phrase}</span></p>')
+    return _marked("neutral", phrase, "shep-reason shep-nb-rel shep-why-line", rel)
 
 
 #: Why a workspace without a readable manifest is not trainable, in short words:
@@ -2582,22 +2774,11 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
     (`_SPEC_PARTS`), "not taken by a base" or by its task. `data` is a
     recorded spec, with its reference notes or as a list holds it without
     them (`listed_record`'s `spec`), read by the one reader of a listed spec
-    (`record.listed_spec`)."""
-    from src.models.bundle.record import listed_spec
-    from src.models.bundle.spec import SpecError
-
-    if not isinstance(data, Mapping):
-        return (status_mark("neutral", f"{UNKNOWN}: the record holds no model spec"), "")
-    spec, problem = listed_spec(data)
-    differences: Dict[str, Any] = {}
-    if spec is not None:
-        try:
-            differences = spec.differences_from_reference()
-        except (SpecError, TypeError, ValueError, KeyError) as exc:
-            spec, problem = None, str(exc)
+    (`record.listed_spec`). A list that is itself one click away takes its
+    rows form instead (`model_spec_rows`)."""
+    spec, differences, unknown = _read_spec(data)
     if spec is None:
-        return (status_mark("neutral", f"{UNKNOWN}: not read as a model spec "
-                                       f"({short_reason(problem, 120)})"), "")
+        return (unknown, "")
     name = f"reference {architecture_label(spec.encoder.kind)} spec"
     if differences:
         words = f"Differs from the {name}: " + named_words(
@@ -2618,6 +2799,58 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
         rows.append((key, shown))
         titles[key] = path
     return e(words), details_list(rows, titles=titles, classes="shep-kv-spec")
+
+
+def _read_spec(data: Any) -> Tuple[Any, Dict[str, Any], str]:
+    """A recorded spec as `model_spec_html` and `model_spec_rows` read it:
+    ``(spec, differences, "")``, each field that differs from its stage's
+    reference by its dotted path, ``(reference, mine)``; or ``(None, {},
+    words)``, the escaped words of a spec this build cannot read."""
+    from src.models.bundle.record import listed_spec
+    from src.models.bundle.spec import SpecError
+
+    if not isinstance(data, Mapping):
+        return None, {}, status_mark("neutral", f"{UNKNOWN}: the record holds no model spec")
+    spec, problem = listed_spec(data)
+    differences: Dict[str, Any] = {}
+    if spec is not None:
+        try:
+            differences = spec.differences_from_reference()
+        except (SpecError, TypeError, ValueError, KeyError) as exc:
+            spec, problem = None, str(exc)
+    if spec is None:
+        return None, {}, status_mark("neutral", f"{UNKNOWN}: not read as a model spec "
+                                                f"({short_reason(problem, 120)})")
+    return spec, differences, ""
+
+
+def model_spec_rows(data: Any, label: str) -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
+    """**A recorded model spec as summary-list rows, every difference on a row
+    of its own** (the L8 close; Fine-tune's parent Details, f-result's
+    "Needs from shared" 1): for a list that is itself one click away, where a
+    disclosure inside would be a second level (the skill's §1.5) and the
+    words alone name `_SPEC_WORDS_SHOWN` differences and count the rest away.
+    ``(rows, titles)`` for `summary_list` or `details_list`: `label`'s row
+    says the spec by its relation to its stage's reference ("Reference GATv2
+    spec", "Differs from the reference GATv2 spec in 5 fields", or why it
+    cannot be read), then each field that differs, named in words
+    (`field_path_words`, its dotted path the title) with its value and the
+    reference's, as `model_spec_html`'s details give them. Escaped."""
+    spec, differences, unknown = _read_spec(data)
+    if spec is None:
+        return [(label, unknown)], {}
+    name = f"reference {architecture_label(spec.encoder.kind)} spec"
+    if not differences:
+        return [(label, e(name[:1].upper() + name[1:]))], {}
+    count = len(differences)
+    rows = [(label, e(f"Differs from the {name} in {count} field{'s' if count != 1 else ''}"))]
+    titles = {}
+    for path, (reference, mine) in differences.items():
+        key = field_path_words(path)
+        rows.append((key, f"{_spec_value_html(path, mine)} (reference "
+                          f"{_spec_value_html(path, reference)})"))
+        titles[key] = path
+    return rows, titles
 
 
 def recorded_count_text(value: Any) -> str:
@@ -3461,19 +3694,22 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 __all__ = [
     "CURRENT_DATASET",
     "DETAILS_WORD",
-    "DISABLED",
     "DISABLED_MARK",
     "SEP",
     "whole_words",
-    "disabled_words",
     "literal_html",
     "marked_line",
     "name_pieces_html",
     "notice_block",
-    "notice_rows_html",
     "notices_block",
-    "relation_words",
-    "see_above",
+    "REASONS",
+    "need_words",
+    "REASON_PHRASES",
+    "Reason",
+    "phrase_line",
+    "reason_key",
+    "reason_phrase",
+    "why_id",
     "token_html",
     "LP_MODE",
     "lp_metric_names",
@@ -3572,6 +3808,7 @@ __all__ = [
     "entry_place",
     "RUN_OPERATION_WORDS",
     "model_spec_html",
+    "model_spec_rows",
     "model_name_html",
     "model_name_line",
     "model_name_facts",

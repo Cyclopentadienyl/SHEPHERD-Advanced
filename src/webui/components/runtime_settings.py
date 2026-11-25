@@ -45,11 +45,12 @@ Operator controls (D8, M5-1):
     on the shell's slow timer: no lock while D8 allows the request; for a
     request D8 refuses, the buttons disabled with the lock, the two fields
     that need the operator (the allocator and torch.compile) not interactive,
-    and the visible "Operator controls only: …" reason once, beside the
-    buttons in their row (`chips.operator_only`, `data_locations.reason_line`),
-    the line above the two fields a short relation to it (`FIELDS_LOCKED`):
-    with the accordions open the panel's one line was 734 px above the
-    buttons at 1850 x 960 (the external review of 6a2d52e). Restart and Stop
+    and R-WHY's d8 phrase ("Operator controls only", which opens the D8
+    chip's whole reason) once, beside the buttons in their row
+    (`chips.operator_only`, `data_locations.reason_line`), naming the two
+    fields too, so each dimmed control is described by it (`RUNTIME_ACTIONS`).
+    No line above the fields points at it (the owner's D6 of 2026-11-24:
+    never words that point at a reason drawn elsewhere). Restart and Stop
     service are also off while a GPU job runs, and Restart while no saved
     allocator waits for it, each said beside them. A disabled control is a
     display, never the control.
@@ -411,20 +412,20 @@ APPLY_LABEL = "Apply Settings"
 RESTART_LABEL = "Restart Backend"
 
 
-#: The line above the two fields for a request D8 refuses: a short relation
-#: to the reason, which is said once, beside the actions it turns off
-#: (`_refresh_restart_lock`). The reason was this line, 734 px above Apply,
-#: Restart Backend and Stop service at 1850 x 960 with the accordions open.
-FIELDS_LOCKED = "Read-only for this request: the reason is with the actions below."
+#: **The controls a read-only request dims**, which the phrase beside the actions names (R-WHY's
+#: ``data-for``, so each is described by it): Apply, Restart and Stop, and the two fields Apply
+#: saves. The phrase is said once, beside the actions; no line above the fields points at it
+#: (the owner's D6 of 2026-11-24: "Read-only for this request: the reason is with the actions
+#: below." stood between the facts and the fields).
+RUNTIME_ACTIONS = "runtime_apply runtime_restart runtime_stop allocator_preset torch_compile"
 
 
 def _refresh_restart_lock(request: gr.Request):
     """Apply, Restart and Stop service as this request may use them, by the
     one gated-button rule (`chips.gated`): for a refused request, all
-    disabled with the lock and D8's short reason once, beside them in their
-    row (`chips.operator_only`; the header chip's ⓘ gives D8's whole
-    reason), and above the two fields it turns off too a short relation to
-    it (`FIELDS_LOCKED`);
+    disabled with the lock and R-WHY's d8 phrase once, beside them in their
+    row (`chips.operator_only`, which opens the header chip's whole reason),
+    naming the two fields it turns off too (`RUNTIME_ACTIONS`);
     Restart and Stop service also off while a GPU job runs (`RESTART_BUSY`),
     and Restart while a restart would change nothing (`restart_applies`,
     `RESTART_IDLE`), the reason beside them. A display: each button's handler
@@ -434,8 +435,7 @@ def _refresh_restart_lock(request: gr.Request):
     access = operator_access(request)
     idle = not restart_applies(os.environ, load_runtime_settings())
     reason = "" if access.allowed else data_locations.reason_line(
-        f"{operator_only(access.condition)}.")
-    fields = "" if access.allowed else data_locations.reason_line(FIELDS_LOCKED)
+        phrase=operator_only(control=RUNTIME_ACTIONS))
     why = RESTART_BUSY if locked else RESTART_IDLE if idle and access.allowed else None
     return (
         gr.update(**gated(APPLY_LABEL, access.allowed)),
@@ -445,7 +445,6 @@ def _refresh_restart_lock(request: gr.Request):
                                                   if why else "")),
         gr.update(visible=not access.allowed, value=reason),
         gr.update(**gated(STOP_LABEL, access.allowed, interactive=not locked)),
-        gr.update(visible=not access.allowed, value=fields),
     )
 
 
@@ -472,7 +471,7 @@ def _poll_restart_lock(location, question, request: gr.Request):
     had been opened). The fields are left as they are, so an open select is
     never redrawn."""
     if location != SETTINGS_PAGE:
-        return (gr.update(),) * 11
+        return (gr.update(),) * 10
     return (*_refresh_restart_lock(request), *_restart_question_closed(question, request))
 
 
@@ -572,9 +571,6 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                    elem_id="shep-settings-hd")
         with gr.Column(elem_id="shep-settings-bd"):
             facts = plain_html(facts_html(settings=settings), elem_id="runtime_facts")
-            # For a request D8 refuses, next to the fields it turns off: where
-            # the reason is (`FIELDS_LOCKED`; NEW-settings-datasets-footer-3).
-            fields_note = plain_html("", visible=False, elem_id="runtime_fields_lock")
             allocator = gr.Dropdown(
                 label="Memory allocator", choices=ALLOCATOR_CHOICES, value=saved_alloc,
                 interactive=False, elem_id="allocator_preset",
@@ -618,19 +614,17 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
             status = plain_html("", elem_id="runtime_status")
             restart_status = plain_html("", elem_id="runtime_restart_status")
     return (facts, allocator, torch_compile, apply_btn, restart_btn, stop_btn,
-            restart_lock_note, (access_note, fields_note),
+            restart_lock_note, access_note,
             (confirm, question, restart_now, stop_now), cancel, status, restart_status)
 
 
 def _wire_runtime_panel(ctx: Any, facts, allocator, torch_compile, apply_btn, restart_btn,
-                        stop_btn, restart_lock_note, notes, asking, cancel, status,
+                        stop_btn, restart_lock_note, access_note, asking, cancel, status,
                         restart_status) -> None:
     """The Runtime settings panel's events (`create_runtime_settings_tab`)."""
-    access_note, fields_note = notes
     confirm, question, restart_now, stop_now = asking
     asked = [confirm, question, restart_now, stop_now, restart_status]
-    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note, stop_btn,
-                    fields_note]
+    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note, stop_btn]
     ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location, question],
                         outputs=[*lock_outputs, *asked], queue=False, show_progress="hidden")
     ctx.on_page_open(SETTINGS_PAGE, {"fn": _on_open,
@@ -700,7 +694,7 @@ PAGE_CSS = f"""
 
 
 __all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "COMPILE_EXPERIMENTAL",
-           "COMPILE_READ", "FIELDS_LOCKED", "FIELD_HELP", "FIELD_INFO", "PAGE_CSS", "RESTART_BUSY",
+           "COMPILE_READ", "FIELD_HELP", "FIELD_INFO", "PAGE_CSS", "RESTART_BUSY",
            "RESTART_CONFIRM_LABEL", "RESTART_IDLE", "RESTART_QUESTION", "RESTART_STOPS_SERVING",
            "STOP_CONFIRM_LABEL", "STOP_DONE", "STOP_LABEL", "STOP_QUESTION", "allocator_words",
            "create_runtime_settings_tab", "facts_html", "restart_applies", "running_html",

@@ -57,6 +57,7 @@ gr = pytest.importorskip("gradio")
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui import style  # noqa: E402
 from src.webui.components import datasets_page as dsp  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 
 ODD = "<b>odd&name"
 
@@ -322,9 +323,8 @@ def test_a_row_is_one_line_and_in_use_is_no_input_box(root, monkeypatch):
     built = r.built_date(row["build"])
     assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", built)
     cells = _row(html, "resampled")
-    assert (f'<td class="shep-nowrap shep-ds-date shep-col-opt">{built}</td>' in cells
-            and "UTC" not in cells)
-    assert '<td class="shep-num shep-nowrap">20 / 5</td>' in cells
+    assert dsp.cell_html(dsp.COLUMNS[1], built) in cells and "UTC" not in cells
+    assert dsp.cell_html(dsp.COLUMNS[4], "20 / 5") in cells
     assert r.status_mark("ok", "in your Training run bar") in cells
     for retired in ("shep-mark-outline", "shep-mark-grey", "shep-mark-serve-same", "shep-ds-wide",
                     "shep-ds-narrow"):
@@ -473,7 +473,7 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
     why = next(x for x in data["rows"] if x["name"] == "scratch_ws")["not_trainable"]
     assert "The manifest was not read" in details and details.count(why) == 1
     # Disabled, with the reason beside it as visible text (M5-3).
-    assert "Use for training disabled: scratch_ws is not trainable: no split manifest." in note
+    assert r.need_words("not trainable: no split manifest") in note
     assert dsp.USE_NOTE not in note
 
     class Forged:
@@ -488,9 +488,9 @@ def test_the_reason_beside_use_for_training_is_escaped_and_names_no_path(root, m
                       "not_trainable": "files <i>its</i> manifest binds are missing",
                       "manifest": "read", "dataset_fingerprint": "a" * 64}]}
     note = dsp.use_note_html(data, "<b>x")
-    assert "<b>" not in note and "<i>" not in note and "&lt;b&gt;x" in note
+    assert "<b>" not in note and "<i>" not in note and "&lt;i&gt;its" in note
     # Disabled with no row chosen: said in the shared form (the sweep's L7, SW-LK6).
-    assert "Use for training disabled: select a workspace in the list first." in dsp.use_note_html(data, None)
+    assert r.need_words("choose a workspace in the list first") in dsp.use_note_html(data, None)
 
 
 def test_the_build_line_is_one_quiet_paragraph_drawn_only_under_a_listed_table():
@@ -578,13 +578,15 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     assert 'data-shep-go="settings" data-shep-focus="shep-dl"' in first
     assert second == r.e(dsp.BUILD_STEP) and "shep-tok" not in second
     lead = table.split('<ol class="shep-nb-steps">')[0]
-    assert "SHEPHERD_" not in re.sub(r"<[^>]+>", "", lead)                 # only under Details
+    # Only under Details (R-DETAILS: its "Details ›" closes the lead's line, its rows under it).
+    assert "<details" in lead
+    assert "SHEPHERD_" not in re.sub(r"<details.*?</details>|<[^>]+>", "", lead, flags=re.S)
     # Said once: the details and the button relate to it.
     screen = (dsp.header_html(data) + table + dsp.details_html(data, None)
               + dsp.use_note_html(data, None))
     assert screen.count("data-notice=") == 1 and screen.count("No workspaces folder is set.") == 1
     note = dsp.use_note_html(data, None)
-    assert note == r.see_above(dsp.USE_FOR_TRAINING, data["notice"])
+    assert note == r.phrase_line(data["notice"], control=dsp.USE_ID)
     assert 'data-notice-rel="workspaces_root"' in note
     assert dsp.DETAILS_NONE in dsp.details_html(data, None)
     assert dsp.DETAILS_SELECT not in dsp.details_html(data, None)
@@ -594,7 +596,7 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     assert dsp.NO_WORKSPACE_YET in said and r.e(dsp.BUILD_STEP) in said
     assert dsp.commands_html() in said
     assert "data-notice" not in said and said.startswith('<div class="shep-ds-empty">')
-    assert "Use for training disabled: no workspace is listed yet." in dsp.use_note_html(empty, None)
+    assert r.need_words("no workspace is listed yet") in dsp.use_note_html(empty, None)
     assert 'class="shep-reason"' in dsp.use_note_html(empty, None)
     # A folder set and not usable: its notice alone (the folder comes first, no build step).
     refused = {**data["notice"], "kind": "error", "summary": "The workspaces folder cannot be used."}
@@ -1254,11 +1256,87 @@ def test_the_panels_are_sized_by_what_they_hold_and_the_table_drops_optional_col
     # the layout pass's second measure), and wrap only where it would cost the table a column.
     from src.webui.style import CELL_ROOMY
 
+    # Since K6 (2026-11-24) by each column's declared role: a fact's or a number's header.
     roomy = [re.sub(r"<[^>]+>", "", text).strip() for attrs, text in heads if CELL_ROOMY in text]
-    assert [x[:len(name)] for x, name in zip(roomy, ("Dataset fingerprint", "Train / val", "In use"))] == [
-        "Dataset fingerprint", "Train / val", "In use"] and len(roomy) == 3, roomy
+    held = [c.head for c in dsp.COLUMNS if c.role in ("fact", "number")]
+    assert [x[:len(name)] for x, name in zip(roomy, held)] == held and len(roomy) == len(held), roomy
     marked = dsp.table_html(dsp.read_datasets(), "demo", "demo")
     assert f'<span class="{CELL_ROOMY}"><span class="shep-st shep-st-ok">' in marked
+
+
+def test_roomy_cells_follow_the_columns_declared_role(root, monkeypatch):
+    """K6 part 2 (the owner's decision of 2026-11-24: roles, never strings; amendment 1): the
+    workspaces table marked the three headers that had broken ("Dataset fingerprint", "Train /
+    val", "In use") and one mark of one cell (the run bar's) to read as one while the table has
+    the room, a list of strings. Now the table declares each column's role (`COLUMNS`), and
+    every header and cell takes its mark from it: a fact's header and each of its cells' facts
+    carry `style.CELL_ROOMY`; a number's header carries it and its cells are whole always; a
+    name's and the sources' carry neither. Built, the fingerprint and Train / val are numbers
+    (read as facts, their cells wrapped in the wide form at 1366 x 768). Fails on 9adb3c4:
+    Built's header carries no mark, and In use's "serving reads this workspace", "same
+    dataset as served" and "not trainable" stand bare beside the run bar's marked one."""
+    from html.parser import HTMLParser
+
+    from src.webui.style import CELL_ROOMY
+
+    roles = {"Name": "name", "Built (UTC)": "number", "Dataset fingerprint": "number",
+             "Sources": "sources", "Train / val": "number", "In use": "fact"}
+
+    class Cells(HTMLParser):
+        """Each header and cell: its classes and its children's (a text a child of its own)."""
+
+        def __init__(self):
+            super().__init__()
+            self.cells, self.depth, self.at = [], 0, None
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("br", "wbr", "img", "input"):
+                return
+            self.depth += 1
+            if tag in ("th", "td"):
+                self.at = self.depth
+                self.cells.append({"tag": tag, "class": dict(attrs).get("class") or "",
+                                   "kids": [], "html": ""})
+            elif self.at is not None and self.depth == self.at + 1:
+                self.cells[-1]["kids"].append(dict(attrs).get("class") or tag)
+            if self.at is not None:
+                self.cells[-1]["html"] += f"<{tag} {dict(attrs).get('class') or ''}>"
+
+        def handle_endtag(self, tag):
+            if tag in ("br", "wbr", "img", "input"):
+                return
+            if tag in ("th", "td"):
+                self.at = None
+            self.depth -= 1
+
+        def handle_data(self, data):
+            if self.at is not None and self.depth == self.at and data.strip():
+                self.cells[-1]["kids"].append("text")
+
+    _serving(monkeypatch, str(root / "demo"))
+    parser = Cells()
+    parser.feed(dsp.table_html(dsp.read_datasets(), "demo", "demo"))
+    heads = [c for c in parser.cells if c["tag"] == "th"]
+    rows = [c for c in parser.cells if c["tag"] == "td"]
+    names = list(roles)
+    assert [c.head for c in dsp.COLUMNS] == names and set(roles.values()) <= set(dsp.ROLES)
+    assert {c.head: c.role for c in dsp.COLUMNS} == roles
+    assert len(heads) == len(names) and len(rows) % len(names) == 0 and len(rows) >= 2 * len(names)
+    marked = lambda cell: CELL_ROOMY in cell["html"]     # noqa: E731
+    for name, head in zip(names, heads):
+        held = roles[name] in ("fact", "number")
+        assert (head["kids"] == [CELL_ROOMY]) is held and marked(head) is held, (name, head)
+    for index, cell in enumerate(rows):
+        name = names[index % len(names)]
+        role = roles[name]
+        if role == "fact":
+            # Each of its facts held whole while the table has the room, none bare.
+            assert cell["kids"] and set(cell["kids"]) == {CELL_ROOMY}, (name, cell)
+        else:
+            assert not marked(cell), (name, cell)
+        assert ("shep-nowrap" in cell["class"].split()) is (role == "number"), (name, cell)
+    in_use = [cell for index, cell in enumerate(rows) if names[index % len(names)] == "In use"]
+    assert max(len(cell["kids"]) for cell in in_use) >= 2, in_use     # several facts, each held
 
 
 #: At first use, as drawn: the notice's and the title's left edges, how many

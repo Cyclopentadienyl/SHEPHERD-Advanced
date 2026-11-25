@@ -196,6 +196,26 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
                 or os.path.exists(os.path.join(os.environ["HOME"], "SHEPHERD-data")))
 
 
+def test_the_first_start_notice_says_its_state_and_keeps_the_rest_one_click_away(dl, monkeypatch):
+    """The spec's B (R-LOAD: adjacent text without a control between it stays within 3 lines at
+    the measure). Settings' first-use intro and notice took 4 lines (39 words): the notice's
+    line added "and Settings and every other page open as usual". The notice is the one notice
+    (`renderers.notice_block`): its line says the state and what it means here, and that rest
+    is one click away under its "Details ›", at the end of the line. Fails on eb2d64e: the
+    clause is on the line, and there is no Details."""
+    _rows, panel = _parts(dl, dl._on_locations_open(operator_request(monkeypatch)))
+    notice = panel["notice"]["value"]
+    line = re.search(r'<div class="shep-nb-line">(.*?)<details', notice, re.S)
+    assert line, notice
+    words = " ".join(re.sub(r"<[^>]+>", " ", line.group(1)).split())
+    assert words == f"○ {dl.NOTHING_SET} {dl.NOTHING_SET_THEN}", words
+    assert "every other page" not in words
+    more = re.search(r'<details class="[^"]*shep-nb-more[^"]*">(.*?)</details>', notice, re.S)
+    assert more, notice
+    said = " ".join(re.sub(r"<[^>]+>", " ", more.group(1)).split())
+    assert said.startswith("Details ›") and "every other page open as usual" in said, said
+
+
 def test_the_not_set_words_name_the_folder_settings_suggests(dl, monkeypatch):
     """T08 (first run): the pages that need a workspaces folder said "for
     example this repository's data/workspaces" while Settings offered Create
@@ -431,7 +451,6 @@ def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypat
     said = json.dumps(outputs, ensure_ascii=False)
     assert str(tmp_path) not in said and "secret" not in said
     rows, panel = _parts(dl, outputs)
-    assert "Operator controls only: request not local." in panel["notice"]["value"]
     assert dl.PATHS_OPERATOR_ONLY in panel["notice"]["value"]
     assert dl.PATH_HIDDEN in rows["workspaces_root"]["state"]["value"]
     assert "Saved in Settings" in rows["workspaces_root"]["state"]["value"]
@@ -441,8 +460,15 @@ def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypat
         assert row["box"]["interactive"] is False and row["box"]["value"] == ""
         for part, label in (("check", dl.CHECK_LABEL), ("save", dl.SAVE_LABEL)):
             assert (row[part]["value"], row[part]["interactive"]) == (f"🔒 {label}", False)
-        assert row["lock"]["value"] == dl.reason_line("Operator controls only"), key
+        # Its one phrase, naming the row's controls it dims (beside Check and Save on a row with
+        # nothing set, beside its locked Change… on a set one).
+        here = row["key"]["value"] + row["lock"]["value"]
+        assert here.count(dl.ROW_LOCKED) == 1 and f'data-for="dl_box_{key} ' in here, (key, row)
     assert rows["intake_dir"]["create"]["value"] == f"🔒 {dl.CREATE_LABEL}"
+    # Cancel puts back what the panel set in the box: for a refused request, nothing.
+    _parts(dl, dl._on_save("training_evidence_dirs", str(root), request))
+    assert dl._on_cancel("training_evidence_dirs", request)[0]["value"] == str(root)
+    assert str(tmp_path) not in json.dumps(dl._on_cancel("training_evidence_dirs", refused))
     # Each act checks its own request: refused, nothing read or written.
     before = _saved_file()
     for act in (lambda: dl._on_save("workspaces_root", str(registry), refused),
@@ -453,6 +479,109 @@ def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypat
         assert "Refused: " in json.dumps(act(), ensure_ascii=False)
     assert _saved_file() == before
     assert not os.path.exists(os.path.join(os.environ["HOME"], "SHEPHERD-data"))
+
+
+def _buttons(html: str) -> list:
+    """Each ``<button>`` of `html`: its attributes and its words."""
+    from html.parser import HTMLParser
+
+    class Buttons(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.found, self.open = [], None
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "button":
+                self.open = {"attrs": {k: v or "" for k, v in attrs}, "text": ""}
+                self.found.append(self.open)
+
+        def handle_endtag(self, tag):
+            if tag == "button":
+                self.open = None
+
+        def handle_data(self, data):
+            if self.open is not None:
+                self.open["text"] += data
+
+    parser = Buttons()
+    parser.feed(html)
+    return parser.found
+
+
+def _kept_as(html: str) -> str:
+    found = re.search(r'data-keep="([^"]+)"', html)
+    return found.group(1) if found else ""
+
+
+def test_a_set_row_shows_change_and_an_unset_row_its_box(dl, monkeypatch, tmp_path):
+    """The owner's "Set to / Change to" decision of 2026-11-24: the function is kept (the only
+    GUI way to change each location: type a path, Check, Save), but not as an always-open box
+    on every row. A row with nothing set keeps its box open, the next step; a set row shows its
+    value and, in the box's place, "Change…": a button that opens the row's box (its
+    ``aria-expanded`` and ``aria-controls`` name the "Change to" key it shows, inside its own
+    HTML, so the shared keeper holds it open across the panel's redraws), and Cancel to close
+    it. A read-only viewer sees the value and a locked "🔒 Change…" with the d8 phrase. Each
+    row's one phrase names every control of that row it dims (``data-for``: box, Check, Save,
+    then Change… or Create where offered), so each is described by it (S1-check S1C-7: the four
+    phrases named none, and 12 locked controls had no description). Fails before: every row
+    drew its box, and no row a Change…."""
+    root, registry, other = tmp_path / "ws", tmp_path / "registry", tmp_path / "other"
+    for folder in (root, registry, other):
+        folder.mkdir()
+    request = operator_request(monkeypatch)
+    _parts(dl, dl._on_save("workspaces_root", str(root), request))   # saved in Settings
+    monkeypatch.setenv(ENV["registry"], str(registry))                # set when the service started
+    rows, _panel = _parts(dl, dl._on_locations_open(request))
+    set_rows, unset_rows = ("workspaces_root", "registry"), ("intake_dir", "training_evidence_dirs")
+    css = " ".join(dl.PAGE_CSS.split())
+    # A closed Change… stands in its box's place: the row's box and buttons are not drawn.
+    assert (f'{dl._PAGE} .shep-dl-set:has(.shep-dl-change:not([aria-expanded="true"])) '
+            "> .shep-dl-field { display: none !important; }") in css
+    for key in set_rows:
+        row = rows[key]
+        (change,) = _buttons(row["key"]["value"])
+        attrs = change["attrs"]
+        assert change["text"] == dl.CHANGE_LABEL and "disabled" not in attrs, (key, change)
+        assert attrs["id"] == f"dl_change_{key}" and "shep-dl-change" in attrs["class"]
+        assert attrs["aria-expanded"] == "false", (key, attrs)
+        shown = re.search(rf'<span[^>]*id="{attrs["aria-controls"]}"[^>]*>([^<]*)</span>',
+                          row["key"]["value"])
+        assert shown and shown.group(1) == "Change to" and " hidden" in shown.group(0), (key, row)
+        assert row["box"]["interactive"] is True and row["check"]["interactive"] is True
+        assert row["cancel"]["visible"] is True
+        assert row["lock"]["value"] == "" and row["create"]["visible"] is False
+    for key in unset_rows:
+        row = rows[key]
+        assert _buttons(row["key"]["value"]) == [] and ">Set to<" in row["key"]["value"], key
+        assert row["cancel"]["visible"] is False and row["box"]["interactive"] is True
+    # A Save that changes the row's value draws its Change… as another one (`renderers.keep_as`:
+    # the keeper keeps it open only while the row says the same), so the box closes on it; any
+    # other act leaves it as the reader left it.
+    kept = _kept_as(rows["workspaces_root"]["key"]["value"])
+    saved = _parts(dl, dl._on_save("workspaces_root", str(other), request))[0]
+    assert kept and _kept_as(saved["workspaces_root"]["key"]["value"]) not in ("", kept)
+    checked = _parts(dl, dl._on_check("registry", "", request))[0]
+    assert _kept_as(checked["workspaces_root"]["key"]["value"]) == _kept_as(
+        saved["workspaces_root"]["key"]["value"])
+    # Read-only: the value, a locked Change…, and each row's one phrase naming what it dims.
+    hidden = _parts(dl, dl._on_locations_open(gradio_request(server=("192.0.2.10", 8264))))[0]
+    for key in KEYS:
+        row = hidden[key]
+        buttons = _buttons(row["key"]["value"] + row["lock"]["value"])
+        phrases = [b for b in buttons if "shep-why" in b["attrs"].get("class", "")]
+        assert [p["text"] for p in phrases] == [dl.ROW_LOCKED], (key, buttons)
+        named = phrases[0]["attrs"]["data-for"].split()
+        assert named[:3] == [f"dl_box_{key}", f"dl_check_{key}", f"dl_save_{key}"], (key, named)
+        if key in set_rows:
+            (change,) = [b for b in buttons if "shep-dl-change" in b["attrs"].get("class", "")]
+            assert change["text"] == f"🔒 {dl.CHANGE_LABEL}" and "disabled" in change["attrs"]
+            assert "aria-expanded" not in change["attrs"] and row["lock"]["value"] == ""
+            assert named[3:] == [f"dl_change_{key}"], (key, named)
+        else:
+            assert "shep-dl-change" not in row["key"]["value"] and ">Set to<" in row["key"]["value"]
+            assert named[3:] == ([f"dl_create_{key}"] if row["create"]["visible"] else []), (key, named)
+        assert row["cancel"]["visible"] is False, key
+    assert hidden["intake_dir"]["create"]["visible"] is True       # Create offered, and named
 
 
 def _cells_text(html: str) -> dict:
@@ -524,6 +653,54 @@ def test_the_value_in_effect_and_its_source_read_as_two_facts(dl, monkeypatch, t
     hidden = _parts(dl, dl._on_locations_open(gradio_request(server=("192.0.2.10", 8264))))[0]
     assert _cells_text(hidden["workspaces_root"]["state"]["value"])["In effect"] == (
         f"{dl.PATH_HIDDEN} {saved}")
+
+
+def test_a_checked_empty_folder_says_its_state_then_where_its_contents_appear(dl, tmp_path):
+    """The owner's decision of 2026-11-24 on "(no workspace yet…)": Check's answer for an empty
+    folder put its state in a parenthesis after the path ("(no workspace yet: Datasets lists
+    each one built in it)"). Now the answer's first line says the folder is usable, and a line
+    of its own says what it holds, then, while it holds nothing, where its contents will
+    appear: no parenthesis, a state and a next step, the same shape for the registry and the
+    import folder; "built" names no builder (the GUI builds no graph). A folder that holds
+    something says how much, with no next step. Fails on 9adb3c4: the parenthesis."""
+    from html.parser import HTMLParser
+
+    class Lines(HTMLParser):
+        """The answer's block elements, as their words."""
+
+        def __init__(self):
+            super().__init__()
+            self.lines, self.depth = [], 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("p", "div"):
+                self.lines.append({"class": dict(attrs).get("class", ""), "text": ""})
+
+        def handle_data(self, data):
+            if self.lines:
+                self.lines[-1]["text"] += data
+
+    places = {"workspaces_root": "Datasets", "registry": "Research › Test",
+              "intake_dir": "Test › Import"}
+    for key, place in places.items():
+        folder = tmp_path / f"empty-{key}"
+        folder.mkdir(mode=0o700)
+        said = dl.check_words(key, str(folder))
+        parser = Lines()
+        parser.feed(said)
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", said))
+        assert "(" not in text and ")" not in text, (key, text)
+        assert [" ".join(line["text"].split()) for line in parser.lines][:1] == [
+            f"● Usable {folder}"], (key, parser.lines)
+        holds = [line for line in parser.lines if "shep-dl-holds" in line["class"]]
+        assert len(holds) == 1, (key, parser.lines)
+        state, _, step = " ".join(holds[0]["text"].split()).partition(". ")
+        assert state.startswith("Holds no ") and step.endswith(f"appears in {place}."), (key, holds)
+        assert not re.search(r"\b(builds|build it|you build|we build)\b", text, re.I), (key, text)
+    (tmp_path / "full" / "demo").mkdir(parents=True)
+    said = dl.check_words("workspaces_root", str(tmp_path / "full"))
+    holds = re.findall(r'<p class="shep-dl-holds">(.*?)</p>', said)
+    assert holds == ["Holds 1 workspace."], said
 
 
 def test_every_value_the_panel_shows_is_escaped(dl, monkeypatch, tmp_path):
@@ -686,8 +863,11 @@ const QUEUE_JS = __QUEUE_JS__;
     return out; };
   const seen = {};
   await page.click('#shep-tab-settings-button');
-  await page.waitForSelector('#dl_box_training_evidence_dirs textarea:enabled', { timeout: 30000 });
+  // The evidence folders are set (their saved list): the row's Change… opens their box.
+  await page.waitForSelector('#dl_change_training_evidence_dirs', { state: 'visible', timeout: 30000 });
   await idle();
+  await page.click('#dl_change_training_evidence_dirs');
+  await page.waitForSelector('#dl_box_training_evidence_dirs textarea:enabled', { timeout: 30000 });
   seen.opened = await boxes();
   await page.fill(box('training_evidence_dirs'), draft);
   await page.fill(box('registry'), 'relative/registry-draft');
@@ -731,7 +911,9 @@ def test_a_draft_survives_every_other_rows_check_and_save(dl, tmp_path, monkeypa
     own row's Save succeeds; another row's Check and Save, a refused Save and
     Settings shown again leave every draft as typed (the registry's too);
     the evidence row's own Save shows the list as saved. Fails on 6a2d52e
-    (the evidence box reads the saved folder after the workspaces Check)."""
+    (the evidence box reads the saved folder after the workspaces Check). The evidence folders
+    are set, so their box is opened by the row's Change… (the owner's decision of 2026-11-24),
+    and it stays open, its draft as typed, through every other act."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -755,6 +937,129 @@ def test_a_draft_survives_every_other_rows_check_and_save(dl, tmp_path, monkeypa
         assert seen[step] == {"workspaces_root": "", **drafts}, (step, seen)
     assert seen["ownSave"] == {"workspaces_root": "", **drafts}, seen
     assert _saved_file()["applied"]["training_evidence_dirs"] == [str(draft)]
+
+
+#: Settings for an operator at the owner's window, the workspaces folder saved (a set row) and the
+#: registry not set (its box open): the set row as drawn closed, then after each act on it (Change…
+#: clicked, a draft typed and another row's act answered, Cancel, Change… by Enter and Escape, then
+#: Change… and its own Save of a new folder): its box, its buttons, its Change…, the registry's
+#: box, where the focus is and what the box holds.
+_CHANGE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const [url, draft, next] = process.argv.slice(2);
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const box = '#dl_box_workspaces_root input', change = '#dl_change_workspaces_root';
+  const said = (key, words) => page.waitForFunction(([key, words]) =>
+    document.querySelector(`#dl_result_${key}`).innerText.includes(words), [key, words], { timeout: 30000 });
+  const look = () => page.evaluate(() => {
+    const rect = (e) => (e && e.getClientRects().length ? e.getBoundingClientRect() : null);
+    const at = (q) => q && { left: q.left, right: q.right, top: q.top, bottom: q.bottom, height: q.height };
+    const input = document.querySelector('#dl_box_workspaces_root input');
+    const button = document.getElementById('dl_change_workspaces_root');
+    const a = document.activeElement;
+    return { row: at(rect(document.getElementById('dl_row_workspaces_root'))), box: at(rect(input)),
+             value: input.value, change: at(rect(button)), expanded: button.getAttribute('aria-expanded'),
+             check: at(rect(document.getElementById('dl_check_workspaces_root'))),
+             save: at(rect(document.getElementById('dl_save_workspaces_root'))),
+             cancel: at(rect(document.getElementById('dl_cancel_workspaces_root'))),
+             other: at(rect(document.querySelector('#dl_box_registry input'))),
+             focus: a === input ? 'box' : a === button ? 'change' : (a && (a.id || a.tagName)),
+             effect: document.getElementById('dl_state_workspaces_root').innerText };
+  });
+  const seen = {};
+  await page.click('#shep-tab-settings-button');
+  await page.waitForSelector(change, { state: 'visible', timeout: 30000 });
+  await idle();
+  seen.closed = await look();
+  await page.click(change);
+  await page.waitForSelector(box, { state: 'visible', timeout: 10000 });
+  seen.opened = await look();
+  await page.keyboard.type(draft);
+  // Another row's act redraws the whole panel: the open row stays open, its draft as typed.
+  await page.click('#dl_check_registry');
+  await said('registry', 'Nothing to check');
+  await idle();
+  seen.otherAct = await look();
+  await page.click('#dl_cancel_workspaces_root');
+  await page.waitForSelector(box, { state: 'hidden', timeout: 10000 });
+  await idle();
+  seen.cancelled = await look();
+  // By the keyboard: Enter on Change… opens it, Escape in the box closes it.
+  await page.focus(change);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector(box, { state: 'visible', timeout: 10000 });
+  seen.reopened = await look();
+  await page.keyboard.type(draft);
+  await page.keyboard.press('Escape');
+  await page.waitForSelector(box, { state: 'hidden', timeout: 10000 });
+  await idle();
+  seen.escaped = await look();
+  // Its own Save of a new folder: in effect, and the row closes on its new value.
+  await page.click(change);
+  await page.waitForSelector(box, { state: 'visible', timeout: 10000 });
+  await page.keyboard.type(next);
+  await page.click('#dl_save_workspaces_root');
+  await said('workspaces_root', 'Saved');
+  await idle();
+  seen.saved = await look();
+  console.log(JSON.stringify(seen));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_change_opens_the_box_in_place_with_the_focus_and_cancel_closes_it(dl, tmp_path, monkeypatch):
+    """The owner's "Set to / Change to" decision of 2026-11-24, as an operator uses it at the
+    owner's window: a set row draws "Change…" in its box's place (on the box column of a row
+    with nothing set), no box and no buttons, and is shorter than the same row open. Change…
+    opens the box there, the focus in it, Check, Save and Cancel on its line; another row's act
+    redraws the panel and leaves it open with the draft as typed (the shared keeper); Cancel
+    closes it, drops the draft and gives the focus back to Change…, and so does Escape after
+    Enter opened it; the row's own Save of a new folder puts it in effect and closes the row.
+    Fails before: the set row draws its box open and no Change…."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    ws, draft, nxt = tmp_path / "ws", tmp_path / "a-draft-folder", tmp_path / "next-folder"
+    for folder in (ws, nxt):
+        folder.mkdir()
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    _parts(dl, dl._on_save("workspaces_root", str(ws), operator_request(monkeypatch)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_CHANGE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], str(draft), str(nxt))
+    closed, opened = seen["closed"], seen["opened"]
+    beside = lambda a, b: a["top"] < b["bottom"] and a["bottom"] > b["top"]   # noqa: E731
+    # Closed: Change… alone, in the box's place (the box column of the registry's open row).
+    assert closed["box"] is None and closed["check"] is None and closed["cancel"] is None, closed
+    assert closed["change"] and closed["expanded"] == "false", closed
+    assert abs(closed["change"]["left"] - closed["other"]["left"]) <= 1, closed
+    # Open: the box where Change… was, the focus in it, Check, Save and Cancel on its line.
+    assert opened["expanded"] == "true" and opened["change"] is None and opened["focus"] == "box", opened
+    assert abs(opened["box"]["left"] - closed["change"]["left"]) <= 1, (closed, opened)
+    for part in ("check", "save", "cancel"):
+        assert opened[part] and beside(opened[part], opened["box"]), (part, opened)
+    assert closed["row"]["height"] < opened["row"]["height"], (closed["row"], opened["row"])
+    # Another row's act: still open, the draft as typed.
+    assert seen["otherAct"]["box"] and seen["otherAct"]["value"] == str(draft), seen["otherAct"]
+    for step in ("cancelled", "escaped"):
+        at = seen[step]
+        assert at["box"] is None and at["value"] == "" and at["expanded"] == "false", (step, at)
+        assert at["focus"] == "change", (step, at)
+    assert seen["reopened"]["focus"] == "box" and seen["reopened"]["value"] == "", seen["reopened"]
+    saved = seen["saved"]
+    assert saved["box"] is None and saved["expanded"] == "false" and saved["value"] == "", saved
+    assert str(nxt.resolve()) in saved["effect"].replace("\n", ""), saved
 
 
 #: Settings at the owner's window and a phone's, the panel's page open
@@ -850,7 +1155,7 @@ const QUEUE_JS = __QUEUE_JS__;
       }
       const said = (words) => (document.body.innerText.split(words).length - 1);
       return { rows, locks: (T(panel).match(/🔒/g) || []).length, reasons: reasons.map(T),
-               longSaid: said('Folder paths are shown to operator controls only.'),
+               longSaid: said(__NOTICE__),
                sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth };
     });
     await page.close();
@@ -904,7 +1209,8 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
         monkeypatch.delenv(DEPLOYMENT_MODE, raising=False)
     monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
     with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(_ROW_LOCKS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+        seen = run_node(_ROW_LOCKS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+                        .replace("__NOTICE__", json.dumps(dl.PATHS_OPERATOR_ONLY)), tmp_path,
                         base[:-len("gradio_api")])
     phrase = "Operator controls only"
     for size, at in seen.items():
@@ -1142,8 +1448,9 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
 
 
 #: Each Data locations row as drawn: its Set-to box, Check, Save and Create (when offered), the
-#: path in effect (its lines and left edge), the name column and the facts; and the panel's body
-#: and "Where these are kept ›".
+#: path in effect (its lines and left edge), the name column and the facts (read by what is in
+#: effect, their first part: their left edge, width and top, also where a set row's grid draws
+#: no box for the facts' column); and the panel's body and "Where these are kept ›".
 _COLUMNS_JS = """() => {
   const rect = (e) => e && e.getClientRects().length ? e.getBoundingClientRect() : null;
   const lines = (e) => { const r = document.createRange(); r.selectNodeContents(e);
@@ -1152,11 +1459,12 @@ _COLUMNS_JS = """() => {
   const rows = [...document.querySelectorAll('.shep-dl-row')].map((row) => {
     const path = row.querySelector('.shep-dl-facts .shep-dl-path');
     return { id: row.id, box: at(rect(row.querySelector('[id^="dl_box_"] :is(input, textarea)'))),
+             change: at(rect(row.querySelector('.shep-dl-change'))),
              check: at(rect(row.querySelector('[id^="dl_check_"]'))),
              save: at(rect(row.querySelector('[id^="dl_save_"]'))),
              create: at(rect(row.querySelector('[id^="dl_create_"]'))),
              name: at(rect(row.querySelector('.shep-dl-left'))),
-             facts: at(rect(row.querySelector('.shep-dl-facts'))),
+             facts: at(rect(row.querySelector('[id^="dl_state_"]'))),
              path: path && { lines: lines(path), left: rect(path).left } };
   });
   return { rows, body: at(rect(document.querySelector('#shep-dl-bd'))),
@@ -1166,7 +1474,8 @@ _COLUMNS_JS = """() => {
 
 def _columns_problems(stop) -> list:
     """**The rows share their columns** (the sweep's L7, C3): every row's box starts and ends
-    where the other rows' do, and its Check and Save start where theirs do; each Create starts
+    where the other rows' do (a set row's Change… starts there, in its box's place: the owner's
+    decision of 2026-11-24), and its Check and Save start where theirs do; each Create starts
     at its box's left edge (a line of its own under it) or where every other Create beside Save
     starts. Facts that hold a path in effect are never narrower than the name beside them
     (LOOK2-2: 288 px beside a name of 504 at 1550 x 830, the path 8 lines a row): beside it
@@ -1175,11 +1484,15 @@ def _columns_problems(stop) -> list:
     rows = stop["extra"]["rows"]
     for part in ("box", "check", "save"):
         for edge in (("left", "right") if part == "box" else ("left",)):
-            xs = {row["id"]: round(row[part][edge]) for row in rows}
-            if max(xs.values()) - min(xs.values()) > 1:
+            xs = {row["id"]: round(row[part][edge]) for row in rows if row[part]}
+            if (part, edge) == ("box", "left"):
+                # A set row's Change… stands in its box's place (the owner's decision of 2026-11-24).
+                xs.update({row["id"]: round(row["change"]["left"]) for row in rows
+                           if not row["box"] and row["change"]})
+            if len(xs) > 1 and max(xs.values()) - min(xs.values()) > 1:
                 problems.append(f"{where}: the rows' {part} {edge} edges differ: {xs}")
     beside = {row["id"]: round(row["create"]["left"]) for row in rows
-              if row["create"] and row["create"]["top"] < row["box"]["bottom"]}
+              if row["create"] and row["box"] and row["create"]["top"] < row["box"]["bottom"]}
     if beside and max(beside.values()) - min(beside.values()) > 1:
         problems.append(f"{where}: Create beside Save starts at {beside}")
     for row in rows:
@@ -1190,7 +1503,8 @@ def _columns_problems(stop) -> list:
         if side and facts["right"] - facts["left"] < name["right"] - name["left"] - 0.5:
             problems.append(f"{where} {row['id']}: the path's facts are narrower than the name beside "
                             f"them ({path['lines']} lines)")
-        if path and not side and abs(path["left"] - row["box"]["left"]) > 1:
+        start = row["box"] or row["change"]
+        if path and not side and abs(path["left"] - start["left"]) > 1:
             problems.append(f"{where} {row['id']}: the path under the name starts off the box's edge")
     return problems
 
@@ -1232,7 +1546,8 @@ def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path
     problems = []
     for stop in seen:
         rows = stop["extra"]["rows"]
-        assert len(rows) == len(KEYS) and all(row["box"] and row["check"] for row in rows), stop
+        assert len(rows) == len(KEYS) and all((row["box"] and row["check"]) or row["change"]
+                                              for row in rows), stop
         assert [row["id"] for row in rows if row["path"]] == (["dl_row_registry"] if operator
                                                               else []), stop
         assert [row["id"] for row in rows if row["create"]] == ["dl_row_workspaces_root", "dl_row_intake_dir"], stop
@@ -1242,6 +1557,213 @@ def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path
             if last["bottom"] > body["bottom"] + 0.5:
                 problems.append(f"1850x960: Where these are kept › ends at {last['bottom']}, the body at "
                                 f"{body['bottom']}")
+    assert not problems, "\n".join(problems)
+
+
+#: Each Data locations row as drawn: its Change… and its "Advanced: source ›" (each line's first
+#: glyph box and its baseline: the box's top plus its font's ascent), a read-only row's phrase
+#: beside "🔒 Change…", the name, what is in effect, the line Change… stands in, the bottom of
+#: the row's content, and the row's height as drawn and, for a marked row, as drawn without
+#: its mark (`__BESIDE__`, `data_locations.BESIDE`, put back before anything is painted): the
+#: head, then Change… on a line of its own.
+_SHARED_LINE_JS = """() => {
+  const pen = document.createElement('canvas').getContext('2d');
+  const rect = (e) => e && e.getClientRects().length ? e.getBoundingClientRect() : null;
+  const at = (q) => q && { left: q.left, right: q.right, top: q.top, bottom: q.bottom };
+  const line = (e) => { const q = rect(e); if (!q) { return null; }
+    const range = document.createRange(); range.selectNodeContents(e);
+    const glyph = [...range.getClientRects()].find((r) => r.width > 0), s = getComputedStyle(e);
+    pen.font = `${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+    return { ...at(q), text: glyph.top, base: glyph.top + pen.measureText('Hg').fontBoundingBoxAscent }; };
+  return [...document.querySelectorAll('.shep-dl-row')].map((row) => {
+    const s = getComputedStyle(row);
+    const seen = { id: row.id, change: line(row.querySelector('button.shep-dl-change')),
+                   phrase: at(rect(row.querySelector('.shep-dl-chg .shep-reason'))),
+                   adv: line(row.querySelector('[id^="dl_adv_"] summary')),
+                   advBlock: at(rect(row.querySelector('[id^="dl_adv_"]'))),
+                   name: at(rect(row.querySelector('.shep-dl-head > .shep-dl-left'))),
+                   state: at(rect(row.querySelector('[id^="dl_state_"]'))),
+                   set: at(rect(row.querySelector('.shep-dl-set'))),
+                   end: rect(row).bottom - parseFloat(s.paddingBottom) - parseFloat(s.borderBottomWidth),
+                   height: rect(row).height };
+    if (row.hasAttribute('__BESIDE__')) {
+      row.removeAttribute('__BESIDE__');
+      seen.unmarked = rect(row).height;
+      row.setAttribute('__BESIDE__', '');
+    }
+    return seen;
+  });
+}"""
+
+
+def _shared_line_problems(stop) -> list:
+    """**A set row's actions share the line its facts end on** (the owner's request of
+    2026-11-25): where the facts stand beside the name and the name column holds Change… (a
+    read-only row's "🔒 Change…" with its phrase) on one line, Change… (on the boxes' column, one
+    x in every row) and "Advanced: source ›" stand on one line (tops within 2 px, one baseline)
+    under both parts above them, and that line is the row's last; elsewhere (the facts under
+    the name, or a name column too narrow for Change… and its phrase) Change… stays under
+    "Advanced: source ›", as before. In every row "🔒 Change…" and its phrase share a line, and
+    no row is taller than it is drawn without the shared line (DL-1: from 1280 to 1350 wide a
+    read-only row's phrase went under "🔒 Change…" in the name column, each row 15 to 24 px
+    taller, and at 1340 x 800 the panel's last line fell out of view)."""
+    problems, where = [], stop["size"]
+    rows = [row for row in stop["extra"] if row["change"]]
+    lefts = {row["id"]: round(row["change"]["left"]) for row in rows}
+    if len(set(lefts.values())) > 1:
+        problems.append(f"{where}: Change… starts at {lefts}")
+    for row in rows:
+        change, adv, name, state, phrase = (row["change"], row["adv"], row["name"], row["state"],
+                                            row["phrase"])
+        if row.get("unmarked") is not None and row["height"] > row["unmarked"] + 0.5:
+            problems.append(f"{where} {row['id']}: {row['height']:.0f} px tall, "
+                            f"{row['unmarked']:.0f} px without the shared line")
+        if phrase and not (phrase["top"] < change["bottom"] - 0.5
+                           and change["top"] < phrase["bottom"] - 0.5):
+            problems.append(f"{where} {row['id']}: its phrase (top {phrase['top']:.1f}) is not on "
+                            f"the line of 🔒 Change… (top {change['top']:.1f})")
+            continue
+        # The name column holds Change… and its phrase: they end within its right edge.
+        holds = max(change["right"], phrase["right"] if phrase else 0) <= name["right"] + 0.5
+        beside = state["left"] >= name["right"] - 1 and state["top"] < name["bottom"] - 1
+        if not (beside and holds):
+            if change["top"] < adv["bottom"] - 0.5:
+                problems.append(f"{where} {row['id']}: drawn as before, Change… is not under "
+                                "Advanced")
+            continue
+        if abs(change["text"] - adv["text"]) > 2 or abs(change["base"] - adv["base"]) > 1:
+            problems.append(f"{where} {row['id']}: Change… (top {change['text']:.1f}, baseline "
+                            f"{change['base']:.1f}) and Advanced (top {adv['text']:.1f}, baseline "
+                            f"{adv['base']:.1f}) are not on one line")
+        if change["top"] < name["bottom"] - 0.5 or row["advBlock"]["top"] < state["bottom"] - 0.5:
+            problems.append(f"{where} {row['id']}: the shared line is not under both parts")
+        if row["end"] > max(row["set"]["bottom"], row["advBlock"]["bottom"]) + 0.5:
+            problems.append(f"{where} {row['id']}: the row goes on under its shared line")
+    return problems
+
+
+@pytest.mark.parametrize("operator", [True, False], ids=["operator", "read-only"])
+def test_a_set_rows_change_shares_the_line_its_facts_end_on(dl, tmp_path, monkeypatch, operator):
+    """The owner's request of 2026-11-25 (LOOK5's "Change…"): in a set row whose facts stand
+    beside its name, "Change…" on the left (the boxes' column) stood a line under "Advanced:
+    source ›" on the right, the last line of each part, so each set row took a line more than it
+    needed. Every row set (the workspaces folder and the registry when the service started, the
+    import and evidence folders saved here), for an operator and a read-only viewer ("🔒
+    Change…" with its phrase), at the owner's window, his Firefox width, 1340 x 800 (a read-only
+    name column too narrow for "🔒 Change…" and its phrase) and the display floor: beside, the
+    two stand on one line under both parts and end the row; stacked (configured at 1340 and at
+    the floor, two read-only rows there) or where the name column cannot hold Change… and its
+    phrase, Change… stays under "Advanced: source ›" (`_shared_line_problems`). Fails on
+    19785e1, which has no shared line (Change… a line, 29 px, under Advanced), and on 12d60bc
+    (DL-1): at 1340 x 800 and 1280 x 720 the read-only phrase went under "🔒 Change…", each such
+    row 15 to 24 px taller than without the shared line."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, walk_ui
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    folders = {key: tmp_path / "data-locations" / key for key in KEYS}
+    for folder in folders.values():
+        folder.mkdir(parents=True, mode=0o700)
+    for key in ("workspaces_root", "registry"):
+        monkeypatch.setenv(ENV[key], str(folders[key]))
+    request = operator_request(monkeypatch)
+    for key in ("intake_dir", "training_evidence_dirs"):
+        _parts(dl, dl._on_save(key, str(folders[key]), request))
+    if not operator:
+        monkeypatch.delenv(DEPLOYMENT_MODE)
+    sizes = ([1850, 960], [1550, 830], [1340, 800], [1280, 720])
+    stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops,
+                       extra_js=_SHARED_LINE_JS.replace("__BESIDE__", dl.BESIDE))
+    problems = []
+    for stop in seen:
+        assert [row["id"] for row in stop["extra"] if row["change"]] == [f"dl_row_{k}" for k in KEYS], stop
+        if stop["size"] in ("1850x960", "1550x830"):
+            # The owner's window and his Firefox width: every row's facts beside its name.
+            assert all(row["state"]["top"] < row["name"]["bottom"] for row in stop["extra"]), stop
+        problems += _shared_line_problems(stop)
+    assert not problems, "\n".join(problems)
+
+
+#: Settings left for Diagnosis and opened again, each set row read as it stood before (settled)
+#: and at each of the first eight frames of the new open: drawn or not, its mark
+#: (`__BESIDE__`), its height and where its Change… stands in it.
+_REOPEN_JS = """async () => {
+  const read = () => [...document.querySelectorAll('.shep-dl-row')]
+    .filter((row) => row.querySelector('button.shep-dl-change'))
+    .map((row) => { const drawn = row.getClientRects().length > 0, r = row.getBoundingClientRect();
+      return { id: row.id, drawn, beside: row.hasAttribute('__BESIDE__'), height: drawn ? r.height : null,
+               change: drawn ? row.querySelector('button.shep-dl-change').getBoundingClientRect().top - r.top : null }; });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const before = read();
+  document.querySelector('#shep-tab-clinical-button').click();
+  for (let i = 0; i < 250 && document.querySelector('.shep-dl-row').getClientRects().length; i++) { await wait(20); }
+  await wait(600);
+  const hidden = read();
+  const frames = await new Promise((done) => {
+    const out = []; let n = 0;
+    const tick = () => { out.push(read()); if (++n < 8) { requestAnimationFrame(tick); } else { done(out); } };
+    document.querySelector('#shep-tab-settings-button').click();
+    requestAnimationFrame(tick);
+  });
+  return { before, hidden, frames };
+}"""
+
+
+@pytest.mark.parametrize("operator", [True, False], ids=["operator", "read-only"])
+def test_settings_opened_again_paints_the_set_rows_as_they_were_from_the_first_frame(
+        dl, tmp_path, monkeypatch, operator):
+    """DL-2 (the L8 close's final check, F1): while Settings was hidden each set row's mark (its
+    facts beside its name, its Change… on the line of "Advanced: source ›") was dropped, as a row
+    not drawn measured as not beside, and put back a frame after the row was drawn again, so on
+    every open of Settings the rows were painted twice in the stacked arrangement and then
+    jumped (30 px for an operator, 43 px read-only, at the owner's window). A row not drawn keeps
+    its mark: every frame of the new open shows each set row as it stood before Settings was
+    left (its mark, height and Change…'s place). Fails on bdc18b8: frames 0 and 1 unmarked."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, walk_ui
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    folders = {key: tmp_path / "data-locations" / key for key in KEYS}
+    for folder in folders.values():
+        folder.mkdir(parents=True, mode=0o700)
+    for key in ("workspaces_root", "registry"):
+        monkeypatch.setenv(ENV[key], str(folders[key]))
+    request = operator_request(monkeypatch)
+    for key in ("intake_dir", "training_evidence_dirs"):
+        _parts(dl, dl._on_save(key, str(folders[key]), request))
+    if not operator:
+        monkeypatch.delenv(DEPLOYMENT_MODE)
+    stops = [{"size": [1850, 960], "page": "settings", "focus": False}]
+    with served(create_gradio_app(), **mount_options()) as base:
+        (stop,) = walk_ui(base[:-len("gradio_api")], tmp_path, stops,
+                          extra_js=_REOPEN_JS.replace("__BESIDE__", dl.BESIDE))
+    seen = stop["extra"]
+    before = {row["id"]: row for row in seen["before"]}
+    # The owner's window: the set rows' facts beside their names, Change… on Advanced's line.
+    assert len(before) == len(KEYS) and any(row["beside"] for row in before.values()), seen["before"]
+    assert not any(row["drawn"] for row in seen["hidden"]), seen["hidden"]
+    problems = []
+    for n, frame in enumerate(seen["frames"]):
+        for row in frame:
+            if not row["drawn"]:
+                continue
+            was = before[row["id"]]
+            if (row["beside"] != was["beside"] or abs(row["height"] - was["height"]) > 0.5
+                    or abs(row["change"] - was["change"]) > 0.5):
+                problems.append(f"frame {n} {row['id']}: beside {row['beside']}, {row['height']:.0f} px tall, "
+                                f"Change… at {row['change']:.0f} (before: {was['beside']}, "
+                                f"{was['height']:.0f} px, {was['change']:.0f})")
+    assert any(row["drawn"] for frame in seen["frames"] for row in frame), seen["frames"]
     assert not problems, "\n".join(problems)
 
 

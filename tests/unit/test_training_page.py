@@ -52,6 +52,7 @@ gr = pytest.importorskip("gradio")
 from src.webui import shell  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
+from src.webui.components.help import HIT_TARGET  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
@@ -120,7 +121,7 @@ class _Access:
 def test_the_page_is_the_run_bar_the_parameters_the_drawer_and_the_run_view():
     _demo, _ctx, by_id = _page()
     for elem_id in ("shep-train-runbar", "shep-train-dataset", "shep-train-chip",
-                    "shep-train-pill", "run_name", "shep-train-reason", "shep-train-start",
+                    "shep-train-pill", "run_name", "shep-train-why", "shep-train-start",
                     "shep-train-continue", "shep-train-stop", "shep-train-resume",
                     "shep-train-drawer-close", "shep-train-stop-confirm", "shep-train-stop-keep",
                     "shep-train-banner", "shep-train-params", "shep-train-drawer",
@@ -132,12 +133,69 @@ def test_the_page_is_the_run_bar_the_parameters_the_drawer_and_the_run_view():
     # "Run a new one…" line while it is open.
     for gone in ("data_dir", "epoch_window", "loss_plot", "mrr_plot", "hits_plot", "lr_plot",
                  "export_csv_file", "status_display", "error_banner", "shep-train-cancel",
-                 "shep-train-continues"):
+                 "shep-train-continues",
+                 # L8 §2: the bar's note and the setup notice before it; the facts slot and
+                 # the phrase beside the actions say what they said, once.
+                 "shep-train-reason", "shep-train-setup"):
         assert gone not in by_id, gone
     assert not [b for b in by_id.values() if isinstance(b, gr.LinePlot)]
     for name in ("_from_datasets", "_keep_or_clear_workspace", "_load_training_config",
                  "_reset_training_config", "_export_metrics_csv", "_poll_status"):
         assert not hasattr(tc, name), name
+
+
+def test_the_run_name_and_the_typed_path_take_their_roles_width():
+    """R-WIDTH (the owner's D12 of 2026-11-24; L8 §4 D12): a field's width comes
+    from its role, never from a page: the run's name is a name (at most
+    ``--shep-w-name``), the Continue drawer's typed checkpoint path a path,
+    which grows with its row from its floor; so it stands in the row the
+    parent's source shows (the run list's Run and Refresh), where the role's
+    width is the row's axis (in the drawer's column a path's basis would be
+    its height). The Run name group keeps no width cap of its own."""
+    _demo, _ctx, by_id = _page()
+    assert tc.NAME_ROLE in by_id["run_name"].elem_classes
+    path = by_id["manual_checkpoint"]
+    assert tc.PATH_ROLE in path.elem_classes
+
+    def row_of(block):
+        while block is not None and not isinstance(block, gr.Row):
+            block = getattr(block, "parent", None)
+        return block
+
+    row = row_of(path)
+    assert row is not None and "shep-train-parent-row" in row.elem_classes
+    assert row_of(by_id["continue_run"]) is row
+    names = [b for sel, b in _rules(tc.PAGE_CSS, ".shep-rb-name")
+             if sel == f"{tc._PAGE} .shep-rb-name"]
+    assert names and not any("max-width" in b for b in names), names
+
+
+def test_the_common_settings_are_a_grid_of_number_fields_as_narrow_as_one():
+    """The owner's D4 and D12 of 2026-11-24 (L8 §4 D4): the parameters' grid
+    took columns of at least 240 px, so at the display floor (a 338 px body)
+    the five common settings, each a number of a number's width (R-WIDTH),
+    stood one per line with the space beside them empty, and the body's
+    scroll edge fell under Device's label with its radios under it (E1's
+    edge-heading at 1280 x 720 in every state). The common settings' grid now
+    takes columns of a number field's width (its role's token, never a page's
+    px figure), so they share lines wherever the panel has the room; the
+    other grids (More training settings, Model, Branch) keep their floor.
+    A column is never narrower than a label line either: the box's width alone
+    put Learning rate's ⓘ under its label at 1080 x 1920, its box 22 px under
+    its row's (E1's row-control-top); the floor is the wider of the two, the
+    label line the grid's longest label (in ``ch``, as the role is) and its ⓘ."""
+    _demo, _ctx, by_id = _page()
+    grid = by_id["num_epochs"].parent
+    while grid is not None and not isinstance(grid, gr.Group):
+        grid = getattr(grid, "parent", None)
+    assert grid is not None and tc.NUMBER_GRID in grid.elem_classes
+    for name in tc.BASE_FIELDS[:tc.BASE_SHOWN]:
+        assert tc.NUMBER_ROLE in by_id[name].elem_classes, name
+    (rule,) = [b for sel, b in _rules(tc.PAGE_CSS, f".{tc.NUMBER_GRID}")]
+    floor = re.search(r"minmax\((.*), 1fr\)", rule).group(1)
+    assert "var(--shep-w-num)" in floor and "240px" not in floor, rule
+    longest = max(len(r.SETTING_LABELS[name]) for name in tc.BASE_FIELDS[:tc.BASE_SHOWN])
+    assert floor.startswith("max(") and f"{longest}ch + {HIT_TARGET}px" in floor, rule
 
 
 def test_the_form_is_what_a_new_base_takes_common_settings_first():
@@ -383,7 +441,7 @@ def test_the_chip_shows_the_dataset_and_its_details_escaped_without_a_path(root)
     assert str(root) not in html
     # Running: the select is the job's, and says so.
     assert "in use by the running job" in tc.chip_html(state, in_use=True)
-    assert "No dataset selected" in tc.chip_html({"choices": [["a", "a"]]})
+    assert tc.NONE_CHOSEN in tc.chip_html({"choices": [["a", "a"]]})
 
 
 def test_page_open_keeps_datasets_choice_then_the_sessions_then_the_first_trainable(root):
@@ -495,7 +553,7 @@ def test_the_idle_fact_is_said_once_as_plain_muted_text_and_stop_is_not_drawn(ro
     monkeypatch.setattr(tc.training_manager, "get_status", lambda: {"status": "idle"})
     pieces = tc.render(tc.workspace_state("demo"), {}, {}, [], operator)["pieces"]
     assert "shep-rb-nojob" in pieces["runbar"]
-    assert "Stop" not in pieces["reason"] and "no training" not in pieces["reason"]
+    assert pieces["why"] == "" and "no training" not in pieces["chip"]
     assert pieces["pill"].count("no training job since the server started") == 1
     assert 'class="shep-pill shep-pill-idle"' in pieces["pill"]
     css = tc.PAGE_CSS
@@ -520,14 +578,22 @@ def _view(status=None, ws=None, mode=None, access=None, active=None, gpu=None):
 
 
 def test_the_run_bars_actions_and_their_one_reason():
+    """L8 §2.3 (R-WHY, SW-LK5): beside the actions only a cause of their own,
+    a phrase keyed to the one place its whole reason is said (D8's chip, the
+    GPU chip); a dataset-level cause is the facts slot's, under Dataset; a
+    running job dims Start and Continue… with no words of their own, its
+    state the cause. The one-line form only while the facts are the
+    identity and no phrase is drawn."""
     idle = _view()
     assert (idle["start"], idle["cont"], idle["stop"]) == (True, True, False)
-    # R-39: with no job, Stop is not drawn, so no reason line says it is disabled.
-    assert idle["reason"] == "" and idle["stop_shown"] is False
+    # R-39: with no job, Stop is not drawn, so nothing says it is dimmed.
+    assert idle["phrase"] == "" and idle["stop_shown"] is False and idle["one_line"] is True
+    assert "dataset fingerprint" in idle["facts"]
 
     running = _view({"status": "running", "current_epoch": 3, "total_epochs": 12})
     assert (running["start"], running["cont"], running["stop"]) == (False, False, True)
-    assert "a training job is running" in running["reason"] and running["progress"] == 0.25
+    assert running["phrase"] == "" and "in use by the running job" in running["facts"]
+    assert running["progress"] == 0.25 and running["one_line"] is True
     confirming = _view({"status": "running", "job_id": "j1"}, mode={"confirm": "j1"})
     assert confirming["stop"] is False
     # A confirmation asked for an earlier job is not this job's.
@@ -536,26 +602,40 @@ def test_the_run_bars_actions_and_their_one_reason():
 
     read_only = _view(access=_Access(False, "not_loopback"))
     assert not any(read_only[k] for k in ("start", "cont", "stop", "resume"))
-    assert "Operator controls only: request not local" in read_only["reason"]
+    # R-WHY: who can act, a phrase that opens the D8 chip's whole reason (said there, once).
+    assert "Operator controls only</button>" in read_only["phrase"]
+    assert 'data-why="d8"' in read_only["phrase"] and "request not local" not in read_only["phrase"]
+    assert f'data-for="{tc.RUN_BAR_ACTIONS}"' in read_only["phrase"]
+    assert read_only["one_line"] is False                 # a phrase forbids the one-line form
 
+    # A GPU holder: the GPU chip's phrase (the chip says the holder, once), then the run
+    # bar's link to a test run.
     test_run = _view(gpu={"text": "GPU job: test run (mygene2-2026-09 · 00:01:42)", "test": True})
     assert test_run["start"] is False and test_run["cont"] is False
-    assert "GPU job: test run (mygene2-2026-09 · 00:01:42)" in test_run["reason"]
-    assert 'data-act="open-test"' in test_run["reason"]
+    assert 'data-why="gpu_busy"' in test_run["phrase"] and "GPU in use" in test_run["phrase"]
+    assert "mygene2-2026-09" not in test_run["phrase"]
+    assert 'data-act="open-test"' in test_run["phrase"]
     cli = _view(gpu={"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                      "test": False})
-    assert "train_model.py (pid 41822" in cli["reason"] and "open-test" not in cli["reason"]
+    assert 'data-why="gpu_busy"' in cli["phrase"] and "open-test" not in cli["phrase"]
 
+    # A dataset-level cause: the facts slot's, said once there in the shared notice's form,
+    # naming the actions it dims; nothing beside them.
     none = _view(ws={"row": None, "choices": [["demo", "demo"]]})
-    assert none["start"] is False and "select a dataset" in none["reason"]
-    # None listed yet (an empty workspaces folder): nothing to select, so it says so.
+    assert none["start"] is False and none["phrase"] == "" and none["one_line"] is False
+    assert tc.NONE_CHOSEN in none["facts"] and f'data-for="{tc.RUN_BAR_ACTIONS}"' in none["facts"]
+    # None listed yet (a usable, empty workspaces folder): the state and where a dataset comes
+    # from, as Research › Datasets says it (built on the server, its commands there).
     unlisted = _view(ws={"row": None, "choices": []})
-    assert unlisted["start"] is False and "select" not in unlisted["reason"]
-    assert "Start and Continue… disabled: no dataset is listed yet." in unlisted["reason"]
-    assert "The server lists no dataset yet." in tc.chip_html({"choices": []})
+    assert unlisted["start"] is False and unlisted["phrase"] == ""
+    facts = re.sub(r"<[^>]+>", "", unlisted["facts"])
+    assert tc.NOTHING_LISTED["summary"] in facts and "on the server" in facts
+    assert 'data-shep-go="datasets"' in unlisted["facts"] and "choose" not in facts.lower()
     untrainable = _view(ws={"row": {"name": "scratch_ws", "trainable": False,
                                     "not_trainable": "x", "manifest": "absent"}})
-    assert "scratch_ws is not trainable: no split manifest" in untrainable["reason"]
+    assert untrainable["start"] is False and untrainable["phrase"] == ""
+    assert "not trainable: no split manifest" in untrainable["facts"]
+    assert r.need_words("not trainable: no split manifest") in untrainable["drawer_reason"]
 
 
 def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
@@ -567,16 +647,16 @@ def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
     nothing = _view(ws=ws, mode={"drawer": True, "parent": {}})
     assert nothing["start"] is False and nothing["resume"] is False
-    assert nothing["reason"] == ""
-    assert "Continue Training disabled: choose a checkpoint first." in nothing["drawer_reason"]
+    assert nothing["phrase"] == "" and nothing["one_line"] is True
+    assert r.need_words("choose a checkpoint first") in nothing["drawer_reason"]
     same = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "fingerprint": "a" * 64}})
     assert same["resume"] is True and same["drawer_reason"] == ""
     differs = _view(ws=ws, mode={"drawer": True,
                                  "parent": {"chosen": True, "fingerprint": "e" * 64}})
     assert differs["resume"] is False
-    assert "the parent’s dataset" not in differs["reason"]            # not in the run bar
-    assert ("Continue Training disabled: the parent’s dataset is not this workspace’s current "
-            "one.") in differs["drawer_reason"]
+    assert "the parent’s dataset" not in differs["phrase"] + differs["facts"]  # not in the bar
+    assert r.need_words("the parent’s dataset is not this workspace’s current "
+                        "one") in differs["drawer_reason"]
     assert "run bar above" not in differs["drawer_reason"]
     # A refused check, by what it refused and what to do (the B1c review: one
     # sentence blamed the checkpoint for every refusal).
@@ -586,28 +666,29 @@ def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     assert "cannot be continued" in refused["drawer_reason"]
     branch = _view(ws=ws, mode={"drawer": True, "operation": "branch",
                                 "parent": {"chosen": True, "refused": tc.REFUSED_PARENT}})
-    assert ("Start branch disabled: the check says this checkpoint cannot be branched."
+    assert (r.need_words("the check says this checkpoint cannot be branched")
             in branch["drawer_reason"])
     edited = _view(ws=ws, mode={"drawer": True, "operation": "branch",
                                 "parent": {"chosen": True, "refused": tc.REFUSED_SETTINGS}})
     assert edited["resume"] is False
-    assert ("Start branch disabled: the check refuses a setting you edited. Change it, then "
-            "check again.") in edited["drawer_reason"]
+    assert r.need_words("the check refuses a setting you edited. Change it, then "
+                        "check again.") in edited["drawer_reason"]
     for source, action in ((tc.CONTINUE_FROM_LIST, "Refresh the list, then check it again."),
                            (tc.CONTINUE_FROM_PATH,
                             "Click Check checkpoint to read the file there now.")):
         changed = _view(ws=ws, mode={"drawer": True, "parent": {
             "chosen": True, "source": source, "refused": tc.REFUSED_CHANGED}})
         assert changed["resume"] is False
-        assert (f"Continue Training disabled: the checkpoint changed since it was chosen. "
-                f"{action}") in changed["drawer_reason"]
+        assert r.need_words(f"the checkpoint changed since it was chosen. "
+                            f"{action}") in changed["drawer_reason"]
     # A cause before the drawer's own names the drawer's start too.
     busy = _view({"status": "running"}, ws=ws, mode={"drawer": True, "operation": "branch"})
-    assert "Start branch disabled: a training job is running." in busy["drawer_reason"]
-    assert busy["reason"] == ""
-    # Closed, the run bar says it again.
+    assert r.need_words("a training job is running") in busy["drawer_reason"]
+    assert busy["phrase"] == ""
+    # Closed, the run bar's state says it (the state slot), no words beside the actions.
     closed = _view({"status": "running"}, ws=ws, mode={})
-    assert "Start and Continue… disabled: a training job is running." in closed["reason"]
+    assert closed["phrase"] == ""
+    assert r.need_words("a training job is running") not in closed["facts"]
 
 
 def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
@@ -638,20 +719,21 @@ def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
     assert test["unset"] is False and test["notice"] is None
 
 
-def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(monkeypatch):
-    """The UI sweep of 2026-11-22 (B-01, GB10-UI-01, R2; the WebUI skill's §9):
-    with no workspaces folder the run bar drew the folder's whole problem (296
-    characters) in the dataset chip and the GPU lock's (403 characters) as the
-    reason beside Start, the same cause three times on one screen. Now the
-    cause is said once, where it empties the bar: the folder's notice (its
-    state and its place in the GUI, the rest under Details ›) in the note
-    under the controls, the GPU lock's merged into it (it follows from the
-    folder); beside Start one line, a relation to it; the drawer's start a
-    relation too; the chip and the charts say no more of it. The notice is
-    chosen by the readers' ``unset`` flags (`workspaces.setting_notice`,
-    `lock_notice`), never by their words. A read-only request sees the same
-    notice (it names no server path) beside D8's refusal, and never the
-    lock's other problems."""
+def test_first_use_says_the_cause_once_in_the_bar_and_start_points_to_it(monkeypatch):
+    """The owner's C of 2026-11-24 (L8 §2.3, R-WHY's same-bar rule): at first
+    use the run bar said one cause in three places, the notice on its first
+    line, "Needs a workspaces folder" beside Start and Continue…, and the run
+    view's "No run to show: no workspaces folder is set (see above).", a
+    pointer to a reason that may have scrolled away. Now the facts slot under
+    Dataset holds the one notice (the workspaces folder's, the GPU lock's
+    merged into its Details: it follows from the folder), with the page's
+    consequence and its next step as a link; it names Start and Continue…
+    (``data-for``: their ``aria-describedby`` points at it), so nothing beside
+    them repeats it; and the run view says what will appear, never the cause
+    or a pointer. The notice is chosen by the readers' ``unset`` flags
+    (`workspaces.setting_notice`, `lock_notice`), never by their words. A
+    read-only request sees the same notice (it names no server path), and
+    D8's phrase beside the actions: two causes, two statements."""
     from src.config.server_settings import (
         GPU_LOCK_NOT_CONFIGURED,
         WORKSPACES_ROOT_NOT_SET,
@@ -665,65 +747,69 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
     gpu = tc._gpu_line(None, unset, None, operator=True)
     view = _view(ws=ws, gpu=gpu)
     assert (view["start"], view["cont"]) == (False, False)
-    assert view["reason"] == ""                                   # no reason line of its own
-    assert view["why"] == r.see_above("Start", gpu["notice"])
-    assert ">Start disabled: GPU jobs need a workspaces folder.<" in view["why"]
-    assert "(see above)." in view["drawer_reason"] and "Continue Training disabled" in view[
-        "drawer_reason"]
-    # The notice is said before the bar (`setup_html`, L7 SW-LK5), the bar's note nothing.
-    assert tc.note_html(view) == ""
-    note = tc.setup_html(view)
-    assert note.count('data-notice="workspaces_root"') == 1 and 'data-notice-also="gpu_lock"' in note
-    assert note.count("No workspaces folder is set.") == 1
-    assert 'data-shep-go="settings"' in note and "Details ›" in note
+    facts = view["facts"]
+    assert facts.count('data-notice="workspaces_root"') == 1
+    assert 'data-notice-also="gpu_lock"' in facts
+    assert f'data-for="{tc.RUN_BAR_ACTIONS}"' in facts
+    words = re.sub(r"<[^>]+>", "", facts)
+    assert words.count("No workspaces folder is set.") == 1 and tc.NEEDS_FOLDER in words
+    assert 'data-shep-go="settings"' in facts and "Details ›" in facts
+    # Nothing beside Start says the cause: no phrase, no reason line, and the one-line form
+    # is not taken (a message never shares a line with fields).
+    assert view["phrase"] == "" and view["one_line"] is False
+    short = r.REASON_PHRASES["workspaces_root"]
+    assert short not in view["phrase"]
     for whole in (WORKSPACES_ROOT_NOT_SET, GPU_LOCK_NOT_CONFIGURED):
-        assert whole not in note and r.e(whole) not in note and whole not in view["why"]
-    assert "SHEPHERD_WORKSPACES_ROOT" not in view["why"]          # a token only in Details
-    chip = tc.chip_html(ws)
-    assert "workspaces" not in chip.lower() and "shep-muted" not in chip
-    assert tc.no_run_words(ws, operator=True) == ("No run to show: no workspaces folder is set "
-                                                  "(see above).")
-    # The drawer open: the run bar draws no action, so neither reason nor relation; the
-    # notice stays, the screen's one word on its setup.
+        assert whole not in facts and r.e(whole) not in facts
+    # The run view says what will appear: neither the cause's words nor a pointer to them.
+    line = tc.no_run_words(ws, operator=True)
+    assert line == tc.NO_RUN_TO_SHOW
+    for said in ("workspaces folder", ws["notice"]["short"], short.lower(), "see above",
+                 "see below", "(see"):
+        assert said.lower() not in line.lower(), said
+    # The drawer's start, away from the bar, says its phrase, which focuses the bar's notice.
+    assert view["drawer_reason"] == r.phrase_line(gpu["notice"], control=tc.DRAWER_START)
+    assert ">Needs a workspaces folder<" in view["drawer_reason"]
+    assert 'data-why-notice="gpu_lock workspaces_root"' in view["drawer_reason"]
+    # The drawer open: the run bar draws no action, so no phrase; the facts stay, the
+    # screen's one word on its dataset.
     opened = _view(ws=ws, gpu=gpu, mode={"drawer": True})
-    assert opened["reason"] == opened["why"] == "" and opened["notice"] == ws["notice"]
-    # A read-only request: D8's refusal, and the same notice under it.
+    assert opened["phrase"] == "" and opened["facts"] == facts
+    # A read-only request: D8's phrase beside the actions, and the same notice in the facts.
     refused = _view(ws=ws, gpu=tc._gpu_line(None, unset, None, operator=False),
                     access=_Access(False, "not_loopback"))
-    assert "Operator controls only" in refused["reason"] and refused["why"] == ""
-    assert 'data-notice="workspaces_root"' in tc.setup_html(refused)
-    assert "data-notice" not in tc.note_html(refused)
-    # A lock that cannot be used for another reason, the folder set: its own notice, its
-    # problem a Details row for an operator only, never in the words of the line.
+    assert "Operator controls only" in refused["phrase"]
+    assert 'data-notice="workspaces_root"' in refused["facts"] and "data-notice" not in refused["phrase"]
+    # A lock that cannot be used for another reason, the folder set and a dataset chosen: the
+    # facts are the identity, and beside the actions the GPU chip's phrase, which opens the
+    # chip's whole reason (its problem said there for an operator only, never in the phrase).
     problem = {"configured": True, "problem": "/srv/workspaces/.shepherd-gpu.lock is a directory"}
     for operator in (True, False):
-        line = tc._gpu_line(None, problem, None, operator=operator)
-        seen = _view(gpu=line)
-        drawn = tc.setup_html(seen)
-        assert "The GPU lock cannot be used." in drawn and seen["why"].count("disabled") == 1
-        assert ("/srv/workspaces" in drawn) is operator
-        assert "/srv" not in seen["why"]
-    # Nothing to say: no note, so its row takes no room.
-    assert tc.note_html(_view()) == "" and tc.setup_html(_view()) == ""
+        seen = _view(gpu=tc._gpu_line(None, problem, None, operator=operator))
+        assert 'data-why="gpu_problem"' in seen["phrase"] and "disabled" not in seen["phrase"]
+        assert "/srv" not in seen["phrase"] and "dataset fingerprint" in seen["facts"]
+        assert "data-notice" not in seen["facts"] + seen["phrase"]
+    # Nothing to say: the identity alone, and nothing beside the actions.
+    assert _view()["phrase"] == "" and "data-notice" not in _view()["facts"]
     assert lock_notice({"configured": True, "problem": None}) is None
 
 
-def test_the_run_view_says_why_it_has_no_run_by_cause():
-    """The skill's §9, the UI sweep: the run view's empty sentence names its
-    own cause: no workspaces folder (a relation to the run bar's notice), no
-    dataset listed, none chosen, then no run yet (by who can start one)."""
-    assert tc.no_run_words({"choices": [], "notice": None}, operator=True) == tc.NO_DATASET_LISTED
-    assert tc.no_run_words({"choices": [["demo", "demo"]]}, operator=True) == tc.NO_DATASET_CHOSEN
+def test_the_run_view_says_what_will_appear_never_the_bars_cause():
+    """The skill's §9 and L8 §2.3: the run view's empty sentence says what will
+    appear; with no dataset chosen, whatever the cause (no workspaces folder,
+    none listed, none chosen), the run bar's facts slot says the cause once,
+    so the run view does not restate it; with one chosen, no run yet (by who
+    can start one)."""
+    for ws in ({"choices": [], "notice": None}, {"choices": [["demo", "demo"]]}, {}):
+        assert tc.no_run_words(ws, operator=True) == tc.NO_RUN_TO_SHOW
     chosen = {"row": {"name": "demo"}}
     assert tc.no_run_words(chosen, operator=True) == tc.NO_RUN_YET
     assert tc.no_run_words(chosen, operator=False) == tc.NO_RUN_YET_READ_ONLY
     assert tc._chart_token(None, {}, operator=True, ws={"choices": []}) == {
-        "run": None, "rev": 0, "empty": tc.NO_DATASET_LISTED}
-    for words in (tc.NO_DATASET_LISTED, tc.NO_DATASET_CHOSEN):
-        assert words.startswith("No run to show: ") and ";" not in words
+        "run": None, "rev": 0, "empty": tc.NO_RUN_TO_SHOW}
+    assert tc.NO_RUN_TO_SHOW.startswith("No run to show yet: ") and ";" not in tc.NO_RUN_TO_SHOW
 
 
-# --------------------------------------------------------------------------- the run view
 def test_the_run_shown_is_the_runners_else_the_workspaces_latest(root, monkeypatch):
     ws = tc.workspace_state("demo")
     cache = {}
@@ -1498,7 +1584,7 @@ def test_every_write_of_the_run_bars_workspace_is_in_one_queued_group_of_one():
                                            "_on_training_workspace", "_render_view",
                                            "_render_changed"}
     drawn = {by_id[elem_id] for elem_id in (
-        "shep-train-dataset", "shep-train-chip", "shep-train-reason", "shep-train-why",
+        "shep-train-dataset", "shep-train-chip", "shep-train-why",
         "shep-train-start", "shep-train-continue", "shep-train-stop", "shep-train-resume",
         "shep-train-runbar",
         "shep-train-page", "shep-train-run-head", "shep-train-view-run", "shep-train-charts",
@@ -1633,7 +1719,7 @@ def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monke
 #: pill and a failed job's banner included) and the Continue drawer's list,
 #: choice and check.
 DRAWN_FROM_THE_SELECTION = (
-    "shep-train-dataset", "shep-train-chip", "shep-train-pill", "shep-train-reason",
+    "shep-train-dataset", "shep-train-chip", "shep-train-pill",
     "shep-train-why", "shep-train-start", "shep-train-continue", "shep-train-stop",
     "shep-train-resume",
     "shep-train-runbar", "shep-train-page", "shep-train-banner", "shep-train-run-head",
@@ -1927,7 +2013,7 @@ def test_a_choice_while_a_job_runs_elsewhere_follows_the_job_only_while_it_runs(
     assert page.tick() == []
     job.status = dict(ENDED)
     changed = page.tick()
-    assert {"start", "stop", "dataset", "chip", "reason"} <= set(changed)
+    assert {"start", "stop", "dataset", "chip", "pill"} <= set(changed)
     assert page.shown("shep-train-dataset") == "resampled"
     assert page.shown("shep-train-dataset", "interactive") is True
     assert "in use by the running job" not in page.shown("shep-train-chip")
@@ -2020,11 +2106,11 @@ def test_a_tick_never_draws_an_older_lock_read_than_the_render_after_a_choice(
     lock["now"] = HELD_LOCK                              # a CLI takes the GPU
     page.pick("resampled")                               # its render reads it again: held
     assert page.shown("shep-train-start", "interactive") is False
-    assert "GPU job" in page.shown("shep-train-reason")
+    assert "GPU in use" in page.shown("shep-train-why")
     handed = page.tick()
     assert page.shown("shep-train-start", "interactive") is False, \
         "the tick's hand-off drew Start enabled from an older read of the lock"
-    assert "GPU job" in page.shown("shep-train-reason")
+    assert "GPU in use" in page.shown("shep-train-why")
     assert handed == []
     # Positive control: the CLI ends while nobody acts; the tick's own read,
     # newer than the render's once it is read again, is handed over.
@@ -2032,7 +2118,7 @@ def test_a_tick_never_draws_an_older_lock_read_than_the_render_after_a_choice(
     clock.ahead += tc.LOCK_READ_SECONDS + 0.5
     assert "start" in page.tick()
     assert page.shown("shep-train-start", "interactive") is True
-    assert "GPU job" not in page.shown("shep-train-reason")
+    assert "GPU in use" not in page.shown("shep-train-why")
     assert page.tick() == []
 
 
@@ -2094,7 +2180,7 @@ def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, 
     # (the one gated-button rule, the WebUI skill §3).
     for key, label in tc.ACTION_LABELS.items():
         assert pieces[key] == {"value": f"🔒 {label}", "interactive": False}, key
-    assert "Operator controls only: deployment mode not set to M1" in pieces["reason"]
+    assert "Operator controls only</button>" in pieces["why"]
     assert "dataset not shown · operator control" in pieces["head"]
     # The run's folder is a listing's fact (R-41: named once, in Details); its
     # checkpoint and model fingerprint are an operator's.
@@ -2693,11 +2779,11 @@ def test_a_live_run_reads_its_checkpoint_once_for_the_fingerprint(root, monkeypa
 
 def test_the_reason_lines_sentence_ends_once():
     test_run = _view(gpu={"text": "GPU job: test run (mygene2-2026-09 · 00:00:25)", "test": True})
-    text = re.sub(r"<[^>]+>", "", test_run["reason"])
-    assert text.endswith("(mygene2-2026-09 · 00:00:25) · Open Test ›") and ")." not in text
+    text = re.sub(r"<[^>]+>", "", test_run["phrase"])
+    assert text.endswith("GPU in useOpen Test ›") and "." not in text    # the link its own unit
     cli = _view(gpu={"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                      "test": False})
-    assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("since 09:58 UTC).")
+    assert re.sub(r"<[^>]+>", "", cli["phrase"]).endswith("GPU in use")
 
 
 def _option_rules(labels, choices=None, values=None):
@@ -3128,7 +3214,7 @@ def test_with_the_drawer_open_the_run_bar_draws_no_action_and_the_drawer_one_clo
     assert any("#shep-train-continue" in sel for sel in hidden)
     assert any("#shep-train-stop" in sel for sel in hidden)
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
-    assert _view(ws=ws, mode={"drawer": True, "parent": {}})["reason"] == ""
+    assert _view(ws=ws, mode={"drawer": True, "parent": {}})["phrase"] == ""
     # One closer, its word drawn (it was a "×" over a 0 px wide button whose
     # word was drawn at 0 px).
     closers = [f for f in demo.fns.values() if f.fn is tc._on_continue_close]
@@ -3191,7 +3277,7 @@ def _rules(css, needle):
 
 
 def test_the_page_styles_hold_the_reviewed_layout():
-    from src.webui.style import SHELL_CSS
+    from src.webui.style import FIT, NARROW_ATTR, SHELL_CSS
 
     css = tc.PAGE_CSS
     # R-38: the run bar is one row at 1850 x 960 only without the build time beside the
@@ -3217,9 +3303,19 @@ def test_the_page_styles_hold_the_reviewed_layout():
     assert any("display: grid" in b and "grid-template-columns: auto minmax(0, max-content)" in b
                and "text-align: start" in b and "var(--shep-measure)" in b for b in why), why
     assert "text-align: right" not in css and "justify-content: flex-end" not in css
-    # No group of the run bar is flattened into another (B-01: two rows' items were the
-    # bar's own, `display: contents`, so messages became columns among the controls).
-    assert "display: contents !important" not in css
+    # No group of the run bar is flattened into another while it says a message (B-01: two
+    # rows' items were the bar's own, `display: contents`, so messages became columns among
+    # the controls): only the one-line form gives the groups' boxes way, and the render gives
+    # the bar that form's class only while the facts are the identity and no phrase is drawn
+    # (L8 §2.2).
+    flat = [sel for sel, b in _rules(css, "") if "display: contents !important" in b]
+    one_line = f"{tc._PAGE} #shep-train-runbar.{FIT}:not([{NARROW_ATTR}]) "
+    assert flat and all(sel.startswith(one_line) for sel in flat), flat
+    for view in (_view(), _view(access=_Access(False, "not_loopback")),
+                 _view(ws={"row": None, "choices": []}),
+                 _view(gpu={"text": "GPU job: x", "test": False})):
+        assert view["one_line"] == (not view["phrase"] and "data-notice" not in view["facts"]
+                                    and "shep-rb-cause" not in view["facts"]), view
     # A failed run's tail: four lines at a time when wide, never an inner scroll when narrow.
     from tests.unit.test_webui_shell import side, stack
 
@@ -3366,10 +3462,13 @@ def test_the_details_popover_is_drawn_over_the_parameter_labels():
     popover, which sits in the chip (z-index 20). The chip is never narrower
     than its widest part (D08: stacked at 960 and 1440 px wide its box shrank
     to 242 px under the 292 px fingerprint line, whose Copy and ⓘ ran past it,
-    so the ⓘ's bubble, placed beside the box, covered the ⓘ)."""
+    so the ⓘ's bubble, placed beside the box, covered the ⓘ). L8 §2: the chip
+    is the run bar's facts slot, under the inputs as wide as they are (in the
+    one-line form its own width); that every part of the identity stays
+    inside it is measured where it is drawn, in the run bar's browser test
+    (`test_the_run_bar_is_inputs_and_actions_over_facts_and_state_at_the_owner_windows_and_the_floor`)."""
     assert tc.CHIP_Z_INDEX > 40
-    assert (f"#shep-train-chip {{ flex: 0 1 auto !important; min-width: min-content !important; "
-            f"position: relative; z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
+    assert f"#shep-train-chip {{ position: relative; z-index: {tc.CHIP_Z_INDEX}; }}" in tc.PAGE_CSS
 
 
 def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
@@ -3408,9 +3507,9 @@ def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
     assert "shep-drawer-only" not in tc.PAGE_CSS
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
     refused = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "refused": True}})
-    assert refused["reason"] == ""
-    assert ("<span>Continue Training disabled: the check says this checkpoint cannot be "
-            "continued.</span>") in refused["drawer_reason"]
+    assert refused["phrase"] == ""
+    assert (f"<span>{r.need_words('the check says this checkpoint cannot be continued')}"
+            "</span>") in refused["drawer_reason"]
 
 
 def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
@@ -3895,21 +3994,22 @@ def test_a_details_the_reader_opened_stays_open_when_their_own_edit_draws_it_aga
 
 #: The Training page for an operator: at each window, once the page shows
 #: what the second argument's selector names and the page's requests are
-#: answered and its boxes hold still, the run bar's content box, each group
-#: of its bar and the controls in it, the actions' group, the note under them
-#: and each line of it, every text of the run bar beside a control, the
-#: relation beside Start, the charts' empty sentence (its box and the part of
-#: it its clipping ancestors leave drawn), the notices drawn, the page's
-#: scroll width, and what `document.elementFromPoint` finds at the centre of
-#: each run bar control (a screenshot of each window where a third argument
-#: names its path's start).
+#: answered and its boxes hold still, the run bar's content box, its controls
+#: (the Dataset select's box, Run name's box, Start and Continue…), the facts
+#: slot, the job's state and the actions' group, a cause's notice (its lead's
+#: line boxes and its "Details ›"), every text of the run bar beside a
+#: control, the phrase beside the actions, the charts' empty sentence (its
+#: box and the part of it its clipping ancestors leave drawn), the notices
+#: drawn, the page's scroll width, and what `document.elementFromPoint` finds
+#: at the centre of each run bar control (a screenshot of each window where a
+#: third argument names its path's start).
 _RUNBAR_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [1366, 768], [1440, 1600], [1280, 720]]) {
+  for (const [w, h] of [[1850, 960], [1550, 830], [1366, 768], [1280, 720], [1080, 1920]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
@@ -3931,27 +4031,32 @@ const QUEUE_JS = __QUEUE_JS__;
     out[`${w}x${h}`] = await page.evaluate(() => {
       const box = (r) => [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)];
       const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+      const at = (sel) => { const e = document.querySelector(sel); return e && shown(e) ? box(e.getBoundingClientRect()) : null; };
       const bar = document.querySelector('#shep-train-runbar'), cs = getComputedStyle(bar), b = bar.getBoundingClientRect();
       const inner = [Math.round(b.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft)), Math.round(b.top),
                      Math.round(b.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight)), Math.round(b.bottom)];
       // A control: a button, a text box, a select's box (its input is the box's); not a ⓘ, a
       // Copy or a link in a sentence.
       const controlsOf = (root) => [...root.querySelectorAll('button, input:not([type=hidden]), .wrap:has(> .wrap-inner)')]
-        .filter((c) => shown(c) && !c.matches('.shep-i, .shep-copy, .shep-link') && !(c.matches('input') && c.closest('.wrap:has(> .wrap-inner)')));
-      const groups = [...bar.querySelectorAll('.shep-rb-bar > .shep-grp')].filter(shown).map((g) => ({
-        cls: g.className.split(/\s+/).filter((c) => c.startsWith('shep-rb-') && c !== 'shep-rb-grp').join(' '),
-        box: box(g.getBoundingClientRect()), parts: controlsOf(g).map((c) => box(c.getBoundingClientRect())) }));
-      const act = document.querySelector('.shep-rb-act');
-      const actions = [...act.querySelectorAll(':scope > button')].filter(shown).map((c) => box(c.getBoundingClientRect()));
-      const note = document.querySelector('#shep-train-reason');
-      let lines = [];
-      if (note && shown(note)) {
-        const range = document.createRange(); range.selectNodeContents(note);
-        lines = [...range.getClientRects()].filter((r) => r.width > 0.5).map(box);
+        .filter((c) => shown(c) && !c.matches('.shep-i, .shep-copy, .shep-link, .shep-why, .shep-nb-go') && !(c.matches('input') && c.closest('.wrap:has(> .wrap-inner)')));
+      const groups = [...bar.querySelectorAll('.shep-rb-grp')].filter(shown).map((g) => controlsOf(g).map((c) => box(c.getBoundingClientRect())));
+      const actions = [...document.querySelectorAll('.shep-rb-act > button')].filter(shown).map((c) => box(c.getBoundingClientRect()));
+      // The notice's lead, line by line, and its "Details ›".
+      const lead = document.querySelector('#shep-train-chip .shep-nb-line .shep-nb-text');
+      let leadLines = [];
+      if (lead && shown(lead)) {
+        const range = document.createRange(); range.selectNodeContents(lead);
+        const rows = {};
+        for (const q of [...range.getClientRects()].filter((x) => x.width > 0.5 && x.height > 0.5)) {
+          const key = Math.round((q.top + q.bottom) / 2 / 4);
+          const r = rows[key] || (rows[key] = [q.left, q.top, q.right, q.bottom]);
+          r[0] = Math.min(r[0], q.left); r[1] = Math.min(r[1], q.top); r[2] = Math.max(r[2], q.right); r[3] = Math.max(r[3], q.bottom);
+        }
+        leadLines = Object.values(rows).sort((p, q) => p[1] - q[1]).map((r) => r.map(Math.round));
       }
       // Every text of 30 or more characters in the run bar beside one of its controls (over
       // half the control's height level with it, left or right of it), but the dataset's
-      // identity, the relation beside Start and the job's state, which belong beside them.
+      // identity, the phrase beside the actions and the job's state, which belong beside them.
       const controls = controlsOf(bar);
       const beside = [];
       const walker = document.createTreeWalker(bar, NodeFilter.SHOW_TEXT);
@@ -3968,8 +4073,6 @@ const QUEUE_JS = __QUEUE_JS__;
           }
         }
       }
-      const why = document.querySelector('#shep-train-why');
-      const whyText = why && shown(why) ? why.querySelector('.shep-reason') : null;
       const msg = document.querySelector('#shep-train-charts .shep-charts-msg');
       let seen = null, whole = null;
       if (msg && shown(msg)) {
@@ -3984,24 +4087,39 @@ const QUEUE_JS = __QUEUE_JS__;
         }
         whole = box(r); seen = [Math.round(L), Math.round(T), Math.round(R), Math.round(B)];
       }
-      const start = document.querySelector('#shep-train-start');
       const hit = controls.map((el) => {
         el.scrollIntoView({ block: 'center' });
-        const r = el.getBoundingClientRect(), at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        return { el: el.id || el.className.toString().slice(0, 30), hit: el === at || el.contains(at) };
+        const r = el.getBoundingClientRect(), at2 = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { el: el.id || el.className.toString().slice(0, 30), hit: el === at2 || el.contains(at2) };
       });
       window.scrollTo(0, 0);
-      const setup = document.querySelector('#shep-train-setup');
-      return { bar: inner, groups, actions, act: box(act.getBoundingClientRect()),
-        note: note && shown(note) ? box(note.getBoundingClientRect()) : null, lines, beside,
-        setup: setup && shown(setup) ? box(setup.getBoundingClientRect()) : null,
-        why: whyText ? { box: box(whyText.getBoundingClientRect()), text: whyText.querySelector('.shep-nb-text').textContent.trim(),
-                         lh: parseFloat(getComputedStyle(whyText).lineHeight) } : null,
-        start: start && shown(start) ? box(start.getBoundingClientRect()) : null,
+      // The identity's parts past the facts slot's box (D08: the fingerprint's Copy and ⓘ ran
+      // past a box narrower than their line): each text line and button drawn in it.
+      const chip = document.querySelector('#shep-train-chip');
+      const partsOut = [];
+      if (chip && shown(chip)) {
+        const c = chip.getBoundingClientRect();
+        const parts = [...chip.querySelectorAll('button')].filter(shown).map((e) => e.getBoundingClientRect());
+        const texts = document.createTreeWalker(chip, NodeFilter.SHOW_TEXT);
+        for (let n = texts.nextNode(); n; n = texts.nextNode()) {
+          if (!n.textContent.trim() || !n.parentElement || !shown(n.parentElement)) { continue; }
+          const range = document.createRange(); range.selectNodeContents(n);
+          parts.push(...[...range.getClientRects()].filter((q) => q.width > 0.5));
+        }
+        partsOut.push(...parts.filter((q) => q.left < c.left - 1 || q.right > c.right + 1).map(box));
+      }
+      const why = document.querySelector('#shep-train-why');
+      return { bar: inner, groups, actions, act: at('.shep-rb-act'), partsOut,
+        dataset: at('#shep-train-dataset .wrap:has(> .wrap-inner)'), name: at('#run_name input'),
+        start: at('#shep-train-start'), cont: at('#shep-train-continue'), facts: at('#shep-train-chip'),
+        state: at('#shep-train-pill .shep-pill'), details: at('#shep-train-chip .shep-nb-more > summary'), leadLines,
+        why: why && shown(why) ? why.innerText.trim() : null, beside,
         msg: msg && shown(msg) ? { text: msg.textContent.trim(), whole, seen } : null,
         notices: [...document.querySelectorAll('[data-notice]')].filter(shown).map((e) => e.getAttribute('data-notice')),
         also: [...document.querySelectorAll('[data-notice-also]')].filter(shown).map((e) => e.getAttribute('data-notice-also')),
-        covered: hit.filter((c) => !c.hit), scroll: document.documentElement.scrollWidth, width: window.innerWidth };
+        startBy: (document.querySelector('#shep-train-start') || {}).getAttribute('aria-describedby'),
+        covered: hit.filter((c) => !c.hit), scroll: document.documentElement.scrollWidth, width: window.innerWidth,
+        layout: document.documentElement.getAttribute('data-shep-layout') };
     });
     await page.close();
   }
@@ -4014,45 +4132,52 @@ const QUEUE_JS = __QUEUE_JS__;
 #: a phone's run bar (the review of 5033d29 on fd313af).
 LONG_NAME = "hospital_a_rare_disease_cohort_2026_11_16_reimport_v3"
 
-#: What each case waits for (`_RUNBAR_JS`'s second argument): the setup notice
-#: under the bar at first use, the dataset's identity with a dataset chosen,
-#: the reason line for a workspace that cannot be trained.
-_RUNBAR_SHOWN = {"first_use": '#shep-train-setup [data-notice="workspaces_root"]',
+#: What each case waits for (`_RUNBAR_JS`'s second argument): the cause's
+#: notice in the facts slot at first use, the dataset's identity with a
+#: dataset chosen, the identity's own "not trainable" fact for a workspace
+#: that cannot be trained.
+_RUNBAR_SHOWN = {"first_use": '#shep-train-chip [data-notice="workspaces_root"]',
                  "configured": "#shep-train-chip .shep-fpv",
-                 "long_name": "#shep-train-reason .shep-rb-why"}
+                 "long_name": "#shep-train-chip .shep-ds-marks"}
+
+
+def _band(*boxes):
+    """Whether one horizontal band crosses every box (the lowest top above the
+    highest bottom): the boxes stand on one line, whatever their heights."""
+    return max(b[1] for b in boxes) < min(b[3] for b in boxes)
 
 
 @pytest.mark.parametrize("case", ["first_use", "configured", "long_name"])
-def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
+def test_the_run_bar_is_inputs_and_actions_over_facts_and_state_at_the_owner_windows_and_the_floor(
         case, built, monkeypatch, tmp_path):
-    """The UI sweep of 2026-11-22 (B-01, B-02, B-05, B-06, GB10-UI-01; the
-    WebUI skill's §2 and §9). At first use the run bar drew the workspaces
-    folder's whole problem (296 characters) as a column beside the Dataset
-    select and the GPU lock's (403 characters) as a right-aligned column
-    beside Start; the bar grew to 291 px at 1850 x 960 and 616 px at 390 x
-    844, Start centred in it, Start and Continue… on different lines once it
-    wrapped, and at 1366 x 768 the charts' empty sentence was not drawn (an
-    overlay at 40 % of a body with no height, cut by the charts' box). The
-    verification of fcc3dea and the review of 5033d29 (kept): no control
-    under the reason, and a workspace's long name never widening the bar.
+    """The owner's C and SW-LK5 of 2026-11-24 (L8 §2.6). At first use the run
+    bar drew one cause in three places (the notice on its first line with its
+    "Details ›" alone on a second, "Needs a workspaces folder" beside Start,
+    the job's state on a third line under the fields); with a dataset chosen
+    at 1550 x 830 the job's state stood alone at the bar's left on a line of
+    its own, and at 1280 x 720 Run name sat 388 px from the actions. Now the
+    bar is two groups: the inputs over the facts slot (the identity or the
+    one cause), the actions over the job's state.
 
     For an operator at first use (no workspaces folder), with a dataset and
     no run yet, and with a workspace of a long name that cannot be trained,
-    at 1850 x 960, 1366 x 768, 1440 x 1600 (stacked) and the display floor's 1280 x 720
-    (390 x 844 and 960 x 1080 are below the floor, drawn as at it), measured relative to
-    what is drawn: every group of the bar holds its controls on one line;
-    the actions (Start and Continue…) on one line, their group at the end
-    of a line it shares, and starting a line it has alone, on the bar's
-    edge (the sweep's L7, SW-LK5; with a dataset chosen, at 1850 x 960, on
-    the one line of every group: R-38); every control inside the bar's padding; at first use the
-    setup notice before every control, from the bar's edge (L7 SW-LK5); the note, when it says
-    something, under every control, from the bar's edge, each line inside
-    the bar; no text of the run bar beside a
-    control but the dataset's identity, the job's state and the relation
-    beside Start, which is one line where it stands level with Start; the
-    setup notice drawn once (the GPU lock's merged into it); the charts'
-    empty sentence drawn whole, in its own words per cause; every control
-    the first thing at its centre; and the page never scrolls sideways."""
+    at the owner's 1850 x 960, 1550 x 830, 1366 x 768, the display floor's
+    1280 x 720 and a portrait 1080 x 1920 (stacked), measured relative to
+    what is drawn: with a dataset chosen at 1850 x 960 the bar is one line
+    (R-38: every control, the identity and the state on one band); at first
+    use and at the narrower landscape windows it is two lines, the controls
+    on the first and the facts and the state on the second, under them; the
+    job's state starts on the actions' edge, under them (the run group whole
+    under the set group in the portrait window); the facts start on the
+    bar's edge, under Dataset; at first use the cause is the one notice in
+    the facts slot (the GPU lock's merged into it), its "Details ›" in its
+    lead's last line box, Start described by it and nothing beside the
+    actions; every group holds its controls on one line, every control
+    inside the bar's padding and the first thing at its centre; every part of
+    the facts (each text line and button) inside the slot's box; no long text
+    of the bar beside a control but the identity, the phrase and the state;
+    the charts' empty sentence drawn whole, in its own words; and the page
+    never scrolls sideways."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
 
@@ -4061,7 +4186,7 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     operator_mode(monkeypatch)
     if case == "first_use":
         monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
-        sentence = "No run to show: no workspaces folder is set (see above)."
+        sentence = tc.NO_RUN_TO_SHOW
     elif case == "configured":
         shutil.copytree(built[0], tmp_path / "root" / "demo")
         monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
@@ -4073,69 +4198,374 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_RUNBAR_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], _RUNBAR_SHOWN[case])
-    assert set(seen) == {"1850x960", "1366x768", "1440x1600", "1280x720"}, seen
+    assert set(seen) == {"1850x960", "1550x830", "1366x768", "1280x720", "1080x1920"}, seen
     for size, drawn in seen.items():
         left, _top, right, _bottom = drawn["bar"]
         where = (case, size, drawn)
-        for group in drawn["groups"]:
-            parts = group["parts"]
-            assert not parts or max(p[1] for p in parts) < min(p[3] for p in parts), (group, where)
-        actions = drawn["actions"]
-        assert len(actions) >= 2, where
-        assert max(a[1] for a in actions) < min(a[3] for a in actions), where
-        # The actions' group at the end of a line it shares with another group; alone on its
-        # line, it starts the line on the bar's edge (the sweep's L7, SW-LK5: pushed to the end
-        # alone, it left 459 to 810 px of the line's start empty at 1366 x 768).
-        # The job's state is a group of its own after them (L7 SW-LK5), so the actions and it
-        # end the line they share with another group.
-        act = drawn["act"]
-        on_line = [g for g in drawn["groups"] if g["box"][1] < act[3] and g["box"][3] > act[1]]
-        after = [g for g in on_line if g["box"][0] >= act[2] - 1]
-        shared = [g for g in on_line if g["box"][2] <= act[0] + 1]
-        if shared:
-            assert abs(max([act[2]] + [g["box"][2] for g in after]) - right) <= 2, where
-        else:
-            assert abs(act[0] - left) <= 2, where
-        state = [g for g in drawn["groups"] if g["cls"] == "shep-rb-state"]
-        assert len(state) == 1, where
-        if case == "configured" and size == "1850x960":
-            # R-38: at the owner's window, a dataset chosen, the bar is one row: every group
-            # shares one line (the job state stands on the line's centre, not its top, since
-            # 289e51b, so the groups' tops differ by design).
-            boxes = [group["box"] for group in drawn["groups"]]
-            assert max(b[1] for b in boxes) < min(b[3] for b in boxes), where
-        controls = [p for group in drawn["groups"] for p in group["parts"]]
-        # Every control inside the bar's padding (a select's floor against its whole field,
-        # label and ⓘ beside it, pushed the Dataset box 14 px past it at 390 x 844).
+        for parts in drawn["groups"]:
+            assert not parts or _band(*parts), (parts, where)
+        controls = [p for parts in drawn["groups"] for p in parts]
         assert all(c[0] >= left - 1 and c[2] <= right + 1 for c in controls), where
+        actions, act, state, facts = drawn["actions"], drawn["act"], drawn["state"], drawn["facts"]
+        assert len(actions) >= 2 and _band(*actions), where
+        row = [drawn["dataset"], drawn["name"], drawn["start"], drawn["cont"]]
+        one_line = _band(*row, facts, state)
+        if case == "configured" and size == "1850x960":
+            # R-38: at the owner's window, a dataset chosen, the bar is one line.
+            assert one_line, where
+        elif case == "first_use" or size != "1850x960":
+            assert not one_line, where
+        if not one_line:
+            # Two groups, each two rows: the job's state on the actions' edge, under them.
+            assert abs(state[0] - act[0]) <= 1 and state[1] >= max(a[3] for a in actions) - 1, where
+            # The facts slot under Dataset, from the bar's edge.
+            assert abs(facts[0] - left) <= 1 and facts[1] >= drawn["dataset"][3] - 1, where
+            if drawn["layout"] == "side":
+                # Two lines: the controls on the first, the facts and the state on the second.
+                assert _band(*row) and _band(facts, state), where
+                assert min(facts[1], state[1]) >= max(c[3] for c in row) - 1, where
         if case == "first_use":
-            # The setup notice before every control of the bar, from its edge (L7 SW-LK5:
-            # it was the bar's note, after the actions once the bar wrapped); the note says
-            # nothing then.
-            setup = drawn["setup"]
-            assert setup is not None and setup[3] <= min(c[1] for c in controls) + 1, where
-            assert abs(setup[0] - left) <= 2 and drawn["note"] is None, where
-        elif case == "long_name":
-            note = drawn["note"]
-            assert note is not None and note[1] >= max(c[3] for c in controls) - 1, where
-            assert abs(note[0] - left) <= 2, where
-            assert drawn["lines"] and all(line[0] >= left - 1 and line[2] <= right + 1
-                                          for line in drawn["lines"]), where
-        else:
-            assert drawn["note"] is None, where
-        assert drawn["beside"] == [], where
-        why = drawn["why"]
-        if case == "first_use":
-            assert why["text"] == "Start disabled: GPU jobs need a workspaces folder.", where
-            start = drawn["start"]
-            level = min(start[3], why["box"][3]) - max(start[1], why["box"][1])
-            if level > 0.5 * (start[3] - start[1]):
-                assert why["box"][3] - why["box"][1] <= 1.6 * why["lh"], where
             assert drawn["notices"] == ["workspaces_root"] and drawn["also"] == ["gpu_lock"], where
+            last = drawn["leadLines"][-1]
+            details = drawn["details"]
+            assert details and min(last[3], details[3]) - max(last[1], details[1]) \
+                > 0.5 * (details[3] - details[1]) and details[0] >= last[0], where
+            assert drawn["why"] is None, where                  # nothing beside the actions
+            assert "shep-why-shep-train-start" in (drawn["startBy"] or ""), where
         else:
-            assert why is None and drawn["notices"] == [], where
+            assert drawn["why"] is None and drawn["notices"] == [], where
+        assert drawn["beside"] == [] and drawn["partsOut"] == [], where
         msg = drawn["msg"]
         assert msg is not None and msg["text"] == sentence, where
         assert msg["whole"][3] > msg["whole"][1] and msg["seen"] == msg["whole"], where
         assert drawn["covered"] == [], where
         assert drawn["scroll"] <= drawn["width"], where
+
+
+#: Training stacked, for an operator: at each window, the parameters' fold
+#: (``aria-expanded``) at every frame from the click on Research until the page
+#: holds still (``loaded``: the states it went through, in order), then, once
+#: the page's requests are answered and its boxes hold still (``settled``: false
+#: if they never did), the fold (the button's ``aria-expanded`` and words, the
+#: body drawn or not), the page's end, the window's height, the run view's plot
+#: cards and how much of them (their union's height) lies in the first screen
+#: with the body drawn folded and with it drawn shown and laid out by the
+#: shell's layout pass (``ShepShell.layOut``; for the measure alone, put back at
+#: once). Then, at the first window, the reader folds the body ("Hide"), the
+#: shell's timers run for 12 s, the reader opens Datasets and Training again,
+#: and the fold is read again. With a third argument, a list of window heights:
+#: a fresh page opened at the first window's width and the first height, then
+#: made each height after it with the width kept (the window's height alone),
+#: read at each.
+_FOLD_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  const read = (page) => page.evaluate(() => {
+    const b = document.querySelector('.shep-train-fold'), body = document.getElementById('shep-train-params-bd');
+    const se = document.scrollingElement, was = b.getAttribute('aria-expanded');
+    const lay = () => { if (window.ShepShell && window.ShepShell.layOut) { window.ShepShell.layOut(); } };
+    const cards = () => document.querySelectorAll('#shep-train-runview .shep-chart');
+    const seen = () => {
+      let top = Infinity, bottom = -Infinity;
+      for (const c of cards()) {
+        const r = c.getBoundingClientRect();
+        if (r.height > 0) { top = Math.min(top, r.top + scrollY); bottom = Math.max(bottom, r.bottom + scrollY); }
+      }
+      return bottom > top ? Math.round(Math.max(0, Math.min(bottom, innerHeight) - Math.max(top, 0))) : 0;
+    };
+    b.setAttribute('aria-expanded', 'false');
+    const chartsFolded = seen();
+    b.setAttribute('aria-expanded', 'true');
+    lay();
+    const chartsShown = seen();
+    b.setAttribute('aria-expanded', was);
+    lay();
+    return { layout: document.documentElement.getAttribute('data-shep-layout'), expanded: b.getAttribute('aria-expanded'),
+             words: b.textContent.trim(), shown: body.getClientRects().length > 0, end: se.scrollHeight,
+             height: innerHeight, charts: cards().length, chartsFolded, chartsShown,
+             more: !!document.querySelector('#shep-train-more > button.label-wrap.open, #shep-train-model > button.label-wrap.open') };
+  });
+  // Held still: the page's end, its panels' end and the fold the same over 30 frames in a row
+  // (a page's load chain can grow it a moment after its requests are answered, and the fold
+  // follows), within 10 s.
+  const settle = (page) => page.evaluate(async () => {
+    const sign = () => [document.scrollingElement.scrollHeight,
+                        Math.round(document.getElementById('shep-train-page').getBoundingClientRect().bottom),
+                        document.querySelector('.shep-train-fold').getAttribute('aria-expanded')].join(':');
+    let last = null, still = 0;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 10000) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const now = sign();
+      still = now === last ? still + 1 : 0;
+      last = now;
+      if (still >= 30) { return true; }
+    }
+    return false;
+  });
+  // Opens the dashboard at w x h and Training, its fold read at every frame from the click until
+  // it holds still.
+  const open = async (w, h) => {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+    await page.evaluate(() => {
+      window.__foldSeen = [];
+      const tick = () => {
+        const b = document.querySelector('.shep-train-fold'), seen = window.__foldSeen;
+        const now = b && b.getClientRects().length ? b.getAttribute('aria-expanded') : null;
+        if (now !== null && seen[seen.length - 1] !== now) { seen.push(now); }
+        if (!window.__foldDone) { requestAnimationFrame(tick); }
+      };
+      requestAnimationFrame(tick);
+    });
+    await page.click('#shep-tab-research-button', { timeout: 60000 });
+    await page.waitForFunction(() => {
+      const msg = document.querySelector('#shep-train-charts .shep-charts-msg, #shep-train-charts .shep-chart');
+      return msg && window.__shepQueue.idle() && document.fonts.status === 'loaded';
+    }, null, { timeout: 60000 });
+    const settled = await settle(page);
+    const loaded = await page.evaluate(() => { window.__foldDone = true; return window.__foldSeen; });
+    return { page, settled, loaded };
+  };
+  const sizes = JSON.parse(process.argv[3]);
+  for (const [w, h] of sizes) {
+    const { page, settled, loaded } = await open(w, h);
+    out[`${w}x${h}`] = { ...(await read(page)), settled, loaded };
+    if (w === sizes[0][0] && h === sizes[0][1]) {
+      await page.click('#shep-train-more > button.label-wrap');
+      await page.click('#shep-train-model > button.label-wrap');
+      await settle(page);
+      out.opened = await read(page);
+      await page.click('.shep-train-fold');
+      out.folded = await read(page);
+      await page.waitForTimeout(12000);
+      await page.click('#shep-page-datasets-button');
+      await page.waitForTimeout(1500);
+      await page.click('#shep-page-training-button');
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+      await settle(page);
+      out.after = await read(page);
+    }
+    await page.close();
+  }
+  if (process.argv[4]) {
+    const heights = JSON.parse(process.argv[4]), w = sizes[0][0];
+    const { page } = await open(w, heights[0]);
+    out.heights = [];
+    for (const h of heights) {
+      await page.setViewportSize({ width: w, height: h });
+      const settled = await settle(page);
+      out.heights.push({ ...(await read(page)), settled });
+    }
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.parametrize("case", ["first_use", "configured", "with_run"])
+def test_stacked_the_parameters_show_unless_folding_brings_more_charts_and_a_users_fold_holds(
+        case, built, monkeypatch, tmp_path):
+    """The owner's D9 of 2026-11-24 (L8 §4 D9): stacked, the Parameters body
+    started folded at every window, so a portrait 1080 x 1920 showed its run
+    bar and title and 1222 px (first use) or 705 px (configured) of nothing
+    under the page. Now, while the reader has not used "Show" / "Hide", the
+    body is shown unless folding it brings more of the run view's charts (its
+    plot cards) into the first screen than showing it leaves there (measured
+    with the body drawn folded and drawn shown and laid out, `FOLD_JS`), never
+    by a window size; only the main parameters ("More training settings" and
+    "Model" stay closed). The L8 LOOK5's L8-3 and its review (R2): at first use
+    the body was folded at 1100 x 1050 with a third of the window blank under
+    the page, and, once the measure read the page's panels, again at 1100 x
+    1040 (329 px blank, 87 px of scroll if shown): with no chart to bring up,
+    folding gains nothing, so the body is shown at first use and with a
+    dataset that has no run, at any height; with a run's charts it is shown at
+    1080 x 1920 (they fit under it) and folded at 900 x 950 and both of the
+    owner's D11 examples. The review's R1: configured, the body was shown on
+    the page as first drawn (no chart yet) and folded 1.2 s later when the
+    charts came, the run view jumping 416 px: the fold now waits for the
+    page's first answers, and from the click on Research until the page holds
+    still it never goes from shown to folded (with a run at the D11 examples
+    it is never drawn shown). The review's R3: a window made taller or
+    shorter without a change of width kept the decision of the height before
+    (1080 x 1000 folded, made 1080 x 1920: folded over 1209 px of blank); with
+    a run, the window's height alone now folds and shows it again. A fold the
+    reader made holds through the shell's timers and a page switch (no timer,
+    poll or redraw reopens it), and so does the body the reader works in:
+    opening "More training settings" in it at 1080 x 1920 grew the page past
+    the window, and the measure folded the body under the reader (the help
+    test's Tab walk lost Mixed precision)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    d11 = [[1100, 1050], [1050, 1100]]
+    heights = None
+    if case == "first_use":
+        monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+        sizes = [[1080, 1920], *d11, [1100, 1040]]
+    else:
+        shutil.copytree(built[0], tmp_path / "root" / "demo")
+        monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+        sizes = [[1080, 1920], [900, 950]]
+    if case == "with_run":
+        run = tmp_path / "root" / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b"
+        (run / "logs").mkdir(parents=True)
+        (run / "checkpoints").mkdir()
+        (run / "logs" / "train_20261018_142000.json").write_text(json.dumps(_metrics(6)))
+        sizes = [*sizes, *d11]
+        heights = [1920, 1000, 1920]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_FOLD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(sizes),
+                        *([json.dumps(heights)] if heights else []))
+    for w, h in sizes:
+        drawn = seen[f"{w}x{h}"]
+        where = (case, w, h, drawn)
+        assert drawn["settled"], where
+        assert drawn["layout"] == "stack" and drawn["more"] is False, where
+        # Shown unless folding brings more of the charts into the first screen.
+        assert drawn["shown"] == (drawn["chartsFolded"] <= drawn["chartsShown"]), where
+        assert drawn["shown"] == (drawn["expanded"] == "true"), where
+        assert drawn["words"] == ("Hide" if drawn["shown"] else "Show"), where
+        # R1: on the way in, never shown and then folded with no input.
+        assert "true,false" not in ",".join(drawn["loaded"]), where
+    portrait = seen["1080x1920"]
+    assert portrait["shown"] and portrait["end"] <= portrait["height"], portrait
+    if case == "with_run":
+        assert all(seen[f"{w}x{h}"]["charts"] > 0 for w, h in sizes), seen
+        for w, h in [[900, 950], *d11]:
+            drawn = seen[f"{w}x{h}"]
+            assert not drawn["shown"] and drawn["loaded"] == ["false"], (w, h, drawn)
+        # R3: the window's height alone decides it again.
+        assert [(x["settled"], x["shown"]) for x in seen["heights"]] == [
+            (True, True), (True, False), (True, True)], seen["heights"]
+    else:
+        # R2: no chart to bring up, so the body is shown at every height (L8-3 at first use).
+        assert all(seen[f"{w}x{h}"]["charts"] == 0 and seen[f"{w}x{h}"]["shown"]
+                   for w, h in sizes), seen
+    # The reader works in the body: it stays shown, though the page now ends past the window.
+    opened = seen["opened"]
+    assert opened["more"] and opened["end"] > opened["height"], opened
+    assert opened["shown"] and opened["expanded"] == "true" and opened["words"] == "Hide", opened
+    # The reader's fold holds through 12 s of the shell's timers and a page switch.
+    assert seen["folded"]["shown"] is False and seen["folded"]["words"] == "Show", seen
+    assert seen["after"]["shown"] is False and seen["after"]["expanded"] == "false", seen
+
+
+#: Training at first use, stacked, for an operator, as the reader arrives: each
+#: route (``[name, sizes]``) opens the dashboard at its first window and then
+#: Training, steps through the rest of its windows (its requests answered at
+#: each), lets it hold still (30 frames, at most 5 s), and then, with no input,
+#: reads at every frame for
+#: 2.5 s the parameters' fold (``aria-expanded``, the body drawn or not), the
+#: "Set by you" line's own-line mark and the page's layout (the document's
+#: size, the parameters' and the run view's boxes): the readings that differ
+#: from the frame before, with how many frames and milliseconds were read.
+_FOLD_STILL_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  const ready = (page) => page.waitForFunction(() => {
+    const msg = document.querySelector('#shep-train-charts .shep-charts-msg, #shep-train-charts .shep-chart');
+    return msg && window.__shepQueue.idle() && document.fonts.status === 'loaded';
+  }, null, { timeout: 60000 });
+  for (const [name, sizes] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext({ viewport: { width: sizes[0][0], height: sizes[0][1] },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+    // A click with no pointer moved: nothing is hovered while the page is read.
+    await page.$eval('#shep-tab-research-button', (el) => el.click());
+    await ready(page);
+    for (const [w, h] of sizes.slice(1)) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.waitForTimeout(500);
+      await ready(page);
+    }
+    // A moment for the page's load chain: 30 frames in a row with the fold and the page's end
+    // the same, or 5 s (a page that never holds still is then read as it is).
+    await page.evaluate(async () => {
+      const sign = () => document.scrollingElement.scrollHeight + ':'
+        + document.querySelector('.shep-train-fold').getAttribute('aria-expanded');
+      let last = null, still = 0;
+      const t0 = performance.now();
+      while (still < 30 && performance.now() - t0 < 5000) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const now = sign();
+        still = now === last ? still + 1 : 0;
+        last = now;
+      }
+    });
+    out[name] = await page.evaluate(async () => {
+      const box = (id) => { const el = document.getElementById(id), r = el && el.getBoundingClientRect();
+        return r ? [Math.round(r.top), Math.round(r.height)].join(',') : '-'; };
+      const sign = () => {
+        const b = document.querySelector('.shep-train-fold'), se = document.scrollingElement;
+        return [document.documentElement.getAttribute('data-shep-layout'), b.getAttribute('aria-expanded'),
+                document.getElementById('shep-train-params-bd').getClientRects().length > 0,
+                document.getElementById('shep-train-setby').hasAttribute('data-shep-own-line'),
+                se.scrollWidth, se.scrollHeight, box('shep-train-params'), box('shep-train-runview')].join('|');
+      };
+      const first = sign(), changes = [], t0 = performance.now();
+      let last = first, frames = 0;
+      while (performance.now() - t0 < 2500) {
+        await new Promise((r) => requestAnimationFrame(r));
+        frames += 1;
+        const now = sign();
+        if (now !== last) { changes.push(now); last = now; }
+      }
+      return { first, changes: changes.length, some: changes.slice(0, 4), frames,
+               ms: Math.round(performance.now() - t0) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_stacked_the_parameters_fold_holds_still_with_no_input(monkeypatch, tmp_path):
+    """The L8 LOOK5's L8-1 (severe): at first use, Training at 1050 x 1100 opened and closed its
+    Parameters body about 24 times a second with no input (the button's ``aria-expanded`` and
+    words, the "Set by you" line's own-line mark and a Gradio wrap's style flipping together,
+    the run view jumping about 400 px), opened at that window or arrived at by resizing. The
+    fold's room measure drew the body shown but read the layout pass's marks as set with it
+    folded: the "Set by you" line beside Reset (the page's end 1100 px, within the window), so
+    the body opened; laid out shown, the line took its own line (1127 px, past it), so the body
+    folded, and the mark went with it. The measure now lays the shown body out first
+    (`shell.py`'s ``ShepShell.layOut``), so deciding never changes what it decides from. At
+    1050 x 1100 and 1100 x 1050, opened there or arrived at through four other windows, the
+    fold, the mark and the page's layout hold for 2.5 s of frames with no input."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    routes = [["opened 1050x1100", [[1050, 1100]]],
+              ["resized to 1050x1100", [[1850, 960], [1100, 1050], [1080, 1920], [1050, 1100]]],
+              ["opened 1100x1050", [[1100, 1050]]],
+              ["resized to 1100x1050", [[1850, 960], [1050, 1100], [1100, 1050]]]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_FOLD_STILL_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(routes))
+    for name, _sizes in routes:
+        still = seen[name]
+        assert still["first"].startswith("stack|"), (name, still)
+        assert still["ms"] >= 2000 and still["frames"] >= 30, (name, still)
+        assert still["changes"] == 0, (name, still)

@@ -122,7 +122,9 @@ def test_only_listed_bases_are_offered_as_parents(root, operator):
     assert all(item["learning_stage"] == "base" for item in parents.values())
     assert runs["value"] == f"gatv2/{BASE_RUN}" and checkpoints["value"] == (
         f"gatv2/{BASE_RUN}/last.pt")
-    assert "3 base checkpoints in 2 runs" in note
+    # A list that holds bases says nothing of its own under the selects: its count is a fact of
+    # the chosen base's Details (D3/D8, `listed_words`), never a line to read past.
+    assert note == "" and fp.listed_words(parents) == "3 base checkpoints in 2 runs, latest first"
     # Each select checked on its own: the Run options are the identity label
     # (`renderers.run_words`, shared with the Continue drawer), unique; the
     # checkpoint options follow §8; each value is the listing's key.
@@ -150,12 +152,12 @@ def test_listing_the_bases_is_an_operator_control(root, monkeypatch):
     assert parents == {} and runs == checkpoints == gr.update(choices=[], value=None)
     # The one gated-button rule (the closing browser check: Refresh stayed
     # enabled, with no lock, for a read-only request): disabled, the lock, and
-    # "Operator controls only: …" beside it, as Start's reason line says it.
+    # "Operator controls only" (R-WHY's d8 phrase) beside it, as Start's reason line says it.
     from src.webui.components.chips import LOCK, operator_only
     from src.webui.operator_access import operator_access
 
     assert refresh == gr.update(value=f"{LOCK} Refresh", interactive=False)
-    assert r.e(operator_only(operator_access(READ_ONLY).condition)) in note
+    assert operator_only(operator_access(READ_ONLY).condition, control="ft_refresh") in note
     assert "listing the bases opens them" in note
 
 
@@ -173,26 +175,35 @@ def test_an_empty_list_says_why(root, operator):
 
     notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
     why = fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3]
-    assert why == r.see_above("Run", notice, where="above")
-    assert "Run disabled: no workspaces folder is set (see above)." in _words_of(why)
+    assert why == r.phrase_line(notice, control="ft_run")
+    assert "Needs a workspaces folder" in _words_of(why)
     assert 'data-notice-rel="workspaces_root"' in why and "data-notice=" not in why
     assert "train one on Research › Training" in fp.bases_note_html({}, None)
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
+
+
+def _outside_and_inside(html):
+    """The summary's markup outside its one "Details ›" and inside it."""
+    start = html.index('<details class="shep-more"')
+    end = html.rindex("</details>") + len("</details>")
+    return html[:start] + html[end:], html[start:end]
 
 
 def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
     item = parents[f"gatv2/{BASE_RUN}/model-03-0.8300.pt"]
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
+    outside, inside = _outside_and_inside(html)
+    # On the line: the model fingerprint Start sends, copyable, and how its dataset stands.
+    for words in ("model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"',
+                  r.status_mark(*fp.TRAINED_ON_TAGS[None])):
+        assert words in outside, words
+    # Behind its one Details: what the selects above do not say, and the list's count.
     for words in ("Run", r.token_html(f"gatv2/{BASE_RUN}"), r.token_html("model-03-0.8300.pt"),
-                  "Configuration",
-                  r.chain_html(*r.configuration_facts(item),
-                               tail=r.model_spec_html(item["spec"])[1]),
-                  '<summary>Details ›</summary>',
-                  "Holds", "Validation", "LP accuracy (Trainer)",
-                  "0.8300", "Selection", "Trained on", "not recorded", "Split seed",
-                  "Model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
-        assert words in html, words
+                  "Configuration", r.model_spec_rows(item["spec"], "Configuration")[0][0][1],
+                  "Holds", "Validation", "LP accuracy (Trainer)", "0.8300", "Selection",
+                  "Split seed", "Server list", fp.listed_words(parents)):
+        assert words in inside, words
     # The run is named by its directory, a fact the Run select above does not
     # give; never its option's words again (the WebUI skill §1.2).
     assert r.run_words("gatv2", BASE_RUN) not in html
@@ -200,13 +211,89 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     odd = fp.base_summary_html({**item, "filename": TAG, "trained_on_this_dataset": False})
     assert "<img" not in odd and "&lt;img" in odd and "another dataset" in odd
     same = fp.base_summary_html({**item, "trained_on_this_dataset": True})
-    assert "the dataset selected" in same
     # Each state by the shared status mark (colour, shape and word; B2's
-    # leftover: no ✓ of the page's own).
-    assert r.status_mark("ok", "the dataset selected") in same
-    assert r.status_mark("warn", "another dataset than the one selected (the start refuses a "
-                                 "parent of another knowledge graph)") in odd
-    assert r.status_mark("neutral", "not recorded") in html
+    # leftover: no ✓ of the page's own), a self-naming tag.
+    assert r.status_mark("ok", "same dataset") in same
+    assert r.status_mark("warn", "another dataset: Start refuses it if its graph differs") in odd
+    assert r.status_mark("neutral", "dataset not recorded") in html
+
+
+def test_the_parents_visible_facts_are_the_declared_stage_facts(root, operator):
+    """D3, D8 and R2 (the owner's decisions of 2026-11-24: one glance tells whether the chosen
+    parent is right; the rest, about nine rows, behind the existing Details): the facts the
+    base's summary draws outside its one "Details ›" are exactly the declared stage facts
+    (`PARENT_STAGE_FACTS`, by their ``data-fact`` keys, in that order), the name and the save
+    left to the Run and Checkpoint selects over the line; every other fact (run, file,
+    configuration, holds, validation, selection, split seed, the list's count) is inside the
+    one Details, with no disclosure inside it (the skill's §1.5); a parent of another dataset,
+    or of none recorded, and a record or spec this build cannot read, say their warning outside
+    it. Fails on 9adb3c4: nine rows drawn, the configuration's own nested Details, the list's
+    line under the selects."""
+    parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
+    item = parents[f"gatv2/{BASE_RUN}/last.pt"]
+
+    def facts(markup):
+        return re.findall(r'data-fact="([^"]+)"', markup)
+
+    for case in ({}, {"trained_on_this_dataset": True}, {"trained_on_this_dataset": False},
+                 {"record": "refused"}, {"spec": {"encoder": TAG}}):
+        shown = {**item, **case}
+        html = fp.base_summary_html(shown, parents)
+        outside, inside = _outside_and_inside(html)
+        drawn = facts(outside)
+        assert drawn == [key for key in fp.PARENT_STAGE_FACTS if key in drawn], (case, drawn)
+        assert drawn[:2] == ["fingerprint", "trained_on"], (case, drawn)
+        # Outside the Details, no other fact: no key-value row, no list line.
+        assert "<dl" not in outside and "<dt" not in outside, case
+        assert "Server list" not in outside and "Split seed" not in outside, case
+        # Inside it, every other fact, as one summary list, and no second disclosure: the
+        # configuration in its rows form (`renderers.model_spec_rows`), one row per field the
+        # spec differs in, right under its "Configuration" row.
+        keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]+)', inside)
+        spec_keys = [label for label, _value in r.model_spec_rows(shown.get("spec"),
+                                                                   "Configuration")[0]]
+        assert spec_keys[0] == "Configuration", (case, spec_keys)
+        assert keys == ["Run", "File", *spec_keys, "Holds", "Validation", "Selection",
+                        "Split seed", "Server list"], (case, keys)
+        assert inside.count("<details") == 1 and inside.count("<summary>") == 1, case
+        assert html.count("<details") == 1, case
+        # A warning that changes the choice is outside the Details.
+        warnings = fp.parent_warnings(shown)
+        assert ("warnings" in drawn) == bool(warnings), (case, warnings)
+        for words in warnings:
+            assert r.status_mark("warn", words) in outside, (case, words)
+    assert fp.parent_warnings({**item, "record": "refused"}) == ["record not readable"]
+    assert fp.parent_warnings({**item, "spec": {"encoder": TAG}}) == ["model spec not readable"]
+    assert fp.parent_warnings(item) == []
+    # Another dataset, or none recorded, says its relation outside the Details too.
+    for trained in (False, None):
+        outside, _inside = _outside_and_inside(
+            fp.base_summary_html({**item, "trained_on_this_dataset": trained}, parents))
+        assert r.status_mark(*fp.TRAINED_ON_TAGS[trained]) in outside, trained
+    # The list's line says only what is to act on (an empty list, a list not read).
+    assert fp.bases_note_html(parents, None) == ""
+
+
+def test_every_field_the_parents_spec_differs_in_is_reachable_in_its_details():
+    """The L8 close (f-result's "Needs from shared" 1): the parent's one Details could hold only
+    the spec's words (`renderers.model_spec_html`), which name four differences and count the
+    rest ("and 1 more"), and a disclosure inside it would be a second level: a base differing in
+    five fields lost one. Its configuration is now the shared renderer's rows form
+    (`renderers.model_spec_rows`): a base differing in more fields than the words name shows every
+    one, each with the reference's value, and the summary keeps its one Details."""
+    from src.models.bundle.spec import reference_spec
+
+    spec = reference_spec("base", None).to_dict()
+    spec["encoder"].update(layers=2, hidden=64, heads=2, output=32)
+    spec["input"]["dim"] = 8
+    assert r.model_spec_html(spec)[0].endswith(" and 1 more")       # the words name four
+    html = fp.base_summary_html({"key": "gatv2/x/last.pt", "sha256": "a" * 64, "spec": spec})
+    assert html.count("<details") == 1
+    for path in ("encoder.layers", "encoder.hidden", "encoder.heads", "encoder.output", "input.dim"):
+        assert f'title="{path}"' in html, path
+    assert ('<dt class="shep-k">Configuration</dt><dd class="shep-v">Differs from the reference '
+            'GATv2 spec in 5 fields</dd>') in html
+    assert '<dd class="shep-v">8 (reference 2048)</dd>' in html
 
 
 def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(root, operator):
@@ -224,22 +311,19 @@ def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(ro
     seeded = fp.base_summary_html({**item, "split_seed": 7})
     assert "7 (every child trains on this split)" in seeded
     assert seeded.count("Split seed") == 1 and "Configuration" in seeded
-    # Its model: the one configuration line, and beside it the whole spec
-    # under its Details by the one renderer of a recorded spec, read from the
-    # list's spec (`record.listed_spec`, without the recipe's notes), each
-    # field that differs with the reference's value, the encoder's layers the
-    # hop list must fit among them (review of B2).
-    # Its "Details ›" ends the unit of the fact it opens, so the two move to
-    # a line together (L7 SW-LK7: drawn under "recipe changed in 5 fields"
-    # though one line held both).
-    words, details = r.model_spec_html(item["spec"])
-    assert "Unknown" not in words and details
-    *before, last = r.configuration_facts(item)
-    assert before and (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
-                       f"{r.chain_html(*before)}{r.SEP}"
-                       f'<span class="shep-fact">{r.bound_html(last)} {details}</span></dd>') in seeded
+    # Its model: the one renderer of a recorded spec in its rows form, read
+    # from the list's spec (`record.listed_spec`, without the recipe's notes),
+    # each field that differs a row with the reference's value, the encoder's
+    # layers the hop list must fit among them (review of B2), every one in the
+    # summary's one Details with no disclosure inside it (D3/D8, the skill's
+    # §1.5; the L8 close: the words named four and counted the rest away).
+    rows, _titles = r.model_spec_rows(item["spec"], "Configuration")
+    head = rows[0][1]
+    assert "Unknown" not in head and len(rows) > 1
+    assert (f'<dt class="shep-k">Configuration</dt><dd class="shep-v">{head}</dd>') in seeded
     assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>'
-            '<dd class="shep-v">1 (reference 3)</dd>') in details
+            '<dd class="shep-v">1 (reference 3)</dd>') in seeded
+    assert seeded.count("<details") == 1
     for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):
         assert not set(fp.offered_settings(tasks)) & {"split_seed", "model_spec"}
     assert not set(fp.FINETUNE_FIELDS) & fp.BASE_FACTS
@@ -1052,7 +1136,8 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     refused_running = fp.actions_view(_status(child), access=_Access(False, "deployment_mode"),
                                       gpu=None, confirming=False)
     assert refused_running["stop_shown"] is True
-    assert refused_running["stop_reason"] == refused_running["reason"]
+    assert "Operator controls only</button>" in refused_running["stop_reason"]
+    assert 'data-for="ft_stop"' in refused_running["stop_reason"]
     running = fp.actions_view(_status(child), access=_Access(True), gpu=None, confirming=False)
     assert (running["start"], running["stop"]) == (False, True) and running["stop_reason"] == ""
     assert running["stop_shown"] is True
@@ -1061,15 +1146,16 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     other = fp.actions_view({"status": "running"}, access=_Access(True), gpu=None,
                             confirming=False)
     assert (other["start"], other["stop"], other["stop_shown"]) == (False, False, False)
-    assert "a training job is running" in other["reason"]
+    assert r.need_words("a training job is running: Research › Training shows it") in (
+        other["reason"])
     stopping = fp.actions_view({"status": "stopping"}, access=_Access(True), gpu=None,
                                confirming=False)
-    assert "Stopping" in stopping["reason"] and not stopping["start"]
-    assert stopping["stop_shown"] is False
+    assert r.need_words("a training job is stopping") in stopping["reason"]
+    assert not stopping["start"] and stopping["stop_shown"] is False
     child_stopping = fp.actions_view({**_status(child), "status": "stopping"},
                                      access=_Access(True), gpu=None, confirming=False)
     assert child_stopping["stop_shown"] is True and child_stopping["stop"] is False
-    assert "Stopping: the job is ending." in child_stopping["stop_reason"]
+    assert r.need_words("this Fine-tune job is stopping") in child_stopping["stop_reason"]
     held = fp.actions_view({"status": "idle"}, access=_Access(True),
                            gpu={"text": f"GPU job: test run {TAG}"}, confirming=False)
     assert held["start"] is False and "<img" not in held["reason"]
@@ -1078,6 +1164,56 @@ def test_start_and_stop_follow_the_training_run_bars_states():
 def _words(html):
     """What a reader reads of `html`: its text, spaces collapsed."""
     return " ".join(re.sub(r"<[^>]+>", " ", html).split())
+
+
+def test_starts_reason_is_its_causes_phrase_or_one_need_line():
+    """R-WHY and SW-C11 (the owner's D6 of 2026-11-24, the lead's amendment 2): in every state
+    that dims Start, the reason beside it is either its cause's keyed phrase (D8, the GPU lock's
+    notice, the GPU held elsewhere: `renderers.reason_phrase`, naming Start in ``data-for``, so
+    its ``aria-describedby`` points at it; the setup notice it locates is not in Start's bar) or
+    one line in the page's words led by the need (`renderers.need_words`: a sentence, no
+    control's name, never "disabled", no pointer and no parenthesis); with a dimmed Stop drawn,
+    its reason the same. Fails on 9adb3c4: stopping said "Stopping: the job is ending. Start
+    waits for it." (Start named, not led by the need), and another page's running job "(Research
+    › Training)" in a parenthesis."""
+    from src.webui.components.workspaces import lock_notice
+
+    child = _child("disease", "running", "r")
+    unset = {"text": "the GPU lock cannot be used", "test": False, "unset": True,
+             "notice": lock_notice({"problem": "x", "unset": True})}
+    broken = {"text": "the GPU lock cannot be used", "test": False, "unset": False,
+              "notice": lock_notice({"problem": "x is a directory"}, operator=True)}
+    idle = {"status": "idle"}
+    states = {
+        "read-only": (idle, _Access(False, "deployment_mode"), None, "d8"),
+        "no workspaces folder": (idle, _Access(True), unset, "workspaces_root"),
+        "GPU lock not usable": (idle, _Access(True), broken, "gpu_problem"),
+        "GPU held elsewhere": (idle, _Access(True), {"text": "GPU job: test run"}, "gpu_busy"),
+        "this start's child running": (_status(child), _Access(True), None, None),
+        "another page's job running": ({"status": "running"}, _Access(True), None, None),
+        "a job stopping": ({"status": "stopping"}, _Access(True), None, None),
+        "this start's child stopping": ({**_status(child), "status": "stopping"}, _Access(True),
+                                        None, None),
+    }
+    for name, (status, access, gpu, key) in states.items():
+        view = fp.actions_view(status, access=access, gpu=gpu, confirming=False)
+        assert view["start"] is False, name
+        lines = [("Start", view["reason"], fp.START_ID)]
+        if view["stop_shown"] and not view["stop"]:
+            lines.append(("Stop", view["stop_reason"], fp.STOP_ID))
+        for control, html, control_id in lines:
+            words = _words(html).lstrip("○🔒 ").strip()
+            phrase = re.search(r'<button type="button" class="shep-why" data-why="([^"]+)"[^>]*'
+                               r'data-for="([^"]+)"', html)
+            if phrase:
+                # The cause's keyed phrase, naming its control, and nothing else beside it.
+                assert phrase.group(1) == key and phrase.group(2) == control_id, (name, control)
+                assert words == r.REASON_PHRASES[key], (name, control, words)
+            else:
+                assert key is None, (name, control, html)
+                assert words == r.need_words(words), (name, control, words)
+                assert not re.search(r"\bStart\b|\bStop\b|disabled|\bsee\b|[()]", words), (
+                    name, control, words)
 
 
 def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operator):
@@ -1110,7 +1246,7 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     # The empty Run and Checkpoint say their relation to it (the sweep's L7 check, C7: two
     # empty boxes that said nothing), never the notice again.
     assert 'data-notice-rel="workspaces_root"' in bases_note and "data-notice=" not in bases_note
-    assert "Run disabled: no workspaces folder is set (see above)." in _words(bases_note)
+    assert "Needs a workspaces folder" in _words(bases_note)
     # The notice: the state, the link, the why one click away. What it means
     # for Start is said once, by Start's relation (it said "Start is disabled
     # until one is chosen." too, the relation beside Start a line under it).
@@ -1118,10 +1254,10 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     assert "Details ›" in setup
     # No long server sentence anywhere on the form.
     assert WORKSPACES_ROOT_NOT_SET not in screen and GPU_LOCK_NOT_CONFIGURED not in screen
-    # Start's reason: a relation to the notice, on one line beside Start.
-    assert 'data-notice-rel="gpu_lock"' in reason and "Details" not in reason
-    assert "Start disabled: GPU jobs need a workspaces folder (see above)." in _words(reason)
-    assert len(_words(reason)) < 100 and _words(screen).lower().count("disabled") == 2
+    # Start's reason: the notice's phrase (R-WHY), on one line beside Start.
+    assert 'data-why="workspaces_root"' in reason and "Details" not in reason
+    assert _words(reason).endswith("Needs a workspaces folder")
+    assert len(_words(reason)) < 100 and "disabled" not in _words(screen).lower()
     # A usable folder holding no workspace: no notice; the identity line says
     # what to do in its own words.
     assert fp.setup_html(None, None) == "" and fp.identity_html({"choices": []}) == (
@@ -1142,20 +1278,23 @@ def test_starts_gpu_reason_is_one_line_relation_never_the_notice_again():
              "notice": lock_notice({"problem": "x", "unset": True})}
     above = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=unset,
                             confirming=False, said_above=True)
-    assert above["start"] is False and 'data-notice-rel="gpu_lock"' in above["reason"]
-    assert _words(above["reason"]).endswith(
-        "Start disabled: GPU jobs need a workspaces folder (see above).")
-    assert "<details" not in above["reason"]
+    assert above["start"] is False and 'data-why="workspaces_root"' in above["reason"]
+    assert _words(above["reason"]).endswith("Needs a workspaces folder")
+    assert "<details" not in above["reason"] and "see above" not in above["reason"]
+    # Said elsewhere or not: the same phrase (R-WHY: it brings the notice into view, or opens
+    # its place in Settings when the screen does not draw it), never the notice again.
     apart = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=unset,
                             confirming=False)
-    assert "(see above)" not in apart["reason"] and "<details" in apart["reason"]
-    assert "Start disabled: GPU jobs need a workspaces folder." in _words(apart["reason"])
+    assert apart["reason"] == above["reason"]
     broken = {"text": "the GPU lock cannot be used", "test": False, "unset": False,
               "notice": lock_notice({"problem": f"{TAG} is a directory"}, operator=True)}
     said = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=broken,
                            confirming=False)
-    assert "Start disabled: the GPU lock cannot be used." in _words(said["reason"])
-    assert "<img" not in said["reason"] and "&lt;img" in said["reason"]
+    # Set and not usable: its own cause, the GPU chip's reason (an operator reads the
+    # problem there), never the problem's words beside Start.
+    assert 'data-why="gpu_problem"' in said["reason"]
+    assert _words(said["reason"]).endswith("GPU lock not usable")
+    assert "<img" not in said["reason"] and "&lt;img" not in said["reason"]
     # The setup notice merges the lock's only while it follows from the folder's.
     folder = {"key": "workspaces_root", "kind": "neutral", "summary": "No workspaces folder.",
               "short": "no folder", "action": "", "target": "", "details": (), "ref": ()}
@@ -1183,7 +1322,7 @@ def test_start_and_stop_are_labelled_by_the_one_gated_rule(monkeypatch):
     assert (start["value"], start["interactive"]) == (f"🔒 {fp.START_LABEL}", False)
     assert (stop["value"], stop["interactive"]) == (f"🔒 {fp.STOP_LABEL}", False)
     for line in (reason, stop_reason):
-        assert "Operator controls only: deployment mode not set to M1" in line, line
+        assert "Operator controls only</button>" in line, line
 
 
 def test_a_failed_childs_printed_line_names_no_server_path_for_any_request(monkeypatch,
@@ -1305,6 +1444,19 @@ def test_opening_the_page_answers_starts_gate_before_reading_the_bases():
         chain.append(step.fn.__name__ if step.fn is not None else None)
     assert chain[0] == "_refresh_card", chain
     assert chain[1:4] == ["_on_finetune_bases", "_on_base_chosen", "_on_task_view"], chain
+
+
+def test_run_name_takes_the_name_role_and_the_numbers_theirs():
+    """R-WIDTH (the owner's D12 of 2026-11-24): a field's width comes from its role, never the
+    page's share of a row. Run name is a name (the shared ``shep-w-name``: its box at most a
+    name's token wide, white space beside it in a wide cell); Epochs and Seed are numbers
+    (``shep-w-num``, given by `training_console.setting_field`). Fails on 9adb3c4: Run name
+    had no role and took the whole of its cell (305 px at 1850 x 960 against the role's
+    274)."""
+    _demo, _ctx, by_id = _page()
+    assert "shep-w-name" in (by_id["ft_run_name"].elem_classes or []), by_id["ft_run_name"]
+    for name in ("num_epochs", "seed"):
+        assert tc.NUMBER_ROLE in (by_id[f"ft_{name}"].elem_classes or []), name
 
 
 def test_the_page_follows_the_contract():
@@ -1580,6 +1732,82 @@ def test_at_first_use_start_stands_on_its_bar_and_the_notice_is_said_once(tmp_pa
                 at, facts)
         else:
             assert first["left"] < start["right"], (at, facts)        # under Start, not beside
+
+
+#: **The main flow's windows** (D3/D8/R2, the owner's decisions of 2026-11-24): the owner's two
+#: windows, a laptop and the display floor.
+MAIN_FLOW_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720))
+
+#: What the main-flow walk reads at each stop: the form's scroll region (its box clipped by the
+#: window, its scroll, and the fade its cue draws over its foot while more lies under it), each
+#: Tasks option's box, and each parent select's chosen option (its whole text, and whether the
+#: box shows it whole: the shell's titled-ellipsis measure).
+_MAIN_FLOW_JS = r"""() => {
+  const body = document.querySelector('#ft_form_bd');
+  const b = body.getBoundingClientRect();
+  const masked = body.hasAttribute('data-shep-more') && !body.hasAttribute('data-shep-more-edge');
+  const fade = masked ? parseFloat(getComputedStyle(body).getPropertyValue('--shep-more-fade')) || 0 : 0;
+  const view = { top: Math.max(b.top, 0), bottom: Math.min(b.bottom, innerHeight) - fade,
+                 left: Math.max(b.left, 0), right: Math.min(b.right, innerWidth) };
+  const tasks = [...document.querySelectorAll('#ft_tasks input[type=checkbox]')].map((input) => {
+    const r = (input.closest('label') || input).getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, left: r.left, right: r.right,
+             text: (input.closest('label') || input).innerText.trim() };
+  });
+  const select = (id) => {
+    const input = document.querySelector(`#${id} input[role="combobox"]`);
+    return input ? { value: input.value, whole: input.scrollWidth <= input.clientWidth + 1 } : null;
+  };
+  return { scrollTop: body.scrollTop, view, tasks, run: select('ft_run'),
+           checkpoint: select('ft_checkpoint'),
+           facts: [...document.querySelectorAll('#ft_base [data-fact]')].map((e) => e.getAttribute('data-fact')) };
+}"""
+
+
+def test_tasks_are_in_view_with_a_parent_chosen_at_the_owner_windows_and_the_floor(root, tmp_path):
+    """**The main flow** (D3, D8 and R2, the owner's decisions of 2026-11-24: choose the data and
+    the parent, a compact parent summary, then Tasks, then the settings; the owner asked for a
+    check that Tasks can be found, not a blank-space rule). The service itself, configured on the
+    demo workspace with its listed bases, an operator, the page opened with its default parent
+    chosen, at 1850 x 960, 1550 x 830, 1366 x 768 and 1280 x 720: the parent's stage facts are
+    drawn, and every Tasks option lies inside the form's scroll region as it is shown, its
+    scroll at the top (inside its box clipped by the window, above the fade its cue draws while
+    more lies under it). Fails on 9adb3c4 at 1366 x 768 and 1280 x 720, where the parent's nine
+    rows and the list's line put the Tasks under the region's edge. **One glance** (the lead's
+    amendment 5): the Run and Checkpoint selects each show their whole chosen option at those
+    windows, since the summary's line leaves the name and the save to them."""
+    from tests.fixtures.browser import (layout_stops, node_with_playwright, state_settings,
+                                        walk_ui)
+    from tests.fixtures.served_page import served_service
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    settings = {**state_settings("first_use", tmp_path / "data"),
+                "SHEPHERD_WORKSPACES_ROOT": str(root)}
+    with served_service(tmp_path / "service", settings) as page:
+        seen = walk_ui(page, tmp_path, layout_stops(("finetune",), MAIN_FLOW_SIZES),
+                       extra_js=_MAIN_FLOW_JS)
+    assert [stop["size"] for stop in seen] == [f"{w}x{h}" for w, h in MAIN_FLOW_SIZES]
+    # Every Tasks option in view, at every window (each one out of view named).
+    out = [(stop["size"], box["text"], box, stop["extra"]["view"])
+           for stop in seen for box in stop["extra"]["tasks"]
+           if not (stop["extra"]["view"]["top"] <= box["top"]
+                   and box["bottom"] <= stop["extra"]["view"]["bottom"]
+                   and stop["extra"]["view"]["left"] <= box["left"]
+                   and box["right"] <= stop["extra"]["view"]["right"])]
+    assert out == [], out
+    for stop in seen:
+        at, facts = stop["size"], stop["extra"]
+        assert len(facts["tasks"]) == len(fp.TASKS) and facts["scrollTop"] == 0, (at, facts)
+        # The default parent is chosen and its stage facts are drawn.
+        assert facts["run"]["value"] and facts["checkpoint"]["value"], (at, facts)
+        assert facts["facts"][:2] == ["fingerprint", "trained_on"], (at, facts)
+    # One glance (the lead's amendment 5): the line leaves the parent's name and its save to the
+    # Run and Checkpoint selects over it, so each shows its whole chosen option at every window
+    # (never cut to the shell's titled ellipsis).
+    cut = [(stop["size"], name, stop["extra"][name]) for stop in seen
+           for name in ("run", "checkpoint") if not stop["extra"][name]["whole"]]
+    assert cut == [], cut
 
 
 #: The Fine-tune page served whole (the shell's layout and style sheets), the

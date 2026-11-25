@@ -2681,11 +2681,20 @@ sets nothing refuse. Since the review of 6a2d52e; before, such a start opened th
 and reported success). The
 **Data locations** panel has one row per location (Workspaces folder, Results registry, Import
 folder, Training evidence folders): what needs it, what is in effect and where it came from
-("Saved in Settings", "Set when the service started"), and a path box with:
+("Saved in Settings", "Set when the service started"), and a path box. A row with nothing in
+effect keeps its box open ("Set to"): that is the next step. A set row shows its value with
+**Change…** in the box's place (since 2026-11-24), which opens the box there ("Change to"), the
+focus in it, with **Cancel** beside Check and Save; Cancel or Escape closes it and clears what
+was typed, and a Save that changes the row closes it. Where a set row's facts stand beside its
+name, Change… sits on the line they end on, level with their "Advanced: source ›", and takes no
+line of its own (since 2026-11-25). With the box:
 
 - **Check**: the value by the same rule a job's read applies (absolute, an existing directory,
-  outside the repository for the two patient-level ones), the resolved path and what the
-  server's own lists find in it ("1 workspace");
+  outside the repository for the two patient-level ones), "● Usable" with the resolved path,
+  then on a line of its own what the server's own lists find in it ("Holds 1 workspace."); a
+  folder that holds none yet says so, then where its contents will appear ("Holds no workspace
+  yet. Each workspace built in it appears in Datasets.", or for the registry "Holds no cohort
+  version yet. Each one imported into it appears in Research › Test.");
 - **Save**: saves it and applies it at once (below); a refused value saves nothing and says why;
 - **Create suggested folder**, for a required folder that is not set: `~/SHEPHERD-data/workspaces`,
   `~/SHEPHERD-data/registry` or `~/SHEPHERD-data/import` under the service account's home,
@@ -2736,8 +2745,12 @@ notice with **Replace the unreadable file (a copy is kept)**, which renames it t
 opened (permissions, the disk) is fixed where it is and never renamed.
 
 **For a read-only browser** every path reads "Set (path hidden)", the sources stay, and every box
-and button is locked: "Operator controls only: <reason>" is said once, above the rows, and each row
-says "🔒 Operator controls only" on the line just under its box, Check and Save (since 2026-11-19).
+and button is locked. One notice above the rows says what that means, "🔒 Folder paths are hidden
+in this read-only view." (since 2026-11-24; D8's whole reason is the header chip's), and each row
+says the phrase "🔒 Operator controls only" once: on a set row beside its locked "🔒 Change…", the
+two always on one line (that of "Advanced: source ›" where the name's column holds both, otherwise
+the line under the row's facts); on any other row beside its Check and Save. The phrase opens D8's reason, and each control of its row it dims
+reads it as its description.
 A value that is set and refused
 reads "<Folder> set when the service started (or saved in Settings) is refused: an operator sees
 why in Settings › Data locations", never the refusal's own words, which repeat the value as it
@@ -3098,7 +3111,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, the rest of what every chosen task reads under More settings and the task's own settings for one task (below), and a job card with the start's graph backbone, each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
-| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are disabled with the lock, with "Operator controls only: <reason>" once, on the line just above them; the line above the two fields says the reason is beside the actions below |
+| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are dimmed with the lock, with the phrase "Operator controls only" once, beside them in their row; it names the two fields too and opens D8's reason (since 2026-11-24) |
 
 - The selected area (Diagnosis or Research) is filled and bold, and so is Settings when it is
   selected; the selected research page is underlined and bold, and a research page under the
@@ -3112,19 +3125,23 @@ help control for every field. Nothing an operator sets changed; what moved is wh
   and Settings show none.
 - No tab is ever hidden in a menu. In a narrow window, or at a large zoom, the chips and
   Settings move onto a line of their own under Diagnosis and Research (however many lines
-  those two take), so no chip covers a tab; the stage goes onto a line of its own under the
+  those two take), the chips from the brand's left edge and Settings at the line's right end
+  (since 2026-11-24), so no chip covers a tab; the stage goes onto a line of its own under the
   research pages, still at the right, and the research pages wrap when they alone do not fit.
 - The browser tab's title says where you are, for example `Training · Research —
   SHEPHERD-Advanced`. Reloading the page comes back on the page shown, with its stage: this
   browser tab keeps which page it showed (the address does not keep the location).
-- A window wider than tall shows a page side by side when the page's panels fit beside one
-  another at their own minimum widths (every page's fit at the display floor's 1280 px): the
-  page itself does not scroll, and a region too long for its space scrolls inside its own panel.
-  In a window no wider than tall, or where the panels do not fit, the regions stack and the page
-  scrolls. No fixed window size decides it. Since 2026-11-23 the layout shrinks no further than
-  a display floor of 1280 × 720 CSS pixels, or 864 × 864 for a window no wider than tall: a
-  window smaller in either direction is drawn as at its floor in that direction, and the browser
-  scrolls the whole page. The theme's smallest text is 14 px.
+- The arrangement is chosen by width (since 2026-11-24). A window wider than tall shows a page
+  side by side when it is at least 1280 CSS pixels wide and the page's panels fit beside one
+  another at their own minimum widths (every page fits at 1280 px): the page itself does not
+  scroll, and a region too long for its space scrolls inside its own panel. Any other window, one
+  no wider than tall or a landscape window too narrow for side by side (1100 × 1050, or 1233 × 640,
+  a 1850 × 960 window at 150 % zoom), stacks the regions and the page scrolls. Height never
+  changes the arrangement, and no fixed window size decides it. Side by side the layout shrinks
+  no further than a display floor of 1280 × 720 CSS pixels (since 2026-11-23): a shorter window is
+  drawn 720 px tall and the browser scrolls the whole page. Stacked, its floor is 864 px wide, with
+  no height floor: a narrower window is drawn 864 px wide and scrolls sideways. The theme's
+  smallest text is 14 px.
 - The dashboard is always drawn in its light colours, whatever dark mode the system or the
   browser asks for (its colours have no dark version, and Gradio's dark mode left its text
   unreadable on the page); the address gains `?__theme=light`. Gradio's own footer (its API
@@ -3154,8 +3171,17 @@ Its ⓘ lists every operator control, how to reach them (the SSH forward of §4.
 read-only, the full reason D8 gives. It never repeats a header's value.
 
 **A lock means refused.** The lock leads only a read-only chip. A control behind D8 shows no
-lock while D8 allows this browser's requests; while D8 refuses them it is disabled, shows the
-lock before its words, and has "Operator controls only: <reason>" beside it.
+lock while D8 allows this browser's requests; while D8 refuses them it is dimmed, shows the lock
+before its words, and has the short phrase "Operator controls only" beside it (since
+2026-11-24). D8's whole reason is said once, by the chip. The phrase is a link-styled button:
+it opens, in a bubble beside it, the chip's answer for this request (the state, D8's reason
+and its Ref line), and a screen reader reads it as the control's description. A control dimmed
+for another cause has that cause's phrase the same way: a missing setting's "Needs a workspaces
+folder", "Needs a results registry" or "Needs an import folder" (for one set and not usable,
+"Workspaces folder not usable" and the like) brings the notice that says it into view and puts
+the focus on its link; "GPU in use" and "GPU lock not usable" open the GPU chip's reason. A
+cause of the page's own is one line in the page's words, led by what it needs ("Choose a
+dataset to start."). None of them says "disabled".
 
 **GPU jobs** says which managed job holds the one GPU slot (§4.11):
 
@@ -3163,12 +3189,17 @@ lock before its words, and has "Operator controls only: <reason>" beside it.
 |---|---|
 | `GPU jobs: none` | No managed training or evaluation job is running, and no model is served on CUDA. It never says "free": the lock is cooperative (a GPU process that does not take it is not stopped by it), and inference on the CPU takes no lock |
 | `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
-| `GPU: inference (this service)` | This service serves a model on CUDA, which holds the GPU lock until an operator stops inference (§4.11). The ⓘ says where: Stop inference on Diagnosis, or `POST /api/v1/pipeline/stop`. Research's Start controls say the same beside them ("…; stop it with Stop inference on Diagnosis") |
+| `GPU: inference (this service)` | This service serves a model on CUDA, which holds the GPU lock until an operator stops inference (§4.11). The ⓘ says where: Stop inference on Diagnosis, or `POST /api/v1/pipeline/stop`. Research's Start controls show the phrase "GPU in use" beside them, which opens this ⓘ |
 | `GPU: inference (pid 41822, since 09:58 UTC)` | Another service's CUDA inference holds the lock (another server on the same workspaces root) |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
-| `GPU jobs: refused, no workspaces folder` | No workspaces folder is set, so the GPU lock is not configured and every training and test run is refused until one is chosen in ⚙ Settings › Data locations (§4.11, §4.12). *Until 2026-11-16 it read "refused, lock not configured" and named `SHEPHERD_WORKSPACES_ROOT`* |
-| `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
+| `GPU jobs: not set up` (grey ○) | No workspaces folder is set, so the GPU lock is not configured and every training and test run is refused until one is chosen in ⚙ Settings › Data locations (§4.11, §4.12); the ⓘ gives that step. *Until 2026-11-22 it read "refused, no workspaces folder", and until 2026-11-16 "refused, lock not configured", naming `SHEPHERD_WORKSPACES_ROOT`* |
+| `GPU jobs: not read yet` (grey, no mark) | The page has not read the state yet (just after it loads; the operator chip then says "Operator controls: not read yet") |
+| `GPU jobs: could not be read` (grey ○) | The read failed, so the state cannot be verified |
+| `GPU jobs: lock not usable` (red ✕) | The lock setting is set and cannot be used, so every managed GPU job is refused. The ⓘ says why, naming the path only to a browser D8 allows |
+
+Since 2026-11-24 each of these four states has its own words and look; before, "not read" stood
+for more than one of them.
 
 ### Help: the ⓘ buttons
 
@@ -3176,9 +3207,16 @@ The explanations that were printed under each field of Diagnosis, the Training C
 Runtime Settings are now behind a ⓘ after the field's name. Point at it (the bubble opens after a
 short pause, so a pointer passing over opens nothing), reach it with Tab, or click it: the help
 appears in a bubble you can move the pointer into. A click (or Enter or Space) pins it open as a
-dialog; Esc or a click elsewhere closes it. A click on the field's name still puts the cursor in
-the field. The bubble opens beside the field it explains, else above it, else below it, and never
-covers the field; it is never taller than the window: a long text scrolls inside it. What must
+dialog, whose head shows the framed Esc key beside its ×, the two one close button (since
+2026-11-25, in place of an "Esc to close" row under the text); Esc, that button or a click
+elsewhere closes it. A click on the field's name still puts the cursor in
+the field. The bubble opens beside the field it explains, above it or below it, sliding along a
+side where that helps, and never covers that field (a reason's phrase: the controls it
+explains). Of the places that fit, it takes one that covers no other control; where none holds
+the whole bubble, it opens shorter in the tallest place that covers none and still shows its
+lead and two lines, its text scrolling inside it under the scroll cue; only where no such place
+exists does it take the place over the fewest controls (since 2026-11-24). It is never taller
+than the window: a long text scrolls inside it. What must
 stay visible is still printed: a refusal's reason, a job's state, the synthetic marker, an
 unverified source, and the Training Console's AMP refusal for HGT ("Disabled: HGT requires full
 float32 …"). A screen reader reads a field's printed line under it, then its help (since the
@@ -3189,8 +3227,8 @@ ops-wiring round's B5).
 The first screen, in three panels: the patient's phenotypes, the ranked candidates, and the
 selected candidate's details (Evidence · Explanation · Matching phenotypes · Paths). Selecting a
 row (a click, or Enter on a focused row) shows that candidate in the details panel. Side by side
-(the layout rule under Navigation above) each panel scrolls inside itself; in a window no wider
-than tall the three panels stack and the page scrolls.
+(the layout rule under Navigation above) each panel scrolls inside itself; stacked (a window no
+wider than tall, or too narrow for side by side) the three panels stack and the page scrolls.
 
 **Patient ID** left blank is sent as no id: the server gives the result its own (`patient_…`), so
 results from different browsers never share one (before M5-2 a blank field was sent as
@@ -3250,7 +3288,8 @@ Run Diagnosis stays in view. It shows:
   ("○ Stopped at 10:15:00 UTC"). When no diagnosis is admitted, the server's lead is under it
   ("By an operator", or why a load was refused, naming the GPU lock's holder) and its whole
   reason one click away under "Details ›" (how to load a model, the
-  start-up settings). A load is said by this state alone, whichever page or client started it;
+  start-up settings); at first use, with no workspaces folder set, both are under the state's one
+  line's "Details ›" (the table below). A load is said by this state alone, whichever page or client started it;
 - **■ Stop inference**, while a model serves (an operator control, §4.13; locked for a read-only
   browser). It asks first: "Stop inference of model <12 hex>? Diagnoses already accepted finish;
   new ones are refused until a model is loaded. Nothing reloads one by itself." with
@@ -3275,11 +3314,11 @@ Run Diagnosis stays in view. It shows:
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example), and something is served now. × dismisses it. A stop raises none: the state says it, once, and a notice raised earlier goes |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Disabled until a model is loaded." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7) |
-| "○ Stopped at HH:MM:SS UTC", "By an operator", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Disabled until a model is loaded." |
+| "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Load a model first." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7). With no workspaces folder set (first use) the state, its cause and the next step are one line, "○ Not loaded: no workspaces folder is set. Choose one in Settings › Data locations", closed by "Details ›", which holds "Nothing has been loaded since the service started", the whole reason and the folder's rows (since 2026-11-25; before, a grey "Not loaded" tag stood over the folder's own notice) |
+| "○ Stopped at HH:MM:SS UTC", "By an operator", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Load a model first." |
 | "✕ Load refused at HH:MM:SS UTC" and why | A load (or the start-up's) was refused while nothing was served, for example "CUDA inference is refused: the GPU is in use by <holder>…" |
-| "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Disabled until a model is loaded." under Run Diagnosis; 503 for an API client). Then the card reads "Stopped" |
-| "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
+| "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Load a model first." under Run Diagnosis; 503 for an API client). Then the card reads "Stopped" |
+| "🔒 Change model…" greyed, "Operator controls only" beside it | A read-only browser (§4.13); the phrase opens D8's reason. It never sees the list of checkpoints |
 
 **The badge** above the results (§4.7) compares the result's whole served identity with the card's
 last read, and the card is read again after each diagnosis; a read that failed, or one older than
@@ -3343,13 +3382,13 @@ is checked, as before. It replaces what every browser is served once the new mod
 and published; until then nothing changes (the model in use keeps answering every browser), and
 results already produced keep their own identity. While the confirmation is
 open the list's own footer is hidden, so the from → to rows and that sentence stay in view;
-"Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is disabled:
-"Disabled: finish or cancel the model change first." Once "Reload with <new>" is clicked, the
+"Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is dimmed:
+"Finish or cancel the model change first." Once "Reload with <new>" is clicked, the
 confirmation shows only this page's wait ("Reload sent; waiting for the server's answer… 00:00:42") and
 Close (closing does not stop it; after 180 s, Read again and Close), so a second reload cannot
 be asked for. The card says the load by the server's own state, "Loading", as it says a load
-any other page or client started, and Run Diagnosis says "Disabled until the model load started
-here answers." Cancel or × closes the drawer without reloading. While the reload runs, Close or
+any other page or client started, and Run Diagnosis says "The model load started here has not
+answered yet." Cancel or × closes the drawer without reloading. While the reload runs, Close or
 × closes the drawer at once and the reload goes on (it cannot be stopped): the card goes on
 reading the server's state, and when the reload answers, the card shows the model then in use
 and its outcome is not shown again; "Change model…" meanwhile opens the drawer again on the
@@ -3449,8 +3488,9 @@ a run.
 **The run bar** never scrolls:
 
 - **Dataset**: the server's workspace list, the same as Datasets'; each option is the workspace's
-  name (one that cannot be trained also says why), its identity said once, by the chip beside the
-  select. Choosing one reads its manifest and record, and the chip shows when it was built, the
+  name (one that cannot be trained also says why), its identity said once, by the facts line
+  under Dataset and Run name (beside the select only while the whole bar stands on one line,
+  below). Choosing one reads its manifest and record, and that line shows when it was built, the
   dataset fingerprint
   (Copy gives all 64), `synthetic`, whether the record is verified and **Details ›** (the
   fingerprint, the build time, the sources, the counts and seeds, one a row, the manifest's files
@@ -3466,11 +3506,23 @@ a run.
   or stops, a green ● when it completed, the red ✕ only when it failed. A failed or stopped run is
   never green. Idle is the normal state, so its pill is plain muted text, not a lozenge. The pill
   is always the training job's, whatever run the run view shows.
-- **Run name**, then **one reason line** saying why an action drawn is disabled: D8's reason for
-  a read-only browser ("Operator controls only: request not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
-  "GPU job: train_model.py (pid …, since …)", or "GPU: inference (this service); stop it with
-  Stop inference on Diagnosis" while a model is served on CUDA; the job runner refuses a start
-  itself either way). With nothing drawn disabled there is no reason line.
+- **Run name**, beside Dataset. Since 2026-11-24 the bar is two groups: what you set (Dataset and
+  Run name, the facts line under them) and what you do (Start, Continue… and Stop, the job's
+  state under them). It stands on one line only while the facts line is the dataset's identity
+  and nothing is said beside the actions, where the row holds it (1850 × 960 with a dataset
+  chosen, for example); narrower, the groups move whole. **With no dataset chosen** the facts
+  line says why, once on the screen, in the shared notice's form with its next step and
+  **Details ›**: at first use "○ No workspaces folder is set. Training needs one. Choose one in
+  Settings › Data locations" (the GPU lock's rows in its Details), with a folder that lists no
+  dataset "The server lists no dataset yet." with "Build one on the server with a command in
+  Datasets ›", with datasets listed and none chosen "Choose a dataset to start."; Start and
+  Continue… are dimmed with nothing of their own beside them (that line names them, and a
+  screen reader reads it as their description). **A cause of the actions' own** is a short
+  phrase beside them: "Operator controls only" for a read-only browser (it opens D8's reason),
+  "GPU in use" while another job or this service's CUDA inference holds the GPU (it opens the
+  GPU chip's reason; **Open Test ›** after it for a test run), or "GPU lock not usable"; the job
+  runner refuses a start itself either way. While a training job runs or stops, its state under
+  the actions is why Start and Continue… are dimmed. With nothing dimmed there is no phrase.
 - **Start, Continue…, Stop.** Stop is drawn only while a training job runs or stops. It asks first: "Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none yet,
   this run cannot be continued. Once it has stopped, the page says where it can be continued
@@ -3740,12 +3792,14 @@ reason (R-49), and its **Run name** stays, naming the new run the drawer starts,
 branched (as `--run-name` and `POST /api/v1/training/branch` name one); the drawer's one closer
 is **Close** in its header. **4.
 Start**, the drawer's footer under its fields, holds **Continue Training** (or **Start branch**),
-with the start's reason beside it, which says what stops it and what to do:
-"Start branch disabled: the parent’s dataset is not this workspace’s current one.", "… the check
-refuses a setting you edited; change it, then check again.", "… the checkpoint changed since it
-was chosen. Refresh the list, then check it again.", "… the typed path is not a checkpoint the
-run list holds. …" or "… the check says this checkpoint cannot be branched." (the check says
-why). It is said once: a start the check refuses, a path the list does not hold included, adds
+with the start's reason beside it, which says what stops it and what to do in the page's words,
+led by what it needs (since 2026-11-24): "The parent’s dataset is not this workspace’s current
+one.", "The check refuses a setting you edited. Change it, then check again.", "The checkpoint
+changed since it was chosen. Refresh the list, then check it again.", "The typed path is not a
+checkpoint the run list holds. …" or "The check says this checkpoint cannot be branched." (the
+check says why); "A training job is running." or "The training job is stopping." while one does;
+a cause with a phrase of its own is that phrase ("Needs a workspaces folder", which moves to the
+run bar's notice, "GPU in use", "Operator controls only"). It is said once: a start the check refuses, a path the list does not hold included, adds
 no notice of its own, and one the job runner refuses after the check (a parent changed since) says so there,
 led by the red ✕ of a refusal. In a wide window the footer stays in view while the drawer's body scrolls, and after a check the body scrolls to show its answer.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
@@ -3776,7 +3830,7 @@ trains in a run directory of its own. The drawer has
 its own **Device** (auto, cuda or cpu), which starts from the
 parameters' Device each time it opens and is what Check checkpoint and the start use. On a host
 with no CUDA device every Device field (the parameters', the drawer's, Fine-tune's) says so under
-its label, "No CUDA device here: auto and cuda are refused; choose cpu.", and the refusal itself,
+its label, "No CUDA device here: auto and cuda are refused. Choose cpu.", and the refusal itself,
 from Check checkpoint or any start, is said in the page's words: "Device auto needs CUDA, which
 is not available here; choose cpu for development. Nothing was started." (the training process's
 own sentence names its `--device` flag; R-32).
@@ -3789,8 +3843,8 @@ select lists the run bar's workspace's runs, latest first (listed again every 10
 page is open, so a run started from the CLI appears once it writes its first checkpoint), each
 named as the Run select names a run ("ui-live-stop-02 · GATv2 2026-10-24 17:39"); the option's
 value is the run's full id, so the words never change which run is read. Choosing one shows that
-run's curves and Export CSV, and nothing else changes: the run bar, its status pill, its reason
-line, its actions and a failed job's banner always show the training job. Without a choice, the
+run's curves and Export CSV, and nothing else changes: the run bar, its status pill, its phrase,
+its actions and a failed job's banner always show the training job. Without a choice, the
 view follows the run the job runner started last or, before one since the server started, the
 workspace's latest run; a choice holds while the run bar shows the workspace it was made for and
 no job has started since (a new job is shown as it starts; another workspace shown in between does
@@ -3869,8 +3923,8 @@ directory, or is no longer listed. Under it, the resources line (GPU and memory)
   asks again every 3 s, up to 20 times; a run already drawn keeps its charts while its newer
   epochs are asked for again.
 
-**A read-only browser** sees the same page with every action disabled and D8's reason, and no
-checkpoint is opened for it: the run header's tag says "dataset not shown · operator control",
+**A read-only browser** sees the same page with every action dimmed and the phrase "Operator
+controls only" beside them, which opens D8's reason, and no checkpoint is opened for it: the run header's tag says "dataset not shown · operator control",
 its state gives only the run's state, and the parent list is not shown. The Viewing select, the
 metrics, the charts and the dataset records are read for it as for an operator.
 
@@ -3941,14 +3995,13 @@ it. Three panels:
   **Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
-  measuring when the file or the version it reads holds other bytes. Start says why it is off:
-  what holds the GPU first, in the GPU chip's words as Training's and Fine-tune's starts say it
-  ("Disabled: GPU job: training (job runner).", "Disabled: GPU: inference (this service); stop
-  it with Stop inference on Diagnosis." while a model is served on CUDA), since no choice
-  enables it while that lasts,
-  then a choice missing or another
-  graph; with the workspace's checkpoints listed and none chosen, "Disabled: choose the run, then
-  the checkpoint to test.", the one place the page asks for that choice. A measurement's refusal
+  measuring when the file or the version it reads holds other bytes. Start says why it is off,
+  beside it: what holds the GPU first, by the phrase "GPU in use" as Training's and Fine-tune's
+  starts say it (it opens the GPU chip's reason: the holder, and where to stop this service's
+  inference when a model served on CUDA holds it; since 2026-11-24), since no choice enables it
+  while that lasts, then a choice missing or another graph, in the page's words led by what it
+  needs; with the workspace's checkpoints listed and none chosen, "Choose the run, then the
+  checkpoint to test.", the one place the page asks for that choice. A measurement's refusal
   names it by its words, its protocol name only in a trailing "Ref:" ("…which the
   patients-like-me measurement needs. Import a source that lists causal_genes. Ref:
   patients_like_me."). The job's title row shows its state (Running, Completed, Failed in red,
@@ -4058,13 +4111,13 @@ problems listed by case index (at most 10), never by case id; the command-line p
 prepares again from the same inputs and commits under the preview id shown: a form changed
 since the preview, or a source or graph changed since, is refused. One preview or commit runs
 at a time; after a commit the drawer closes and the new version is chosen. Side by side the
-drawer lies over Run and Result inside the page; stacked (in a window no wider than tall: the
-layout rule under Navigation), it is an overlay at the window's right edge. Either way it
+drawer lies over Run and Result inside the page; stacked (a window no wider than tall, or too
+narrow for side by side: the layout rule under Navigation), it is an overlay at the window's right edge. Either way it
 scrolls inside, and when it opens the keyboard focus moves to its title.
 
 A **read-only browser** sees the versions, their reports and states, the job and the results:
-every control is disabled with "Operator controls only: <reason>" (the note's Who and What
-fields too), and the checkpoint list is not shown. Every control checks its own request in the
+every control (the note's Who and What fields too) is dimmed with the phrase "Operator controls
+only" beside it, which opens D8's reason, and the checkpoint list is not shown. Every control checks its own request in the
 backend (§4.13). No absolute server path is shown: a path under the registry, the workspaces
 root, the intake directory, an evidence directory or the repository is written under its name
 (`<registry>/versions/…`), any other as "a server path".
@@ -4210,12 +4263,15 @@ the Parent row shortens it); any warning, with ▲; and three segments:
   these weights cannot be read as a result; it is kept as written." and a small table, Index ·
   Registration · Report · Reason (a sequence or report digest it does not carry readably reads
   "not readable"); the segment then reads "Recorded results · 3 (1 not readable)". With no record
-  the segment says so per cause and gives the next step, naming no file ("No recorded result
-  yet": none is registered beside this checkpoint, which does not mean these weights were never
-  evaluated; "Next: start a test of it with Register when the run ends checked; its result then
-  appears here." and the action "Test this model ›", which opens the Test page with this
-  workspace and checkpoint chosen; the read-only view says recording a result is an operator
-  control, with no action), and a segment with nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
+  the segment says its state on one line with **Details ›** and gives one action, naming no file
+  (since 2026-11-24): "○ No recorded result yet" (or "No recorded result for these weights" when
+  the results beside this checkpoint are of other weights), then "Test this model ›", which opens
+  the Test page with this workspace and checkpoint chosen. Its Details holds the why (none is
+  registered beside this checkpoint, which does not mean these weights were never evaluated: a
+  result registered beside another copy of them is not shown here) and the next step ("Start a
+  test of it with Register when the run ends checked. Its result then appears here."). The
+  read-only view says in view that recording a result is an operator control, with no action. A
+  segment with nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
   group's notes included (`contest.notes`, `contest.notes_readable` in its answer);
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
@@ -4301,8 +4357,8 @@ the Parent row shortens it); any warning, with ▲; and three segments:
 it covers the detail while it is open, its buttons stay in view under its table however short
 the window, and Close returns to the detail with the same checkpoint still selected). Beside it,
 once a row it can serve is selected, a note says what it does in plain words ("Serves this model
-for diagnosis once you confirm the change. Results already recorded keep the model they were
-made with."); nothing before a selection. It is off,
+for diagnosis once you confirm."; the confirmation says that results already produced keep
+their own identity); nothing before a selection. It is off,
 with the reason beside it, for a base and for a file whose record cannot be read, before anything
 is read ("Record not readable: written before the model spec: not readable by this build; start
 a new run." for a file without a model spec). A Load
@@ -4310,8 +4366,8 @@ writes nothing to a usage history. The page is read when it is shown, when the w
 and after every Load, including one that changed nothing served (a refused reload, the model in
 use loaded again), so what changed meanwhile is shown; nothing on it runs on a timer.
 
-**Stacked** (in a window no wider than tall, where the regions stack under one another: the
-layout rule under Navigation), choosing a row scrolls to its detail and moves the keyboard focus
+**Stacked** (a window no wider than tall, or too narrow for side by side, where the regions stack
+under one another: the layout rule under Navigation), choosing a row scrolls to its detail and moves the keyboard focus
 there; **↑ Back to the list** in the detail's header
 returns to the row.
 
@@ -4320,8 +4376,8 @@ returns to the row.
 **Settings** has two panels since 2026-11-16: **Data locations** on the left (above at a narrow
 width), where the workspaces folder, the results registry, the import folder and the training
 evidence folders are chosen, checked, saved and applied (§4.12), and **Runtime settings** on the
-right. A first start says "○ Nothing is set yet …" and offers a suggested folder for each
-required row; every other page opens as usual, and a page that needs a folder says so in its own
+right. A first start says "○ Nothing is set yet. Each folder is needed only by what its row names."
+with **Details ›** and offers a suggested folder for each required row; every other page opens as usual, and a page that needs a folder says so in its own
 place, pointing to Settings › Data locations.
 
 **Runtime settings** (one panel since the ops-wiring round's B5) says first what runs and what is
@@ -4345,15 +4401,15 @@ terminal to stop it from). Stop service asks once ("Stop the service? …", Stop
 Cancel), is off while a GPU job runs, and then stops the backend through its orderly stop, the
 one a SIGTERM starts; the log names it ("Stopping the service (pid N): asked for by Stop service in
 Settings."). Start it again from its desktop entry or `launch_shepherd.sh`. For a read-only
-browser the fields cannot be changed and every button shows the lock, with "Operator controls
-only: <reason>" beside them.
+browser the fields cannot be changed and every button shows the lock, with the phrase "Operator
+controls only" beside them, which opens D8's reason.
 
 **The runtime line** at the foot of every page leads with what a problem costs, then its cause:
 "▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0. Check the
 driver and CUDA libraries." (a ✕ in red when a capability is gone, such as "GNN scoring cannot
 run: torch is not importable (…)"); with no problem it reads "Runtime: every checked module
 imports.". The versions (torch, CUDA, PyG, the native extensions, Voyager) are one click away
-under **Versions ›**. `GET /api/v1/system/runtime` returns the same issues in the same words.
+under **Versions ›**. `GET /api/v1/system/runtime` also returns these sentences, in its `issues` list.
 
 ## 4.15 PyTorch Geometric's version (since Batch 1, 2026-10-26)
 

@@ -1303,6 +1303,30 @@ def test_a_model_spec_is_said_by_its_differences_its_whole_one_click_away():
 _REPR = re.compile(r"(?<!\w)'[^'\n]*'(?!\w)|\bNone\b|\bTrue\b|\bFalse\b")
 
 
+def test_a_model_specs_rows_form_names_every_difference_with_no_disclosure():
+    """The L8 close (f-result's "Needs from shared" 1): a list that is itself one click away
+    (Fine-tune's parent Details) could hold only the spec's words, four differences named and the
+    rest counted. The rows form (`model_spec_rows`) says the spec by its relation to its reference
+    in `label`'s row, then every field that differs on a row of its own with the reference's
+    value (its dotted path the title), and draws no disclosure; a spec at its reference or one not
+    read is its one row, in `model_spec_html`'s words."""
+    data = _spec(encoder__layers=2, encoder__hidden=64, encoder__heads=2, encoder__output=32,
+                 input__dim=8)
+    assert r.model_spec_html(data)[0].endswith(" and 1 more")
+    rows, titles = r.model_spec_rows(data, "Configuration")
+    assert rows[0] == ("Configuration", "Differs from the reference GATv2 spec in 5 fields")
+    named = dict(rows[1:])
+    assert len(named) == 5 and set(titles) == set(named), rows
+    assert set(titles.values()) == {"encoder.layers", "encoder.hidden", "encoder.heads",
+                                    "encoder.output", "input.dim"}
+    assert named["Encoder › Layers"] == "2 (reference 3)"
+    assert "<details" not in r.summary_list(rows, titles=titles)
+    assert r.model_spec_rows(_spec(), "C") == ([("C", r.model_spec_html(_spec())[0])], {})
+    assert r.model_spec_rows(None, "C") == ([("C", r.model_spec_html(None)[0])], {})
+    unread = r.model_spec_rows(_spec(encoder__kind=HOSTILE), "C")[0][0][1]
+    assert HOSTILE not in unread and "Unknown: not read as a model spec" in unread
+
+
 def _bordered_classes(css: str) -> set:
     """The classes a rule draws a border around (``border:`` not 0/none),
     by the last compound of each selector."""
@@ -1720,63 +1744,123 @@ def test_several_notices_share_one_step_in_the_sources_words_and_group_their_det
     assert r.e(ss.CHOOSE_IN_DATA_LOCATIONS) in re.sub(r"<[^>]+>", "", r.notices_block([ws]))
 
 
-def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
-    ws, gpu, _registry = _notices()
-    rel = r.see_above("Start", ws)
-    assert rel.startswith('<p class="shep-reason shep-nb-rel" data-notice-rel="workspaces_root">')
-    assert ">Start disabled: no workspaces folder is set.</span>" in rel
-    assert "data-notice=" not in rel and "<details" not in rel
-    assert (">Import disabled: GPU jobs need a workspaces folder "
-            '<span class="shep-unit">(see Data).</span></span>') in r.see_above(
-        "Import", gpu, where="Data")
-    assert r.relation_words("Import", gpu, where="Data") == (
-        "Import disabled: GPU jobs need a workspaces folder (see Data).")
-    assert "<details" in r.see_above("Start", gpu, details=True)
-    assert r.see_above("Start", None) == "" and r.relation_words("Start", None) == ""
-
-
-def test_a_disabled_control_is_said_one_way_and_marked_one_way_on_every_page(monkeypatch):
-    """C11 (the L6 check): one disabled state read "Start unavailable: …" on
-    Training and Datasets, "Start disabled: …" on Fine-tune and Test, and
-    "Disabled: …" or "Not available: …" for a page's own reasons; the
-    relations led with ○, Training's and Fine-tune's own reasons with a glyph
-    of their own (⊖), Test's with none. Now every page's reason beside or
-    under a disabled control names it, says "disabled" (`disabled_words`,
-    `relation_words`) and leads with one mark: the relation's ○ for a setting
-    not yet set, `DISABLED_MARK` (the same ○, grey) for a page's own reason."""
-    import re
-
+def test_a_dimmed_controls_words_never_say_disabled_or_see_above(monkeypatch):
+    """SW-C11 (the owner's D6 of 2026-11-24, `research.md` §5): every page's line beside a
+    dimmed control said "<control> disabled: <cause>" (`disabled_words`), and a relation to a
+    notice added "(see above)" or "(see Data)" (`see_above`), which may point at a reason that
+    has scrolled away. The dimmed look already says the control cannot be used (Apple's style
+    guide): the words now say what it needs or who can act. A keyed cause is its phrase
+    (`reason_phrase`, R-WHY); a local cause one sentence in the page's words led by the need
+    (`need_words`: capitalised, a full stop, no control's name). One mark leads each line: the
+    neutral ○ (`DISABLED_MARK`), or the lock for a request D8 refuses."""
     from src.webui.components import datasets_page as dsp
     from src.webui.components import finetune_page as fp
     from src.webui.components import test_page as tp
     from src.webui.components import training_console as tc
+    from src.webui.components.chips import LOCK
 
+    assert not hasattr(r, "disabled_words") and not hasattr(r, "see_above")
+    assert not hasattr(r, "relation_words") and not hasattr(r, "DISABLED")
+    assert r.need_words("choose a dataset to start") == "Choose a dataset to start."
+    assert r.need_words("Load a model first.") == "Load a model first."
+    assert r.need_words("") == "" and r.need_words(None) == ""
     ws, _gpu, _registry = _notices()
-    relation_mark = re.search(r'<span class="shep-nb-mark[^"]*"[^>]*>[^<]*',
-                              r.see_above("Start", ws))
-    assert relation_mark and r.DISABLED_MARK.startswith(relation_mark.group(0))
-    assert r.disabled_words("Start", "x.") == "Start disabled: x."
-    # Every page's lines, the relations and the pages' own reasons alike.
     access = type("A", (), {"allowed": True, "condition": None})()
+    refused = type("A", (), {"allowed": False, "condition": "not_loopback"})()
     training = tc._run_bar_actions({"status": "idle"}, {"choices": []}, {}, access=access,
                                    active=None, gpu=None)
+    chosen = tc._run_bar_actions({"status": "idle"}, {"choices": ["w"]}, {}, access=access,
+                                 active=None, gpu=None)
+    locked = tc._run_bar_actions({"status": "idle"}, {"choices": []}, {}, access=refused,
+                                 active=None, gpu=None)
     finetune = fp.actions_view({"status": "running"}, access=access, gpu=None, confirming=False)
     page = {"access": {"allowed": True}, "workspaces": []}
     test_start = tp.start_reason_html(page, True, False, tp.start_state(
         page, {}, None, None, None, None, ("", ""))[1])
+    first_use = {"access": {"allowed": True}, "workspaces": [], "workspaces_notice": ws}
     test_import = tp.import_reason_html({"access": {"allowed": True}, "workspaces": []}, None)
     datasets = dsp.use_note_html({"rows": [{"name": "w", "trainable": False,
                                             "manifest": "absent"}]}, "w")
-    lines = {"Training": training["reason"], "Training drawer": training["drawer_reason"],
-             "Fine-tune": finetune["reason"],
-             "Test start": test_start, "Test import": test_import, "Datasets": datasets,
-             "relation": r.see_above("Use for training", ws)}
+    lines = {"Training": training["facts"], "Training drawer": training["drawer_reason"],
+             "Training chosen": chosen["facts"], "Training locked": locked["phrase"],
+             "Fine-tune": finetune["reason"], "Test start": test_start,
+             "Test import": test_import, "Test run": tp.listing_why_html(first_use, {}),
+             "Datasets": datasets, "phrase": r.phrase_line(ws, control="b")}
     for where, html in lines.items():
-        words = re.sub(r"<[^>]+>", "", html).replace(r.STATUS_MARKS["neutral"][0], "").strip()
-        assert re.match(r"[A-Z][\w …]* disabled: \S", words), (where, words)
+        words = re.sub(r"<[^>]+>", "", html).replace(r.STATUS_MARKS["neutral"][0], "")
+        words = words.replace(LOCK, "").strip()
+        assert words and words[0].isupper(), (where, words)
+        assert not re.search(r"\bdisabled\b|\bsee (above|below)\b|the reason is with", words,
+                             re.I), (where, words)
         assert "unavailable" not in words and "Not available" not in words, (where, words)
-        assert html.count(r.STATUS_MARKS["neutral"][0]) == 1, (where, html)
-        assert "<svg" not in html, (where, html)
+        marks = html.count(r.STATUS_MARKS["neutral"][0]) + html.count("shep-lock") + html.count(
+            LOCK)
+        assert marks == 1, (where, html)
+    # A local cause is a sentence led by the need, never the control's name.
+    assert re.sub(r"<[^>]+>", "", chosen["facts"]).endswith("Choose a dataset to start.")
+    assert "Start" not in re.sub(r"<[^>]+>", "", chosen["facts"])
+    # A keyed cause is its phrase, a link keyed to its one source.
+    assert 'data-why="workspaces_root"' in lines["Test run"]
+    assert 'data-why="d8"' in locked["phrase"] and 'data-for="shep-train-start' in locked["phrase"]
+
+
+def test_a_reason_phrase_is_five_words_at_most_keyed_and_focusable():
+    """R-WHY (the owner's D6 of 2026-11-24): a read-only Settings said D8's reason in 8 places
+    (50 words), and a dimmed Start said its cause again beside it ("Start disabled: …", "(see
+    above)"). Beside each dimmed control now stands one phrase of five words at most from one
+    table, one per cause (two causes never one phrase), a focusable link-styled button keyed to
+    its one reason source (``data-why``): a chip's hidden text by its document id (the one help
+    bubble reads it), or a notice by its keys. It names the control it explains (``data-for``,
+    which the shell's head script turns into the control's ``aria-describedby``)."""
+    from src.config import server_settings as ss
+    from src.webui.components import chips
+    from src.webui.components import workspaces as w
+
+    phrases = list(r.REASON_PHRASES.values())
+    assert len(set(phrases)) == len(phrases), phrases
+    for key, phrase in r.REASON_PHRASES.items():
+        assert 1 <= len(phrase.split()) <= 5 and phrase[0].isupper(), (key, phrase)
+        assert not re.search(r"\bdisabled\b|\bsee (above|below)\b", phrase, re.I), phrase
+    assert {"d8", "workspaces_root", "registry", "intake", "gpu_busy", "gpu_problem"} <= set(
+        r.REASON_PHRASES)
+    d8 = r.reason_phrase("d8", control="shep-train-start")
+    assert d8.startswith('<button type="button" class="shep-why" ')
+    assert 'disabled' not in d8 and 'tabindex="-1"' not in d8
+    for attr in ('data-why="d8"', f'id="{r.why_id("shep-train-start")}"',
+                 'data-for="shep-train-start"', f'aria-describedby="{chips.D8_WHY_ID}"',
+                 f'data-help-title="{chips.CHIP_TITLES["d8"]}"'):
+        assert attr in d8, (attr, d8)
+    assert re.sub(r"<[^>]+>", "", d8) == "Operator controls only"
+    # A notice's cause: keyed to the notice the screen draws (its own key and the one it
+    # follows from), with its place in the GUI for a screen that does not draw it.
+    ws = w.setting_notice(ss.workspaces_root({}))
+    lock = w.lock_notice({"problem": "x", "unset": True})
+    for notice in (ws, lock):
+        html = r.reason_phrase(notice, control="b")
+        assert 'data-why="workspaces_root"' in html and "Needs a workspaces folder" in html
+        assert "workspaces_root" in re.search(r'data-why-notice="([^"]*)"', html).group(1)
+        assert 'data-why-go="settings"' in html and "aria-describedby" not in html
+    assert 'data-why-notice="gpu_lock workspaces_root"' in r.reason_phrase(lock)
+    # Set and not usable is a cause of its own, never the unset one's phrase.
+    assert r.reason_key(w.lock_notice({"problem": "x", "unset": False})) == "gpu_problem"
+    broken = w.setting_notice(ss.cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
+    assert r.reason_key(broken) == "registry_unusable"
+    assert r.reason_key(w.setting_notice(ss.cohort_registry({}))) == "registry"
+    assert r.reason_phrase(None) == "" and r.reason_key("nothing") is None
+    # The line form: the neutral mark, or the lock for a request D8 refuses.
+    assert '<span class="shep-nb-mark shep-st-neutral" aria-hidden="true">○' in r.phrase_line(
+        "gpu_busy")
+    assert chips.LOCK in r.phrase_line("d8", lock=True)
+    # The chips carry the cause their reason is (``data-reason``), the phrase's source.
+    assert 'data-reason="d8"' in chips.chip_html(chips.d8_chip(type("A", (), {
+        "allowed": False, "condition": "not_loopback", "reason": "x"})()), which="d8")
+    # The phrase reads 4.5:1: the accent text on the page's white.
+    from src.webui.style import SHELL_CSS
+    from tests.unit.test_webui_button_contrast import contrast
+    rule = SHELL_CSS[SHELL_CSS.index(".gradio-container button.shep-why {"):].split("}", 1)[0]
+    assert "color: var(--shep-accent-text)" in rule
+    accent = re.search(r"--shep-accent-text: (#[0-9a-f]{6})", SHELL_CSS).group(1)
+    assert contrast(accent, "#ffffff") >= 4.5
 
 
 PAYLOAD = "<img src=x onerror=alert(1)>"
@@ -1793,7 +1877,7 @@ def test_every_part_of_a_notice_is_escaped():
     html = (r.notice_block(bad, consequence=PAYLOAD, also=(dict(bad, key="b"),), steps=(PAYLOAD,))
             + r.notices_block([bad, dict(bad, key="c", target="x")], consequence=PAYLOAD)
             + r.notices_block([bad, dict(bad, key="d")], consequence=PAYLOAD)
-            + r.see_above(PAYLOAD, bad, where=PAYLOAD, details=True)
+            + r.phrase_line(bad, control=PAYLOAD)
             + r.notice_block(PAYLOAD) + r.literal_html(PAYLOAD) + r.token_html(PAYLOAD))
     assert "<img" not in html and "onerror=alert(1)>" not in html
     assert "&lt;img src=x onerror=alert(1)&gt;" in html
@@ -1843,19 +1927,15 @@ def test_a_line_never_parts_a_count_from_its_unit_or_a_date_from_its_time():
     assert pieces(r.bound_html(name)) == ["2026-10-02 00:00", "1 epoch"]
     assert text(r.bound_html(name)) == name
     assert pieces(r.bound_html("recorded epoch 9")) == ["epoch 9"]
-    assert pieces(r.bound_html("Start disabled: no results registry is set (see Data).")) == [
-        "(see Data)."]
+    assert pieces(r.bound_html("No results registry is set (see Data).")) == ["(see Data)."]
     assert pieces(r.bound_html("The selected workspace (measured, always)")) == [
         "(measured, always)"]
     # A digest, a version and a longer parenthesis keep their own breaks; words are escaped.
     assert pieces(r.bound_html("3fa9c1e2b7d0 Copy")) == []
     assert pieces(r.bound_html("(a clause of more than three words)")) == []
     assert text(r.bound_html("<b>2 runs</b>")) == "<b>2 runs</b>" and "<b>" not in r.bound_html("<b>")
-    # Every chain fact and relation draws its words so.
+    # Every chain fact draws its words so.
     assert '<span class="shep-unit">1 epoch</span>' in r.chain_html(name)
-    relation = r.see_above("Start", {"key": "k", "kind": "neutral", "short": "no folder is set"},
-                           where="Data")
-    assert '<span class="shep-unit">(see Data).</span>' in relation
     # A notice's sentence too (its Details rows, its steps), its tokens still code.
     said = r.literal_html("Choose one in Settings › Data locations (Create suggested folder)")
     assert pieces(said) == ["(Create suggested folder)"]
@@ -1993,3 +2073,132 @@ def test_text_that_wraps_leaves_no_word_alone_and_keeps_a_place_whole(tmp_path):
     assert all(p["bare"] == [] for p in seen["place"]), [p for p in seen["place"] if p["bare"]][:2]
     assert seen["hover"]["place"] == seen["hover"]["link"], seen["hover"]
     assert all(s["below"] and s["edge"] for s in seen["source"]), seen["source"]
+
+
+def test_a_notices_details_closes_its_lead_line():
+    """R-DETAILS (the owner's C of 2026-11-24: at 1850 x 960 the run bar's notice said its one
+    line and then "Details ›" on a line of its own under it). A notice's "Details ›" now closes
+    its lead's line: the disclosure is inside the line's words (after the next step's link), so
+    its summary sits on the line's last row where it has room and its rows open under the line,
+    on the words' edge. A line holding a disclosure is a ``div`` (a ``<details>`` is no content of
+    a ``<p>``). Shared: one notice (`notice_block`) and several (`notices_block`)."""
+    ws, _gpu, registry = _notices()
+    one = r.notice_block(ws)
+    line = re.search(r'<div class="shep-nb-line">(.*)</div></div>$', one, re.S)
+    assert line, one
+    words = re.search(r'<span class="shep-nb-text">(.*)</span>$', line.group(1), re.S).group(1)
+    assert words.index("data-shep-go") < words.index('<details class="shep-more shep-nb-more">'), words
+    assert one.count("<details") == 1 and "<p class=\"shep-nb-line\"" not in one
+    # With no rows there is no disclosure, and the line stays a paragraph.
+    bare = r.notice_block({**ws, "details": (), "ref": ()})
+    assert "<details" not in bare and '<p class="shep-nb-line">' in bare
+    # Several notices: "Details ›" closes the block's last line (its next step's).
+    both = r.notices_block([registry, ws], consequence="Testing waits for both.")
+    last = re.search(r'<div class="shep-nb-next">(.*)</div></div>$', both, re.S)
+    assert last and "Testing waits for both." in last.group(1) and "<details" in last.group(1)
+    assert both.count("<details") == 1
+    from src.webui.style import SHELL_CSS
+    assert ":is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline !important;" in SHELL_CSS
+
+
+def _every_notice():
+    """**Every notice a page can draw, by name** (K6 part 3): each `server_settings.Notice`, each
+    setting set and not usable (`workspaces.setting_notice`'s ``_not_usable`` variant), the GPU
+    lock's problem for an operator and for anyone else (`workspaces.lock_notice`), and the one
+    step several notices share (`renderers._shared_step`: their one action, else their place's)."""
+    from types import SimpleNamespace
+
+    from src.config import server_settings as ss
+    from src.webui.components import workspaces as ws
+
+    found = {name: ws.notice_view(value) for name, value in vars(ss).items()
+             if isinstance(value, ss.Notice)}
+    for variable, base in ws.NOTICES.items():
+        unusable = SimpleNamespace(variable=variable, available=False, unset=False, problem="x")
+        found[f"{base.key} not usable"] = ws.setting_notice(unusable)
+    for operator in (True, False):
+        found[f"gpu lock problem operator={operator}"] = ws.lock_notice(
+            {"problem": "the folder is read-only", "unset": False}, operator=operator)
+    keyed = [ws.notice_view(n) for n in (ss.WORKSPACES_ROOT_NOTICE, ss.REGISTRY_NOTICE)]
+    found["several, one action"] = r._shared_step(keyed)
+    found["several, one place"] = r._shared_step(
+        [keyed[0], found["registry not usable"]])
+    return found
+
+
+def test_every_notices_action_ends_with_its_targets_place_and_the_link_binds_it():
+    """K6 part 3 (the owner's K6 of 2026-11-24: by content role, never by matching a sentence):
+    a notice's link draws its GUI place as one unit, so a narrow line breaks the link before the
+    place, never inside it. The place is the action's tail, given by the notice's target
+    (`server_settings.PLACE_NAMES[target]`, role data); `_place_bound` found it by a substring
+    search, so a notice whose action lacked its place was drawn silently unbound, and a place
+    named mid-sentence was bound there. Every notice and every not-usable variant: its target
+    has a place, its action ends with it, and its link draws exactly that tail as the unit."""
+    from src.config.server_settings import PLACE_NAMES
+
+    notices = _every_notice()
+    assert len(notices) >= 10 and all(notices.values()), notices
+    for name, notice in notices.items():
+        place = PLACE_NAMES.get(notice["target"])
+        assert place, (name, notice["target"])
+        assert notice["action"].endswith(place), (name, notice["action"], place)
+        link = r._go(notice, True)
+        head = notice["action"][:-len(place)]
+        assert link.endswith(f'>{r.e(head)}<span class="shep-unit">{r.e(place)}</span></button>'), (
+            name, link)
+        assert link.count("shep-unit") == 1, (name, link)
+    # The place is bound by the target, as the tail: never found in the words. A place named
+    # mid-sentence, or an action for another place, is not drawn as this target's unit.
+    target = next(iter(PLACE_NAMES))
+    place = PLACE_NAMES[target]
+    for action, where in ((f"{place}, then Save", target),
+                          ("Choose one in Settings › Runtime", target),
+                          (f"Choose one in {place}", "settings#elsewhere")):
+        assert "shep-unit" not in r._go({"action": action, "target": where}, True), (action, where)
+
+
+def test_a_notice_drawn_in_the_bar_of_the_controls_it_dims_names_them():
+    """R-WHY's same-bar rule (amendment 2; the L8 S1 check, S1C-10: no caller and no unit test,
+    only the walk's static page read it): where a cause's own notice is drawn in the same bar as
+    the controls it dims, no phrase is added beside them; the notice names them (``data-for``,
+    space-separated, escaped), the shell's head script points their ``aria-describedby`` at it.
+    Its key and its merged notices' keys stay, and a notice drawn elsewhere names no control."""
+    ws, gpu, _registry = _notices()
+    both = r.notice_block(ws, also=(gpu,), describes="shep-train-start shep-train-continue")
+    head = both[:both.index(">") + 1]
+    assert head == ('<div class="shep-nb shep-nb-neutral" data-notice="workspaces_root" '
+                    'data-notice-also="gpu_lock" data-for="shep-train-start shep-train-continue">'), head
+    assert both.count("data-for=") == 1 and "shep-why" not in both
+    assert "data-for" not in r.notice_block(ws, also=(gpu,))
+    hostile = r.notice_block(ws, describes='a" onclick="x')
+    assert 'data-for="a&quot; onclick=&quot;x"' in hostile and 'onclick="x"' not in hostile
+    # The phrase a control would otherwise carry is the notice's own cause: never both.
+    assert r.reason_key(ws) == "workspaces_root"
+
+
+def test_each_chip_phrase_has_its_own_bubble_key_and_keeps_it_when_redrawn():
+    """R-WHY's chip phrase opens the one help bubble, which re-anchors by the phrase's
+    ``data-help`` key after a redraw (`help.py`'s ``anchorByKey``). The L8 S1 check (S1C-8):
+    every phrase that named no control had one constant key ("why-d8-here"), so after a redraw
+    the bubble moved to the first such phrase on the screen. A phrase's key is its own: the first
+    control it explains when one is named; else a stable id of the phrase itself, so two phrases
+    of two causes without a control never share a key, and the same phrase drawn again keeps
+    its key."""
+    from src.webui.components import workspaces as w
+
+    def key(phrase):
+        found = re.findall(r'data-help="([^"]+)"', phrase)
+        assert len(found) == 1, phrase
+        return found[0]
+
+    lock = w.lock_notice({"problem": "x", "unset": False})
+    assert r.reason_key(lock) == r.reason_key("gpu_problem") == "gpu_problem"
+    plain, noticed = key(r.reason_phrase("gpu_problem")), key(r.reason_phrase(lock))
+    assert plain != noticed, (plain, noticed)
+    assert key(r.reason_phrase("gpu_problem")) == plain and key(r.reason_phrase(lock)) == noticed
+    alone = {key(r.reason_phrase(cause)) for cause in ("d8", "gpu_busy", "gpu_problem", lock)}
+    assert len(alone) == 4, alone
+    # A named control keys the phrase by its element id, the first of several.
+    assert key(r.reason_phrase("d8", control="shep-a shep-b")) == "why-d8-shep-a"
+    assert key(r.reason_phrase(lock, control="shep-a")) == "why-gpu_problem-shep-a"
+    assert not alone & {key(r.reason_phrase(c, control="shep-a")) for c in ("d8", "gpu_busy", lock)}

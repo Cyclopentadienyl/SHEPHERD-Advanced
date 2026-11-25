@@ -202,9 +202,10 @@ REFERENCE_ANCHOR = ("The reference recipe is anchored on e95433a, with correctio
                     "(Ref: README §2.4).")
 
 #: The note beside Load, shown only for a selected row Load can serve
-#: (`model_list.note_html`, R-78): what Load does, in plain words.
-LOAD_NOTE = ("Serves this model for diagnosis once you confirm the change. Results already "
-             "recorded keep the model they were made with.")
+#: (`model_list.note_html`, R-78): what Load does, in one plain sentence (the owner's D1 of
+#: 2026-11-24). That results already made keep their model is the confirmation's to say, where
+#: the change is confirmed (`model_list.REPLACES_NOTE`), never a second time here.
+LOAD_NOTE = "Serves this model for diagnosis once you confirm."
 
 READONLY_TITLE = "Recorded results of the model in use"
 READONLY_WHERE = "registered beside the checkpoint in use · no checkpoint is opened"
@@ -220,8 +221,9 @@ D8_CONDITIONS = ("Operator controls need a service started on this machine and a
                  "that arrives on its loopback, directly or through an SSH forward, with no "
                  "forwarding header.")
 LIST_REFUSED_REF = "D8, SPEC_4 C3 (checkpoint inspection), deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE)"
-NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files. Load is an "
-                "operator control.")
+#: The read-only view's validation line: its own fact only; who may Load is said by the
+#: phrase beside 🔒 Load (R-WHY), never again here (the owner's D6 and D1, round L8).
+NO_LOAD_HERE = "No validation figures here: they need the checkpoint files."
 RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read. Open "
                          "the page again.")
 
@@ -1523,25 +1525,30 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
 
 
 #: **What the records segment says when it holds no result, per cause**
-#: (R-68, the skill's §9): a title, what will appear, and one next step;
-#: never a file's name, never "ledger". An absence is never read as "never
-#: evaluated" (`caveats.RECORD_ABSENCE`'s meaning, said in these words). The
-#: operator's next step is one action, "Test this model ›": the Test page with
-#: this checkpoint chosen (`ctx.test_model`, `ctx.go`; wired in
-#: `create_models_page`).
-RECORDS_NEXT = ("Next: start a test of it with Register when the run ends checked. Its result "
-                "then appears here.")
+#: (R-68, the skill's §9; the owner's D1 of 2026-11-24, R-LOAD): one state
+#: line, its "Details ›" and one action. The state is an absence (the grey
+#: mark, the skill's §6), said as the one notice says a state
+#: (`renderers.notice_block`: R-DETAILS puts "Details ›" on the state's
+#: line); why it is empty and how a result gets here are its term rows, one
+#: click away; never a file's name, never "ledger". An absence is never read
+#: as "never evaluated" (`caveats.RECORD_ABSENCE`'s meaning, said in these
+#: words, `RECORDS_NOT_EVALUATED`, kept verbatim in the "Why" row). The
+#: operator's next step is one action, "Test this model ›", in view under the
+#: line: the Test page with this checkpoint chosen (`ctx.test_model`,
+#: `ctx.go`; wired in `create_models_page`).
+RECORDS_NEXT = ("Start a test of it with Register when the run ends checked. Its result then "
+                "appears here.")
 #: The action's label and its act (`renderers.TRIGGER_JS`).
 TEST_THIS = "Test this model ›"
 TEST_ACT = "test"
 RECORDS_NOT_EVALUATED = ("That does not mean these weights were never evaluated: a result "
                          "registered beside another copy of them is not shown here.")
+#: Per cause: the state, and why the segment holds no result (its "Why" row, before
+#: `RECORDS_NOT_EVALUATED`).
 RECORDS_EMPTY = {
-    "no_ledger": ("No recorded result yet",
-                  "No result is registered beside this checkpoint. " + RECORDS_NOT_EVALUATED),
+    "no_ledger": ("No recorded result yet", "No result is registered beside this checkpoint."),
     "none": ("No recorded result for these weights",
-             "The results registered beside this checkpoint are of other weights. "
-             + RECORDS_NOT_EVALUATED),
+             "The results registered beside this checkpoint are of other weights."),
 }
 #: The read-only view's next step: recording a result is an operator control.
 RECORDS_NEXT_READONLY = ("Recording a result is an operator control: an operator tests the "
@@ -1550,17 +1557,21 @@ RECORDS_NEXT_READONLY = ("Recording a result is an operator control: an operator
 
 def records_empty_html(cause: str, *, readonly: bool = False) -> str:
     """The records segment with no result, for one cause (`RECORDS_EMPTY`):
-    its title, what it means and one next step: for an operator "Test this
-    model ›" (the Test page with this checkpoint chosen), for a read-only
-    request the refusal that says who can act, with no action."""
-    title, said = RECORDS_EMPTY[cause]
+    its state on one line with its "Details ›" (why it is empty, its caveat
+    kept verbatim, and, for an operator, how a result gets here), then one
+    next step in view: for an operator the action "Test this model ›" (the
+    Test page with this checkpoint chosen), for a read-only request who can
+    act, with no action."""
+    title, why = RECORDS_EMPTY[cause]
+    rows = [f"Why: {why} {RECORDS_NOT_EVALUATED}"]
     if readonly:
-        step = r.e(RECORDS_NEXT_READONLY)
+        step = f'<p class="shep-mp-p">{r.e(RECORDS_NEXT_READONLY)}</p>'
     else:
-        step = (f'{r.e(RECORDS_NEXT)} <button type="button" class="shep-link" '
-                f'data-act="{TEST_ACT}">{r.e(TEST_THIS)}</button>')
-    return (f'<div class="shep-mp-empty"><p class="shep-mp-empty-t">{r.e(title)}</p>'
-            f'<p class="shep-mp-p">{r.e(said)}</p><p class="shep-mp-p">{step}</p></div>')
+        rows.append(f"Next: {RECORDS_NEXT}")
+        step = (f'<p class="shep-mp-act"><button type="button" class="shep-link" '
+                f'data-act="{TEST_ACT}">{r.e(TEST_THIS)}</button></p>')
+    state = r.notice_block({"kind": "neutral", "summary": title, "details": tuple(rows)})
+    return f'<div class="shep-mp-empty">{state}{step}</div>'
 
 
 def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, Any], *,
@@ -1770,7 +1781,7 @@ def create_models_page(ctx: Any) -> None:
         # and the "Applying …" line are the bar's notes, rows of their own.
         with gr.Row(elem_id="shep-mp-controls", elem_classes=["shep-grp", "shep-mp-controls",
                                                              "shep-mp-order-row"]):
-            plain_html('<span class="shep-mp-lbl">Order</span>', elem_id="shep-mp-order-lbl")
+            plain_html('<span class="shep-bar-lbl">Order</span>', elem_id="shep-mp-order-lbl")
             parts["order"] = gr.Radio(choices=ORDER_CHOICES, value=NEWEST, label="Order",
                                       show_label=False, interactive=False,
                                       elem_id="shep-mp-order", elem_classes=["shep-seg"],
@@ -2135,7 +2146,6 @@ PAGE_CSS = f"""
 {_PAGE} #shep-mp-detail-hd .shep-panel-hd h2, {_PAGE} #shep-mp-hd .shep-panel-hd h2 {{ overflow-wrap: anywhere; }}
 {_PAGE} #shep-mp-controls.shep-mp-order-row {{ align-items: center !important; gap: 8px !important; flex-wrap: nowrap !important; }}
 {_PAGE} .shep-mp-order-row > * {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; }}
-{_PAGE} .shep-mp-lbl {{ font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-mp-back {{ display: none; }}
 {_PAGE} .shep-mp-hd-end {{ margin-left: auto; display: inline-flex; flex-wrap: wrap; justify-content: flex-end;
   align-items: center; gap: 10px; }}
@@ -2155,9 +2165,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-rec {{ display: flex; flex-direction: column; gap: 8px; min-width: 0; }}
 {_PAGE} .shep-mp-rec + .shep-mp-rec {{ border-top: 1px solid var(--shep-border); padding-top: 12px; }}
 {_PAGE} .shep-mp-rec-hd {{ font-size: 15px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }}
-/* A segment with no result (`records_empty_html`, R-68): its title, what it means, the next step. */
+/* A segment with no result (`records_empty_html`, R-68, the owner's D1): its state's line with
+   its "Details ›" (the one notice's form), then its one next step under it. */
 {_PAGE} .shep-mp-empty {{ display: flex; flex-direction: column; gap: 4px; }}
-{_PAGE} .shep-mp-empty-t {{ margin: 0; font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_PAGE} .shep-mp-empty .shep-link {{ border: 0; background: none; padding: 0; min-height: 24px; color: var(--shep-accent-text); font: inherit; cursor: pointer; white-space: nowrap; }}
 {_PAGE} .shep-mp-empty .shep-link:hover {{ text-decoration: underline; }}
 /* Models › Results (Stage 8b): its controls in rows that wrap, its tables

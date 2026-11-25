@@ -70,7 +70,7 @@ from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
-from src.webui.components.help import sentence_lines  # noqa: E402
+from src.webui.components.help import help_lines, sentence_items  # noqa: E402
 from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
@@ -522,12 +522,12 @@ def test_a_read_only_request_sees_the_versions_and_reports_and_no_checkpoint(sit
     models = tp.read_models("demo", _readonly())
     assert models["refused"] is True and models["items"] == []
     # Why, said once above the Run and Checkpoint fields (V-15), not under them.
-    assert tp.listing_why_html(page, models).count("Operator controls only: request not local.") == 1
+    assert tp.listing_why_html(page, models).count("Operator controls only<") == 1
     assert tp.model_html(page, models, None) == ""
     reports = tp.read_reports(LABEL)
     assert [r["run_id"] for r in reports["runs"]] == [site.run_id]
     allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, ("none", ""))
-    assert allowed is False and why == "Operator controls only: request not local."
+    assert allowed is False and why == tp.D8
 
 
 def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
@@ -690,12 +690,12 @@ def test_a_store_whose_runs_cannot_be_listed_says_why_register_is_off():
                "problem": "the report store of 'v' could not be listed (PermissionError)"}
     allowed, why = tp.register_state({"access": {"allowed": True}}, reports, None)
     assert allowed is False and why.startswith(
-        "Register disabled: the report store could not be listed, so a run's report cannot be "
+        "The report store could not be listed, so a run's report cannot be "
         "confirmed here: the report store of 'v' could not be listed (PermissionError).")
     assert "scripts/record_evaluation.py --report" in why
     assert tp.register_state({"access": {"allowed": True}},
                              {**reports, "version_sha256": None}, None) == (
-        False, "Register disabled: no report is listed yet.")
+        False, "No report is listed yet.")
 
 
 def test_a_run_whose_bytes_a_merged_record_holds_shows_the_possible_overlap(site):
@@ -887,7 +887,7 @@ def test_the_cohort_route_and_the_test_page_give_each_run_the_same_d5_state(
         assert tp.register_state(operator, reports, site.run_id) == (True, None)
         # Not JSON, so the helper reads it as no report kept: its own reason.
         assert tp.register_state(operator, reports, added) == (
-            False, "Register disabled: no report was kept in this run.")
+            False, "No report was kept in this run.")
         block = tp.block_html(page[added], [], [])
         assert "This run&#x27;s report cannot be compared" in block and "marks no other run" in block
         assert "Comparison incomplete" not in block
@@ -900,14 +900,14 @@ def test_the_cohort_route_and_the_test_page_give_each_run_the_same_d5_state(
         reports = tp.read_reports(LABEL)
         assert tp.register_state(operator, reports, site.run_id) == (True, None)
         assert tp.register_state(operator, reports, added)[1].startswith(
-            "Register disabled: this report cannot be registered:")
+            "This report cannot be registered:")
     if case == "a store that cannot be scanned":
         # C5 (Decision 10): no report of the store can be confirmed here, so
         # Register is off saying why and where a run is registered instead.
         reports = tp.read_reports(LABEL)
         allowed, why = tp.register_state(operator, reports, site.run_id)
         assert allowed is False and why.startswith(
-            "Register disabled: the report store could not be listed, so this run's report cannot be "
+            "The report store could not be listed, so this run's report cannot be "
             "confirmed here: its report store could not be read (RuntimeError).")
         assert "Register it from the command line by naming its report" in why
 
@@ -1173,7 +1173,7 @@ def test_a_run_without_a_report_says_none_was_kept(site):
     assert "No report was kept in this run directory: there is no <registry>/" in result
     assert "report.json" in result and str(site.registry) not in result
     assert tp.register_state({"access": {"allowed": True}}, reports, interrupted.name) == (
-        False, "Register disabled: no report was kept in this run.")
+        False, "No report was kept in this run.")
 
 
 def _plain(html):
@@ -1223,7 +1223,7 @@ def test_a_report_json_that_is_there_is_never_said_to_be_absent(site, damage):
     assert row[3] == "no report kept"
     assert "No report was kept in this run directory: " in result
     assert tp.register_state({"access": {"allowed": True}}, reports, added) == (
-        False, "Register disabled: no report was kept in this run.")
+        False, "No report was kept in this run.")
 
 
 def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
@@ -1233,32 +1233,31 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
     state = lambda ws, label, key, gpu=("none", ""), protocol="disease": (  # noqa: E731
         tp.start_state(page, models, ws, label, key, binding, gpu, protocol=protocol))
-    assert state(None, LABEL, child) == (False, "Start disabled: choose a workspace.")
-    assert state("demo", None, child) == (False, "Start disabled: choose a data version.")
+    assert state(None, LABEL, child) == (False, "Choose a workspace.")
+    assert state("demo", None, child) == (False, "Choose a data version.")
     # NEW-test-1: the choice is named by its two selects, the one place the
     # page asks for it (it said "choose a model", a control it no longer has).
     assert state("demo", LABEL, None) == (False, tp.CHOOSE_A_CHECKPOINT) == (
-        False, "Start disabled: choose the run, then the checkpoint to test.")
+        False, "Choose the run, then the checkpoint to test.")
     assert tp.model_html(page, models, None) == ""
     # No measurement chosen (the radio's value None) is said, never filled in.
     assert state("demo", LABEL, child, protocol=None) == (
-        False, "Start disabled: choose a measurement.")
+        False, "Choose a measurement.")
     assert state("demo", LABEL, child) == (True, None)
     busy = state("demo", LABEL, child, ("busy", "GPU job: training (job runner)"))
-    assert busy == (False, "Start disabled: GPU job: training (job runner).")
-    # This service's CUDA inference: the chip's words and where to stop it,
-    # never a job's (review of A3b: inference is not a training or test job).
+    assert busy == (False, "gpu_busy")
+    # This service's CUDA inference: the GPU chip's reason too (it says the holder and where
+    # to stop it, once; R-WHY's gpu_busy), never a job's words.
     serving = state("demo", LABEL, child, ("busy", "GPU: inference (this service); stop it with "
                                                    "Stop inference on Diagnosis"))
-    assert serving == (False, "Start disabled: GPU: inference (this service); stop it with Stop "
-                              "inference on Diagnosis.")
+    assert serving == (False, "gpu_busy")
     another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
     allowed, why = tp.start_state(page, models, "demo", LABEL, child, another, ("none", ""))
     assert allowed is False and "mapped against another graph" in why
     # The fixture's file without a model spec: listed, never measured, with
     # the record reader's one phrase (N2).
     assert state("demo", LABEL, site.history_key) == (
-        False, f"Start disabled: Record not readable ({WRITTEN_BEFORE_SPEC}): not measured here. "
+        False, f"Record not readable ({WRITTEN_BEFORE_SPEC}): not measured here. "
                "Choose a model with a readable record.")
 
 
@@ -1352,7 +1351,7 @@ def test_a_version_whose_kept_file_changed_is_not_bound_and_start_says_why(site,
     assert tp.r.status_mark("error", tp.CHANGED_FILES.format(reason=reason)) in shown
     assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
                           protocol="disease") == (
-        False, "Start disabled: the data version's files changed after its import (see Data).")
+        False, "The data version's files changed after its import.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -1458,7 +1457,7 @@ def test_an_evidence_entry_that_is_not_a_directory_still_disables_start(site, mo
     allowed, why = tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
                                   protocol="disease")
     assert allowed is False
-    assert why.startswith("Start disabled: the evidence directories setting is refused: "
+    assert why.startswith("The evidence directories setting is refused: "
                           "The training evidence folders set at start "
                           "(Ref: SHEPHERD_TRAINING_EVIDENCE_DIRS) are refused: evidence "
                           "directory 1 ")
@@ -2347,7 +2346,7 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
                    handoff, request)
     assert out[start_at] == gr.update(value="▶ Start test", interactive=False)   # no lock
-    assert "Start disabled: GPU job: training (job runner)." in _words_of(out[reason_at])
+    assert "GPU in use" in _words_of(out[reason_at]) and 'data-why="gpu_busy"' in out[reason_at]
 
 
 def test_the_header_chips_follow_the_gpu_line_on_the_tick_that_sees_it_change(site, monkeypatch):
@@ -3236,9 +3235,10 @@ def test_a_busy_gpu_is_the_start_reason_before_any_choice(site, monkeypatch):
     busy = ("busy", "GPU job: test run (job runner)")
     for ws, label, key in ((None, None, None), ("demo", LABEL, None)):
         allowed, why = tp.start_state(page, models, ws, label, key, None, busy)
-        assert allowed is False and why.startswith("Start disabled: GPU job: test run (job runner).")
-    allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, ("unread", ""))
-    assert why.startswith("Start disabled: the GPU lock cannot be read")
+        assert allowed is False and why == "gpu_busy"
+    for kind in ("unset", "unreadable", "blocked"):
+        allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, (kind, ""))
+        assert why == "gpu_problem", kind
 
 
 def _runs(n):
@@ -3620,27 +3620,27 @@ def test_every_gated_button_is_locked_only_when_refused_and_then_says_why(site, 
                 assert tp.LOCK not in label and "Operator controls only" not in reason, button
             else:
                 assert label.startswith(f"{tp.LOCK} ") and out[button]["interactive"] is False
-                assert "Operator controls only: " in reason and tp.LOCK in reason, button
+                assert "Operator controls only</button>" in reason and tp.LOCK in reason, button
+                assert f'data-for="{button}"' in reason, button
         assert out["shep-test-cancel"]["visible"] is (status in ("running", "stopping"))
         if operator:
             assert out["shep-test-cancel"]["interactive"] is (status == "running")
     # No report chosen (none kept yet): Register's reason is still D8's.
     refused = {"access": {"allowed": False, "condition": "not_loopback"}}
-    assert tp.register_state(refused, {"runs": []}, None) == (
-        False, "Operator controls only: request not local.")
+    assert tp.register_state(refused, {"runs": []}, None) == (False, tp.D8)
     # L7 SW-LK6: and an operator's says why, in the shared form (never a
     # silent disabled button): the registry the Data panel names, else what
     # to choose.
     operator = {"access": {"allowed": True}}
     assert tp.register_state(operator, {"runs": []}, None) == (
-        False, "Register disabled: no report is listed yet.")
+        False, "No report is listed yet.")
     assert tp.register_state(operator, {"runs": [{"run_id": "r"}]}, None) == (
-        False, "Register disabled: choose a kept report in the list first.")
+        False, "Choose a kept report in the list first.")
     first_use = {**operator, "registry_notice": {
         "key": "registry", "kind": "neutral", "summary": "No results registry is set.",
         "short": "no results registry is set"}}
-    assert tp.register_state(first_use, {"runs": []}, None) == (
-        False, "Register disabled: no results registry is set (see Data).")
+    assert tp.register_state(first_use, {"runs": []}, None) == (False, "registry")
+    assert "Needs a results registry" in tp._reason_html("registry", control=tp.REGISTER_ID)
 
 
 def test_the_empty_run_and_checkpoint_selects_say_why_they_are_empty():
@@ -3657,10 +3657,10 @@ def test_the_empty_run_and_checkpoint_selects_say_why_they_are_empty():
         "short": "no workspaces folder is set"}}
     said = tp.listing_why_html(first_use, none)
     assert 'data-notice-rel="workspaces_root"' in said and "data-notice=" not in said
-    assert "Run disabled: no workspaces folder is set (see Data)." in _words_of(said)
-    assert "Run disabled: no workspace yet (see Data)." in _words_of(
+    assert "Needs a workspaces folder" in _words_of(said) and 'data-why="workspaces_root"' in said
+    assert "No workspace yet." in _words_of(
         tp.listing_why_html(operator, none))
-    assert "Run disabled: choose a workspace in Data first." in tp.listing_why_html(
+    assert "Choose a workspace in Data first." in tp.listing_why_html(
         {**operator, "workspaces": [{"name": "demo"}]}, none)
     assert tp.listing_why_html(operator, {"items": [], "workspace": "demo"}) == ""
 
@@ -3714,9 +3714,9 @@ const QUEUE_JS = __QUEUE_JS__;
           if (/(auto|scroll|hidden|clip)/.test(s.overflowY + s.overflowX)) { const p = box(a);
             x = { l: Math.max(x.l, p.l), t: Math.max(x.t, p.t), r: Math.min(x.r, p.r), b: Math.min(x.b, p.b) }; } }
         return q.l >= x.l - 1 && q.t >= x.t - 1 && q.r <= x.r + 1 && q.b <= x.b + 1; };
-      const said = (e) => /Operator controls only:/.test(e.innerText || '');
-      const reasons = [...document.querySelectorAll('[role=tabpanel] *')]
-        .filter((e) => vis(e) && said(e) && ![...e.children].some(said));
+      const said = (e) => /Operator controls only/.test(e.innerText || '');
+      const reasons = [...document.querySelectorAll('[role=tabpanel] .shep-reason')]
+        .filter((e) => vis(e) && said(e) && ![...e.querySelectorAll('.shep-reason')].some(said));
       const a = box(b); let best = null;
       for (const r of reasons) { const q = box(r);
         const dx = Math.max(0, q.l - a.r, a.l - q.r), dy = Math.max(0, q.t - a.b, a.t - q.b);
@@ -4206,7 +4206,7 @@ def test_a_listed_base_is_offered_the_kg_link_prediction_measurement(site, monke
                        "version; it measures a KG edge set. Ref: kg_link_prediction.")
     allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""),
                                   protocol="kg_link_prediction")
-    assert (allowed, why) == (False, f"Start disabled: {message}")
+    assert (allowed, why) == (False, tp.r.need_words(message))
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
                                protocol="kg_link_prediction", manager=manager)
@@ -4274,7 +4274,8 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
     for key, (protocol, says) in cases.items():
         allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
                                       protocol=protocol)
-        assert allowed is False and why.startswith(f"Start disabled: {says}") and why.endswith("."), why
+        assert allowed is False and why.startswith(says[:1].upper() + says[1:]), why
+        assert why.endswith("."), why
         result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
                                    protocol=protocol, manager=manager)
         assert result["success"] is False, key
@@ -4406,10 +4407,11 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
     assert shown and not any(k in pooled for k in shown)
     assert all(f"k={k} " in pooled for k in (1, 3, 10) if f"k={k} " not in shown)
     assert f'data-help="test-mode-{mode}"' in raw
-    # The governed note in its own words, a sentence a line (its lead first).
+    # The governed note in its own words, laid out by the shared helper (its lead first).
     assert tp.TOPIC_HELP[f"test-mode-{mode}"] == (f"{TASK_NAMES[mode]} task result",
-                                                  sentence_lines(mode_note(mode)))
-    assert tp.TOPIC_HELP[f"test-mode-{mode}"][1].replace("\n", " ") == mode_note(mode)
+                                                  sentence_items(mode_note(mode)))
+    assert " ".join(line.text for line in help_lines(tp.TOPIC_HELP[f"test-mode-{mode}"][1])) == (
+        mode_note(mode))
     assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
 
 
@@ -4652,7 +4654,7 @@ def test_a_kg_link_prediction_result_has_its_measurement_note():
     label = label[:label.index("</div>")]
     assert 'data-help="test-mode-kg_link_prediction"' in label
     assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == (
-        "KG link prediction result", sentence_lines(KG_LINK_PREDICTION_NOTE))
+        "KG link prediction result", sentence_items(KG_LINK_PREDICTION_NOTE))
     assert mode_label("kg_link_prediction") in _result_text(raw)
     assert "shep-rec-tile-l" not in raw
 
@@ -4928,10 +4930,10 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     assert tp.measurement_choices(tp.find_model(models, child)) == offered
     state = lambda key, protocol: tp.start_state(  # noqa: E731
         page, models, "demo", LABEL, key, binding, ("none", ""), protocol=protocol)
-    assert state(child, None) == (False, "Start disabled: choose a measurement.")
+    assert state(child, None) == (False, "Choose a measurement.")
     assert state(child, "p2") == (True, None)
     assert state(child, "disease") == (
-        False, "Start disabled: 'disease' is not a measurement this build implements: p1 or p2.")
+        False, "'disease' is not a measurement this build implements: p1 or p2.")
 
     # The radio as the model's listener writes it, and a pick.
     demo, _ctx, _registry = _page_component()
@@ -4943,7 +4945,7 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     out = on_model.fn(page, models, binding, "demo", LABEL, child, None, {}, None)
     assert out[radio_at] == gr.update(choices=offered, value=None, visible=True, interactive=True)
     assert out[start_at] == gr.update(value="▶ Start test", interactive=False)
-    assert "Start disabled: choose a measurement." in out[reason_at]
+    assert "Choose a measurement." in out[reason_at]
     picked = on_pick.fn(page, models, binding, "demo", LABEL, child, "p2")
     assert picked == [gr.update(choices=offered, value="p2", visible=True, interactive=True),
                       gr.update(value="▶ Start test", interactive=True), "", "p2"]
@@ -4975,7 +4977,7 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     assert reason == ("the p1 measurement takes a finetune model with the disease head; this "
                       "checkpoint is a base model with no task head.")
     assert tp.measurement_choices(tp.find_model(models, base)) == []
-    assert state(base, "p1") == (False, f"Start disabled: {reason}")
+    assert state(base, "p1") == (False, tp.r.need_words(reason))
     assert tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
                              protocol="p1", manager=manager) == {
         "success": False, "error": f"{reason[:1].upper()}{reason[1:]} Nothing was started."}
@@ -5051,7 +5053,7 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
         out = browser.done[event]["output"]["data"]
         assert ([list(c) for c in out[radio_at]["choices"]], out[radio_at]["value"]) == (
             [], None)
-        assert html_lib.escape(said) in out[reason_at], out[reason_at]
+        assert html_lib.escape(tp.r.need_words(said)) in out[reason_at], out[reason_at]
 
 
 def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypatch):
@@ -5224,7 +5226,7 @@ def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monke
     assert tp.version_html({**page, "registry_problem": "unset"}, LABEL, None) == ""
 
 
-def _first_use_screen(page, gpu=("unread", "GPU jobs: not set up")):
+def _first_use_screen(page, gpu=("unset", "GPU jobs: not set up")):
     """What the Test page draws for `page` with nothing chosen (an operator):
     Data, Run (its fields' details, Start's reason) and Reports, as the page
     open writes them; `gpu` the GPU chip's line (not set up while no
@@ -5278,18 +5280,18 @@ def test_at_first_use_the_screen_says_each_setting_once_and_each_control_its_rel
         assert whole[:40] not in text
     outside = _plain(re.sub(r"<details.*?</details>", " ", html, flags=re.S))
     assert "SHEPHERD_" not in outside and "registry: " not in text
-    # Each "… disabled: …" line is a relation to a notice, by its short words.
-    shorts = {server_settings.REGISTRY_NOTICE.short, server_settings.WORKSPACES_ROOT_NOTICE.short}
-    causes = re.findall(r"\b(?:Start|Import) disabled: ([^.(]+)", text)
-    assert causes and {c.strip() for c in causes} <= shorts, causes
+    # Each dimmed control's line is its notice's phrase (R-WHY), keyed to the notice.
+    causes = re.findall(r'data-why="([^"]+)"', html)
+    assert causes and set(causes) <= {"registry", "workspaces_root"}, causes
+    assert not re.search(r"\bdisabled\b|\(see (above|below)\)", text), text
     assert 'class="shep-panel-right"' not in screen["data"] + screen["reports"]
     assert tp.workspace_html(page, None) == ""
     # Each control a relation, never the notice: Import's and Start's, one line each.
     rels = re.findall(r'data-notice-rel="([^"]+)"', html)
     assert rels == ["registry", "registry"]
-    assert "Import disabled: no results registry is set." in _plain(screen["data"])
-    assert (can, why) == (False, "Start disabled: no results registry is set (see Data).")
-    assert why in _plain(screen["run"])
+    assert "No results registry is set." in _plain(screen["data"])
+    assert (can, why) == (False, "registry")
+    assert tp.r.REASON_PHRASES[why] in _plain(screen["run"])
     # The Reports panel's empty state, in the flow.
     assert f'<p class="shep-empty">{tp.e(tp.REPORTS_NO_REGISTRY)}</p>' in screen["reports"]
 
@@ -5304,8 +5306,8 @@ def test_at_first_use_the_screen_says_each_setting_once_and_each_control_its_rel
     assert re.findall(r'data-notice="([^"]+)"', html) == ["workspaces_root"]
     assert _plain(html).count("No workspaces folder is set.") == 1
     assert "Testing waits for it." in _plain(screen["data"])
-    assert (can, why) == (False, "Start disabled: no workspaces folder is set (see Data).")
-    assert "Import disabled: no workspaces folder is set." in _plain(screen["data"])
+    assert (can, why) == (False, "workspaces_root")
+    assert "No workspaces folder is set." in _plain(screen["data"])
     assert tp.e(tp.REPORTS_NO_VERSION) in screen["reports"]
 
     # Both set, both empty: no notice; each empty place in its own words.
@@ -5317,8 +5319,8 @@ def test_at_first_use_the_screen_says_each_setting_once_and_each_control_its_rel
     html = "".join(screen.values())
     assert "data-notice" not in html and "registry: server setting" in screen["data"]
     assert tp.NO_WORKSPACE_YET in _plain(screen["data"])
-    assert why == "Start disabled: no workspace is listed (see Data)."
-    assert "Import disabled: no workspace to import against." in _plain(screen["data"])
+    assert why == "No workspace is listed."
+    assert "No workspace to import against." in _plain(screen["data"])
     assert tp.e(tp.REPORTS_NO_VERSION) in screen["reports"]
 
 
@@ -5427,8 +5429,8 @@ def test_the_pages_help_texts_meet_the_text_budget():
     lines, then none or two to four items of one form, each two lines at most,
     80 words at most, Ref last, plain words. Before: 14 of 21 over. A
     described measurement's result note is the governed caveat's own text
-    (`caveats.mode_note`, shown on Models and Results too), each sentence a
-    line: it is kept as written, never reworded here."""
+    (`caveats.mode_note`, shown on Models and Results too), laid out by
+    `help.sentence_items`: it is kept as written, never reworded here."""
     from src.evaluation.caveats import mode_note
     from src.webui.components.help import TEXT_BUDGET, budget_notes, budget_problems
 
@@ -5437,7 +5439,7 @@ def test_the_pages_help_texts_meet_the_text_budget():
     governed = {tp._MODE_HELP[mode]: mode for mode in tp._RESULT_WORDS}
     for key, text in texts.items():
         if key in governed:
-            assert text == sentence_lines(mode_note(governed[key])), key
+            assert text == sentence_items(mode_note(governed[key])), key
             continue
         assert budget_problems(text, TEXT_BUDGET) == (), (key, budget_problems(text, TEXT_BUDGET))
         assert budget_notes(text, TEXT_BUDGET) == (), key
@@ -5478,7 +5480,7 @@ def test_the_measurement_options_follow_the_model_and_the_chosen_versions_kind(
         assert ("it can be measured by KG link prediction, which measures a KG edge set. "
                 "Ref: kg_link_prediction.") in said
         assert tp.start_state(page, models, "demo", label, base, binding, ("none", ""),
-                              protocol=None) == (False, f"Start disabled: {said}")
+                              protocol=None) == (False, tp.r.need_words(said))
     assert tp.start_state(page, models, "demo", KG_LABEL, base, binding, ("none", ""),
                           protocol="kg_link_prediction") == (True, None)
 
@@ -5536,7 +5538,7 @@ def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
         assert "<code>evidence</code> (the server's setting)" in row and "Not applicable" not in row
     else:
         assert allowed is False and why.startswith(
-            "Start disabled: the evidence directories setting is refused: ")
+            "The evidence directories setting is refused: ")
         assert result["success"] is False and result["error"].endswith("Nothing was started.")
         assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">Refused: ' in row
         assert len(manager.started) == 2

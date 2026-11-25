@@ -802,7 +802,7 @@ const { chromium } = require('playwright');
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
   await page.addStyleTag({ content: '#shep-chips .shep-chip-gpu .shep-chip-text { width: 100vw; }' });
   const out = {};
-  for (const width of [1850, 1366, 1280, 1024]) {
+  for (const width of [1850, 1366, 1280, 1024, 864, 800]) {
     await page.setViewportSize({ width, height: 800 });
     await page.waitForTimeout(800);
     out[width] = await page.evaluate(() => {
@@ -846,8 +846,10 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     the service mounts it (`app.mount_options`: its CSS and head script), its
     GPU chip as wide as its cap (a long holder record): at 1850 px the
     header is one line; at the display floor's 1280 (and 1366) the chips and
-    Settings go onto a second line; below the floor (1024) the header is
-    drawn as at the floor. At each, each area tab is what
+    Settings go onto a second line; a landscape window under the display
+    floor's width stacks at its own width (1024; R-ARR, the owner's D11 of
+    2026-11-24), and one under the stacked floor's (800) is drawn as at that
+    floor (864). At each, each area tab is what
     ``document.elementsFromPoint`` finds first at its centre and corners, the
     chips never over it; every chip is inside the frame and on one line, its
     words whole or ended at its own cap (the titled ellipsis). The chips'
@@ -872,7 +874,8 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
     assert seen["1280"]["wrapped"] is True and seen["1850"]["wrapped"] is False
-    assert seen["1024"] == seen["1280"], (seen["1024"], seen["1280"])
+    assert seen["800"] == seen["864"], (seen["800"], seen["864"])
+    assert seen["1024"]["frame"] <= 1024 < seen["1280"]["frame"], (seen["1024"], seen["1280"])
     for width, facts in seen.items():
         assert facts["chips"] > 0, width
         for tab, covered in facts["tabs"].items():
@@ -882,6 +885,69 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
         assert len({chip["top"] for chip in facts["chipWords"]}) == 1, (width, facts["chipWords"])
         for chip in facts["chipWords"]:
             assert chip["whole"] or chip["capped"], (width, chip)
+
+
+#: The served dashboard at each window the test names: once the header's layout pass has run,
+#: where the brand, each chip, the Settings tab and the header row's content box are.
+_WRAPPED_HEADER_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-chips .shep-chips .shep-chip', { timeout: 60000 });
+    await page.waitForFunction(() => document.getElementById('shep-shell').style.getPropertyValue('--shep-chips-top'),
+                               null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const box = (el) => { const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+      const row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
+      const s = getComputedStyle(row);
+      return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+               brand: box(document.querySelector('#shep-brand .shep-brand')),
+               chips: [...document.querySelectorAll('#shep-chips .shep-chip')].map(box),
+               settings: box(document.getElementById('shep-tab-settings-button')),
+               area: box(document.getElementById('shep-tab-research-button')),
+               end: row.getBoundingClientRect().right - parseFloat(s.paddingRight) - parseFloat(s.borderRightWidth) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_path):
+    """D10 (the owner, 2026-11-24): two header lines are fine; on the wrapped second line the
+    states start at the left, on the brand's edge, and Settings stays at the right. They sat
+    together at the right (the chips from 488 px at 1080 wide), leaving the line's start empty
+    under the brand. In the served dashboard, at a portrait window (1080 x 1920) and a
+    landscape one that stacks (1100 x 1050): the header wraps; the first chip's left is the
+    brand's left and Settings' right the header row's content right (within a pixel); the chips
+    and Settings share the second line, under the area switch, and never overlap."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    sizes = [[1080, 1920], [1100, 1050]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_WRAPPED_HEADER_JS, tmp_path, base[:-len("gradio_api")], json.dumps(sizes),
+                        timeout=300)
+    for size, facts in seen.items():
+        assert facts["wrapped"] is True, size
+        chips, settings = facts["chips"], facts["settings"]
+        assert abs(chips[0]["left"] - facts["brand"]["left"]) <= 1, (size, chips[0], facts["brand"])
+        assert abs(settings["right"] - facts["end"]) <= 1, (size, settings, facts["end"])
+        for chip in chips:
+            assert chip["top"] < settings["bottom"] and settings["top"] < chip["bottom"], (size, chip)
+            assert chip["top"] >= facts["area"]["bottom"], (size, chip, facts["area"])
+        assert chips[-1]["right"] < settings["left"], (size, chips[-1], settings)
 
 
 # --------------------------------------------------------------------------- a reload
@@ -2007,12 +2073,10 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     within 120 px under it and both wholly on screen when the action is
     brought into view, at 1850 x 960 and the display floor's 1280 x 720 with
     the accordions open;
-    next to the fields, between the facts and the allocator select, a short
-    relation to it (`FIELDS_LOCKED`). Fails on 6a2d52e: the reason was that
-    body line, 734 px above the buttons at 1850 x 960."""
+    no line next to the fields points at it (the owner's D6 of 2026-11-24). Fails on 6a2d52e:
+    the reason was that body line, 734 px above the buttons at 1850 x 960."""
     from src.webui import style
     from src.webui.app import create_gradio_app, mount_options
-    from src.webui.components import runtime_settings as rs
     from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import DEPLOYMENT_MODE
     from tests.fixtures.served_page import served
@@ -2035,18 +2099,16 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     assert look["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
     assert look["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
     assert any(f["disabled"] for f in look["fields"])
-    reason = ["🔒", *"Operator controls only: deployment mode not set to M1.".split()]
+    # R-WHY: who can act, the d8 phrase (the D8 chip it opens says the condition, once).
+    reason = ["🔒", *"Operator controls only".split()]
     for size, at in seen["sizes"].items():
         assert at["reason"].split() == reason and at["inFooter"] and at["said"] == 1, (size, at)
         for name, action in at["actions"].items():
             assert action["text"].startswith("🔒 ") and action["disabled"], (size, name, action)
             assert 0 <= action["below"] <= 120, (size, name, action)
             assert action["whole"] and action["reasonWhole"], (size, name, action)
-        # Next to the fields: the relation, between the facts and the select.
-        fields, allocator = at["fieldsAt"], at["allocator"]
-        assert at["fields"] == f"🔒 {rs.FIELDS_LOCKED}", (size, at)
-        assert at["facts"]["bottom"] <= fields["top"] + 0.5, (size, at)
-        assert fields["bottom"] <= allocator["top"] + 0.5 <= fields["bottom"] + 24, (size, at)
+        # Next to the fields: no line pointing at the reason (D6).
+        assert at["fields"] is None, (size, at)
 
 
 #: Settings' scroll region (its level-1 tab item, side by side) with the
@@ -2135,9 +2197,10 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     ``(min-width: 1400px) and (min-height: 760px)``, written in 13 media
     queries and 2 ``matchMedia`` calls over 8 modules, so 1280 x 900 and
     1920 x 700 stacked and 1440 x 1600 (portrait) did not. The shell's layout
-    pass now makes one decision (the window's shape, then whether the page's
-    panels fit by their own ``--shep-panel-min``) and writes it on the root
-    element; every style sheet and the two scripts read that attribute. No
+    pass now makes one decision (R-ARR, the owner's D11 of 2026-11-24: a
+    window wider than tall and at least the display floor's width, then
+    whether the page's panels fit by their own ``--shep-panel-min``; else
+    stacked) and writes it on the root element; every style sheet and the two scripts read that attribute. No
     media query or ``matchMedia`` on the window's size decides it any more
     (the media queries left are content breakpoints and reduced motion).
     What the browser does with it is
@@ -2155,7 +2218,8 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     assert "document.documentElement.getAttribute('data-shep-layout') === 'side'" in training_console._BANNER_JS
     js = shell.SHELL_HEAD
     assert f"var LAYOUT = '{LAYOUT_ATTR}'" in js and f"SHORT_BELOW = {SHORT_BELOW}" in js
-    assert "var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';" in js
+    assert "var side = w > h && w >= FLOOR_W && sideFits(shownTab());" in js
+    assert "want = a.side ? 'side' : 'stack';" in js
     assert "root.toggleAttribute(SHORT, a.h < SHORT_BELOW)" in js
     # Each panel's minimum read in px whatever unit its page writes (M4, the UI sweep of
     # 2026-11-22): the property is registered as a length, and where a browser has no @property
@@ -2182,10 +2246,12 @@ def test_one_display_floor_is_read_by_the_layout_pass_and_the_frame_alone():
     `style.FLOOR_WIDTH` and `style.FLOOR_HEIGHT`, and since the owner's decision on portrait
     windows the stacked arrangement's, `style.STACK_FLOOR_WIDTH`, read by the shell's layout pass
     and the frame's style only. The pass decides every mark on the window's inner size raised to
-    the floor of the arrangement the window takes (``area()``: the only place it reads the
-    window's size, beside the scrollbar's room `sideFits` counts back; no wider than tall, the
-    stacked floor in both axes, so a 1080p screen turned upright is no longer raised to 1280 and
-    scrolled sideways), and the frame keeps that floor's width below it (its ``min-width``, from
+    the floor of the arrangement chosen (``area()``: the only place it reads the window's size,
+    beside the scrollbar's room `sideFits` counts back; R-ARR, the owner's D11 of 2026-11-24: a
+    window wider than tall is side by side at the display floor's width or more where the page
+    fits, the display floor in both axes; any other window stacks, the stacked floor's width and
+    no height floor, so neither a 1080p screen turned upright nor a landscape window under 1280
+    is raised to 1280 and scrolled sideways), and the frame keeps that floor's width below it (its ``min-width``, from
     the width the pass writes; side by side its height, never under the floor's) while the document
     scrolls (side by side the root scrolls, so a frame larger than the window can be reached).
     No page names the floor, and no media query on the window's size decides anything. What
@@ -2197,16 +2263,17 @@ def test_one_display_floor_is_read_by_the_layout_pass_and_the_frame_alone():
     js = shell.SHELL_HEAD
     assert (f"var FLOOR_W = {FLOOR_WIDTH}, FLOOR_H = {FLOOR_HEIGHT}, STACK_FLOOR_W = {STACK_FLOOR_WIDTH}, "
             f"FLOOR_VAR = '{FLOOR_VAR}';") in js
-    # The floor of the arrangement the window takes (the owner's decision of 2026-11-23 on
-    # portrait windows): no wider than tall, the stacked one's in both axes; wider, the display
-    # floor. The layout pass writes its width for the frame.
-    assert "var w = window.innerWidth, h = window.innerHeight, tall = w <= h;" in js
-    assert "var fw = tall ? STACK_FLOOR_W : FLOOR_W, fh = tall ? STACK_FLOOR_W : FLOOR_H;" in js
-    assert "return {w: Math.max(w, fw), h: Math.max(h, fh), floor: fw};" in js
+    # The floor of the arrangement chosen (R-ARR): side by side is tried only by a window wider
+    # than tall at the display floor's width or more, where the page fits; else stacked, the
+    # stacked floor's width and no height floor. The layout pass writes its width for the frame.
+    assert "var w = window.innerWidth, h = window.innerHeight;" in js
+    assert "var side = w > h && w >= FLOOR_W && sideFits(shownTab());" in js
+    assert "return side ? {side: true, w: Math.max(w, FLOOR_W), h: Math.max(h, FLOOR_H), floor: FLOOR_W}" in js
+    assert ": {side: false, w: Math.max(w, STACK_FLOOR_W), h: h, floor: STACK_FLOOR_W};" in js
     assert "root.style.setProperty(FLOOR_VAR, a.floor + 'px')" in js
     # The window's size is read in area() and, for the scrollbar's room, in sideFits only.
     assert js.count("window.innerWidth") == 2 and js.count("window.innerHeight") == 1, js.count("window.inner")
-    assert "var root = document.documentElement, a = area();" in js
+    assert "var root = document.documentElement, a = area(), want = a.side ? 'side' : 'stack';" in js
     assert f"gradio-app {{ min-width: calc(var({FLOOR_VAR}, {FLOOR_WIDTH}px) - (100vw - 100%)); }}" in SHELL_CSS
     assert STACK_FLOOR_WIDTH <= 1080 < FLOOR_WIDTH        # a 1080p screen turned upright needs no sideways scroll
     frame = side(SHELL_CSS)
@@ -2265,7 +2332,7 @@ _LAYOUT_FACTS_JS = r"""() => {
                prompt: at(document.getElementById('shep-train-check-prompt')),
                actions: ['shep-train-start', 'shep-train-continue', 'shep-train-stop']
                  .filter((i) => at(document.getElementById(i))),
-               reason: words(document.getElementById('shep-train-reason')),
+               reason: words(document.getElementById('shep-train-why')),
                closers: [...dr.querySelectorAll('button')].filter((b) => at(b)
                  && /^(close|cancel)$/i.test((b.getAttribute('aria-label') || b.textContent).trim())).length };
   }
@@ -2295,10 +2362,11 @@ _LAYOUT_FACTS_JS = r"""() => {
 #: `FLOOR_HEIGHT`, the owner's decision of 2026-11-23): the shared check's representative sizes
 #: (`UI_SIZES`), checked, a large screen laid out only, 1536 x 760 (short, the owner's laptop),
 #: checked too, one window below the floor (laid out only: drawn as at the floor, the document
-#: scrolling), and the owner's again.
+#: scrolling down; 1280 x 640, R-ARR: a window wider than tall that tries side by side), and the
+#: owner's again.
 _WALK_SIZES = ((1850, 960, True), (1280, 900, True), (1920, 720, True), (1440, 1600, True),
                (2560, 1440, False), (1536, 760, True), (1366, 768, True), (1280, 720, True),
-               (1024, 640, False), (1850, 960, False))
+               (1280, 640, False), (1850, 960, False))
 
 #: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`), a
 #: row of its list chosen (the served model's, unfolded and located), so its
@@ -2319,9 +2387,10 @@ _LOAD_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
 _IMPORT_DRAWER = {"click": "#shep-test-import-open", "shown": "#shep-test-import",
                   "close": "#shep-test-import-close"}
 #: The windows a drawer is opened at in a layout walk: the owner's, a laptop, the display floor,
-#: one window below it (drawn as at the floor: its marks compared with the floor's) and the two
-#: portrait windows (stacked: the owner's decision of 2026-11-23 on portrait windows).
-_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1024, 640), (1080, 1920), (1440, 2560))
+#: one window below it (drawn as at the floor: its marks compared with the floor's; the layout
+#: sizes' 1280 x 640, R-ARR) and the two portrait windows (stacked: the owner's decision of
+#: 2026-11-23 on portrait windows).
+_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1280, 640), (1080, 1920), (1440, 2560))
 
 
 #: The windows the configured walk opens the Load drawer at with a row chosen (its Model Facts
@@ -2507,33 +2576,36 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
 
     - no wider than tall (1440 x 1600): every page stacked, its panels one
       under the other;
-    - wider: side by side exactly when the page's panels fit by their own
-      minimum widths; a short window (under ``style.SHORT_BELOW``) only
-      denser, ``data-shep-short``; side by side, the panels on one line and
-      none narrower than its minimum, and the page itself never scrolls;
+    - wider (R-ARR, the owner's D11 of 2026-11-24): side by side exactly when
+      the window is at least the display floor's width and the page's panels
+      fit by their own minimum widths, else stacked; a short window (under
+      ``style.SHORT_BELOW``) only denser, ``data-shep-short``; side by side,
+      the panels on one line and none narrower than its minimum, and the page
+      itself never scrolls;
     - at or above the floor, never a horizontal page scroll;
-    - below the floor (1024 x 640): the decision and the short flag are the
-      floor's (1280 x 720) and the document scrolls both ways, the layout
-      drawn as at the floor, never shrunk to the window;
+    - below the floor (1280 x 640): the decision and the short flag are the
+      floor's (1280 x 720) and the document scrolls down, the layout drawn as
+      at the floor, never shrunk to the window;
     - back at 1850 x 960, the same as the first time; there the Training run
       bar is one row (R-38).
     Nothing covering a focused control, at every size, is the shared check's
     (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
-    from tests.fixtures.browser import at_floor, floor_size
+    from tests.fixtures.browser import at_floor, effective_size, floor_size
 
     fw, fh = floor_size()
-    portrait = {"1440x1600"}
     floors = {s["page"]: s["extra"] for s in ui_walk if s["size"] == f"{fw}x{fh}" and not s.get("open")}
     for s in ui_walk:
         where, facts = (s["size"], s["page"]), s["extra"]
         w, h = (int(n) for n in s["size"].split("x"))
-        assert facts["short"] == (max(h, fh) < 900), (where, facts)
-        want = "stack" if s["size"] in portrait or facts["need"] > facts["width"] + 0.5 else "side"
+        ew, eh = effective_size(s["size"])
+        assert facts["short"] == (eh < 900), (where, facts)
+        want = "side" if w > h and w >= fw and facts["need"] <= facts["width"] + 0.5 else "stack"
         assert facts["layout"] == want, (where, facts)
         if not at_floor(s["size"]):
             floor = floors[s["page"]]
             assert (facts["layout"], facts["short"]) == (floor["layout"], floor["short"]), (where, facts, floor)
-            assert facts["overX"] > 0 and (facts["overY"] > 0 or facts["layout"] == "stack"), (where, facts)
+            assert (facts["overX"] > 0) == (w < ew), (where, facts)
+            assert h >= eh or facts["overY"] > 0 or facts["layout"] == "stack", (where, facts)
             continue
         assert facts["overX"] == 0, (where, facts)
         if want == "side":
@@ -3237,8 +3309,17 @@ const { chromium } = require('playwright');
   const browser = await chromium.launch();
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
   const rows = Array.from({ length: 300 }, (_, i) => `<tr><th scope="row">Field ${i}</th><td>${i}</td><td>${i}</td></tr>`).join('');
+  const lines = Array.from({ length: 60 }, (_, i) => `<p style="margin: 0">Line ${i} of a region taller than its box.</p>`).join('');
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>
-    <div id="cue" style="height: 200px; overflow: auto;"><div style="height: 900px"></div></div>
+    <div id="cue" style="height: 200px; overflow: auto;">${lines}</div>
+    <div id="gap" style="height: 200px; overflow: auto;"><p style="margin: 0">A first line, then blank.</p><div style="height: 900px"></div></div>
+    <div id="gapgr" class="block hide-container __GR_HIDE__" style="height: 200px; overflow: auto !important;"><p style="margin: 0">A first line, then blank.</p><div style="height: 900px"></div></div>
+    <div id="graze" style="height: 200px; overflow: auto; font-size: 15px; line-height: 22.5px">${Array.from({ length: 8 }, (_, i) => `<p style="margin: 0">Line ${i} of the settings.</p>`).join('')}
+      <div style="height: 40px"></div><label><input type="checkbox"> Compile the model</label><div style="height: 300px"></div></div>
+    <div id="near" style="height: 198px; overflow: auto; font-size: 15px; line-height: 20px">${Array.from({ length: 12 }, (_, i) => `<p style="margin: 0 0 9px">Key ${i} · its value</p>`).join('')}</div>
+    <div id="srgap" style="height: 200px; overflow: auto; font-size: 15px; line-height: 22.5px">${Array.from({ length: 6 }, (_, i) => `<p style="margin: 0">Line ${i} of the folders.</p>`).join('')}
+      <div style="height: 50px"></div><div style="position: relative; height: 40px"><span class="sr-only" style="position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Import folder: folder path</span>
+      <input type="text" style="display: block; height: 36px; margin-top: 4px"></div><div style="height: 300px"></div></div>
     <div id="cuex" style="width: 200px; overflow-x: auto; overflow-y: hidden;"><div style="width: 900px; height: 20px"></div></div>
     <div id="fits" style="height: 200px; overflow: auto;"><div style="height: 100px"></div></div>
     <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
@@ -3252,6 +3333,15 @@ const { chromium } = require('playwright');
   const cue = () => page.evaluate(() => { const e = document.getElementById('cue');
     return { more: e.hasAttribute('data-shep-more'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   const out = { top: await cue() };
+  // R-CUE: where the edge falls in a gap a fade may not reach, the edge cue, never a fade over blank.
+  const gapOf = (id) => page.evaluate((id) => { const e = document.getElementById(id), s = getComputedStyle(e);
+    return { more: e.hasAttribute('data-shep-more'), mask: s.maskImage !== 'none',
+             edge: e.hasAttribute('data-shep-more-edge') && /inset/.test(s.boxShadow) }; }, id);
+  out.gap = await gapOf('gap');
+  out.gapgr = await gapOf('gapgr');
+  out.graze = await gapOf('graze');
+  out.near = await gapOf('near');
+  out.srgap = await gapOf('srgap');
   out.sideways = await page.evaluate(() => { const e = document.getElementById('cuex');
     return { more: e.hasAttribute('data-shep-more-x'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   out.fits = await page.evaluate(() => { const e = document.getElementById('fits');
@@ -3281,6 +3371,21 @@ const { chromium } = require('playwright');
 """
 
 
+def _page_shell_js():
+    """The shell's head script (`shell._SHELL_JS`) for a test page of its own: no pages, no
+    stages, the display floor's numbers."""
+    from src.webui.components.help import DESCRIBED_BY_JS
+    from src.webui.style import FLOOR_VAR, STACK_FLOOR_WIDTH
+
+    return (shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
+            .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
+            .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
+            .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
+            .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720")
+            .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
+            .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS))
+
+
 def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp_path):
     """R-73: Test's Result body scrolled with no cue (overlay scrollbars draw
     nothing at rest). Every region that scrolls fades its last lines while
@@ -3289,28 +3394,50 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     ``data-shep-more-x``); a region that holds its content draws no cue. No
     page opts in (the sweep's L7: Settings, Fine-tune's form, Training's charts
     and the Diagnosis fields scrolled with no cue because their pages had not).
+    R-CUE (the owner's D4 of 2026-11-24): the fade lies over lines of text; a region whose edge
+    falls in a gap no fade may reach (``#gap``) draws the one edge cue instead, never a fade over
+    the blank, and so does one whose last line ends in the upper half of the fade that would reach
+    it (``#graze``, LOOK5 of the L8 sweep, L8-2 and L8-4: Settings' Runtime settings and Test's Run
+    at 1280 x 720 ended 22 px under a whole title with a 32 px fade over the blank, whole controls
+    under it), while one whose edge falls just under a line keeps the fade over it (``#near``), and
+    words kept for a screen reader are no line a fade may reach (``#srgap``: Data locations at
+    1280 x 720, a text box's hidden label over the edge, a fade over the boxes' tops); a
+    ``gr.HTML`` block's region (``#gapgr``: Gradio's own container rule, read from its
+    style sheet, clears every block's shadow) draws it too (the L8 close: the Diagnosis Load
+    drawer's facts never drew it).
     B72-C3: Compare, 12,342 px tall, had its sideways scrollbar at its foot,
     out of reach mid-table; it is now a box no taller than the region it is
     read in, so its scrollbar is in view whenever the box is. Both measured
     in a browser on a page of their own (Node and Playwright, skipped without)."""
     from src.webui.components import models_page, test_page
-    from src.webui.style import FLOOR_VAR, SHELL_CSS, STACK_FLOOR_WIDTH
+    from src.webui.style import SHELL_CSS
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     assert "shep-scroll-cue" not in Path(test_page.__file__).read_text()
     css_path, js_path = tmp_path / "page.css", tmp_path / "head.js"
-    css_path.write_text(SHELL_CSS + models_page.PAGE_CSS, encoding="utf-8")
-    js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
-                       .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
-                       .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
-                       .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
-                       .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720")
-                       .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR),
-                       encoding="utf-8")
-    seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
+    # A gr.HTML block's container rule, as Gradio's own style sheet writes it (its scoped class).
+    assets = Path(gr.__file__).parent / "templates" / "frontend" / "assets"
+    found = [m for css in sorted(assets.glob("*.css")) for m in re.finditer(
+        r"\.hide-container\.(svelte-\w+):not\(\.fullscreen\)\{[^}]*box-shadow:none[^}]*\}",
+        css.read_text(encoding="utf-8"))]
+    assert found, "Gradio's .hide-container rule is not in its style sheet"
+    hide = found[0].group(1)
+    css_path.write_text(SHELL_CSS + models_page.PAGE_CSS + found[0].group(0), encoding="utf-8")
+    js_path.write_text(_page_shell_js(), encoding="utf-8")
+    seen = run_node(_CUE_JS.replace("__GR_HIDE__", hide), tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
+    assert seen["gap"] == {"more": True, "mask": False, "edge": True}, seen
+    assert seen["gapgr"] == {"more": True, "mask": False, "edge": True}, seen
+    # LOOK5 of the L8 sweep (L8-2, L8-4): the edge 22 px under the last line, whole controls under
+    # it: a fade within reach would only graze that line's foot, so the edge cue; the edge 5 px
+    # under a line of a list: the fade draws that line out, and stays.
+    assert seen["graze"] == {"more": True, "mask": False, "edge": True}, seen
+    assert seen["near"] == {"more": True, "mask": True, "edge": False}, seen
+    # A text box's label kept for a screen reader straddling the edge is no line to fade (Data
+    # locations at 1280 x 720 faded the boxes' tops under it): the edge falls in a gap.
+    assert seen["srgap"] == {"more": True, "mask": False, "edge": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
     assert seen["sideways"] == {"more": True, "mask": True}, seen
     assert seen["fits"] == {"more": False, "mask": False}, seen
@@ -3319,6 +3446,110 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
         assert box["sideways"] and box["barInView"], (layout, box)
         assert box["wrapH"] <= 900, (layout, box)
     assert seen["side"]["wrapH"] <= seen["side"]["bodyH"], seen
+
+
+#: R-CUE's lone title (the L8 close): panels of a fixed height, each a scroll region over a
+#: footer, whose edge falls under a title with every control it heads under the edge: a field's
+#: label (``lt-label``), a heading over two buttons (``lt-head``), a heading over a field
+#: (``lt-nested``); a field's box that starts in the gap the edge falls in, 22 px under the last
+#: line, its words under the edge (``lt-gapbox``); and a region of its own fixed height
+#: (``lt-fixed``), whose height is not its column's to give.
+_LONE_TITLE_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const [css, js, look] = [process.argv[2], process.argv[3], process.argv[4]].map((p) => require('fs').readFileSync(p, 'utf8'));
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 1000 } })).newPage();
+  const lines = (n) => Array.from({ length: n }, (_, i) => `<p class="lt-line" style="margin: 0; line-height: 20px">Line ${i} of the form.</p>`).join('');
+  const panel = (id, left, top, body, footer = true) => `
+    <div class="lt-panel" id="${id}-panel" style="position: absolute; left: ${left}px; top: ${top}px; width: 520px; height: 300px; display: flex; flex-direction: column; background: #fff">
+      <div class="lt-bd" id="${id}" style="${footer ? 'flex: 1 1 auto; min-height: 0' : 'flex: 0 0 auto; height: 239px'}; overflow: auto; padding: 0 16px">${body}</div>
+      <div class="lt-ft" id="${id}-ft" style="flex: 0 0 auto; height: 60px; border-top: 1px solid #ccc"><button type="button">Start</button></div></div>`;
+  const field = (label) => `<div class="block" style="margin-top: 16px; background: #fff"><span data-testid="block-info" class="lt-title" style="display: block; margin-bottom: 10px; line-height: 20px">${label}</span><input type="text" style="display: block; height: 36px"></div>`;
+  await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="font: 15px/20px sans-serif">
+    ${panel('lt-label', 20, 20, lines(10) + field('Device') + lines(10))}
+    ${panel('lt-head', 600, 20, lines(9) + '<h3 class="lt-title" style="margin: 20px 0 0; line-height: 24px">Import folder</h3><div style="margin-top: 16px"><button type="button">Change…</button> <button type="button">Check</button></div>' + lines(10))}
+    ${panel('lt-nested', 20, 360, lines(8) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + field('Run name') + lines(10))}
+    ${panel('lt-fixed', 600, 360, lines(10) + field('Seed') + lines(10), false)}
+    ${panel('lt-boxtop', 20, 680, lines(9) + '<h3 style="margin: 20px 0 0; line-height: 24px">Options</h3><input type="number" value="10" style="display: block; margin-top: 3px; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999">' + lines(10))}
+    ${panel('lt-gapbox', 600, 680, lines(11) + '<div style="height: 7px"></div><div class="block" style="background: #fff; padding-top: 14px"><label class="lt-title" style="display: block; line-height: 20px"><input type="checkbox"> Deterministic execution</label></div>' + lines(10))}
+    <script>${js}</script></body></html>`);
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const pass = async () => { await page.evaluate(() => window.ShepShell.update()); await frames(); await frames(); };
+  await pass();
+  const read = (id) => page.evaluate((id) => {
+    const el = document.getElementById(id), r = el.getBoundingClientRect(), s = getComputedStyle(el);
+    const edge = r.top + el.clientTop + el.clientHeight;
+    const title = [...el.querySelectorAll('.lt-title, h3')].pop();
+    const titles = [...el.querySelectorAll('.lt-title, h3, .block')].filter((t) => t.getBoundingClientRect().top < edge + 60);
+    const before = [...el.querySelectorAll('.lt-line')].filter((p) => p.getBoundingClientRect().top < title.getBoundingClientRect().top).pop();
+    const panel = document.getElementById(id + '-panel').getBoundingClientRect(), ft = document.getElementById(id + '-ft').getBoundingClientRect();
+    return { more: el.hasAttribute('data-shep-more'), edgeCue: el.hasAttribute('data-shep-more-edge') && /inset/.test(s.boxShadow),
+             mask: s.maskImage !== 'none', height: el.clientHeight, margin: s.marginBottom,
+             titlesUnder: titles.every((t) => t.getBoundingClientRect().top >= edge - 0.5),
+             titleAbove: titles.some((t) => t.getBoundingClientRect().top < edge - 0.5),
+             lineAbove: before.getBoundingClientRect().bottom <= edge + 0.5,
+             footDocked: Math.abs(ft.bottom - panel.bottom) <= 1 };
+  }, id);
+  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop', 'lt-gapbox'], out = {};
+  for (const id of ids) { out[id] = await read(id); }
+  // Scrolled, the region keeps its height; back at its top, the same.
+  for (const id of ids) {
+    await page.evaluate((id) => { document.getElementById(id).scrollTop = 25; }, id);
+    await pass();
+    out[id].scrolledHeight = (await read(id)).height;
+    await page.evaluate((id) => { document.getElementById(id).scrollTop = 0; }, id);
+    await pass();
+    out[id].backHeight = (await read(id)).height;
+  }
+  await page.addScriptTag({ content: look });
+  out.layout = await page.evaluate(() => { const l = window.__shepLook.check().layout; return { edgeHead: l.edgeHead, cue: l.cue }; });
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its_edge(tmp_path):
+    """**R-CUE: a region never ends at a lone title** (the owner's D4 of 2026-11-24: "never show
+    only a section title with every control under the edge"; the L8 close's suite: E1 found
+    Fine-tune's form ending at its Device and Run name labels at 1366 x 768 and 1280 x 720, and
+    Settings' Data locations at its Import folder heading at 1280 x 720, each title faded with
+    its controls under the edge). The shell's cue pass ends such a region in the gap above the
+    title: the title (and a field's box) lies under the edge with its controls, the line before
+    it stays in view, the region draws the edge cue (no fade over the gap), the footer under it
+    stays at its panel's foot, and the walk's ``edge-heading`` and ``scroll-cue`` rules find
+    nothing. A heading whose only control is a field under it goes under the edge with that
+    field's label. A heading whose field shows only its box's top 12 px over the edge (under half
+    its value line) is a lone title too (the L8 close, CK8-2: Diagnosis' Options over Top-K at
+    1280 x 720). Where the edge falls in a gap 22 px under the last line, a fade would only graze
+    that line's foot: the region draws the edge cue, and a field's box that starts in that gap goes
+    under the edge whole, its ground no longer over the cue (``lt-gapbox``; LOOK5 of the L8 sweep,
+    L8-4: Test's Run region at 1280 x 720 ended 22 px under "Register when the run ends", a fade
+    over the blank, its Deterministic box 12 px over the edge). Scrolled, the region keeps its
+    height. A region of its own fixed height (its height is not its column's to give) is left as
+    it is. Measured in a browser on a page of its
+    own (Node and Playwright, skipped without)."""
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    css_path, js_path, look_path = tmp_path / "page.css", tmp_path / "head.js", tmp_path / "look.js"
+    css_path.write_text(SHELL_CSS, encoding="utf-8")
+    js_path.write_text(_page_shell_js(), encoding="utf-8")
+    look_path.write_text(LOOK_JS, encoding="utf-8")
+    seen = run_node(_LONE_TITLE_JS, tmp_path, str(css_path), str(js_path), str(look_path))
+    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop", "lt-gapbox"):
+        got = seen[region]
+        assert got["more"] and got["titlesUnder"] and got["lineAbove"], (region, got)
+        assert got["edgeCue"] and not got["mask"], (region, got)
+        assert got["footDocked"], (region, got)
+        assert got["scrolledHeight"] == got["height"] == got["backHeight"], (region, got)
+        assert not [f for f in seen["layout"]["edgeHead"] + seen["layout"]["cue"] if f"#{region} " in f], seen["layout"]
+    fixed = seen["lt-fixed"]
+    assert fixed["margin"] == "0px" and fixed["titleAbove"], fixed
+    assert fixed["scrolledHeight"] == fixed["height"] == fixed["backHeight"], fixed
 
 
 def test_the_training_parameters_fold_when_stacked_and_show_side_by_side():
@@ -3331,7 +3562,7 @@ def test_the_training_parameters_fold_when_stacked_and_show_side_by_side():
     from src.webui.components import training_console as tc
 
     assert 'aria-expanded="false" aria-controls="shep-train-params-bd"' in Path(tc.__file__).read_text()
-    assert "b.setAttribute('aria-expanded', open ? 'true' : 'false');" in tc.FOLD_JS
+    assert "b.setAttribute('aria-expanded', want);" in tc.FOLD_JS     # D9: show(b, open)
     assert ('#shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd '
             "{ display: none !important; }") in stack(tc.PAGE_CSS)
     assert ".shep-train-fold { display: none; }" in side(tc.PAGE_CSS)
@@ -3620,18 +3851,22 @@ _HEADER_FACTS_JS = r"""() => {
   const view = document.getElementById('shep-train-runview'), res = box('#shep-train-runview > #resource_display');
   const foot = view && res ? view.getBoundingClientRect().bottom - (parseFloat(getComputedStyle(view).borderBottomWidth) || 0)
                               - (parseFloat(getComputedStyle(view).paddingBottom) || 0) : null;
-  // Training's run bar: the middle of the job state's words and of Start, and Start's relation's.
+  // Training's run bar: the middle of the job state's words and of Start, the facts slot's
+  // cause's words, and the phrase beside the actions.
   const words = (s) => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) { return null; }
     const r = document.createRange(); r.selectNodeContents(e);
     const q = [...r.getClientRects()].filter((x) => x.width > 1 && x.height > 1);
-    return q.length ? { top: q[0].top, mid: (q[0].top + q[0].bottom) / 2 } : null; };
+    return q.length ? { top: q[0].top, mid: (q[0].top + q[0].bottom) / 2, left: q[0].left } : null; };
   const start = box('#shep-train-start');
   return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
            gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim(),
            runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
              ? { resBottom: res.bottom, foot } : null,
-           runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2 },
-                             state: words('#shep-train-pill .shep-st-w'), why: words('#shep-train-why') } : null };
+           runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2,
+                                      left: start.left },
+                             state: words('#shep-train-pill .shep-st-w'), mark: words('#shep-train-pill'),
+                             why: words('#shep-train-why'),
+                             facts: words('#shep-train-chip .shep-nb-text') } : null };
 }"""
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
@@ -3701,21 +3936,26 @@ def test_at_first_use_trainings_resources_line_ends_its_run_view(ui_walk_first_u
 def test_at_first_use_the_job_state_stands_on_the_run_bars_line(ui_walk_first_use):
     """LOOK2 (SW-LK5, partly): at 1850 x 960 at first use the job state ("○ Idle · …") shared
     the line of Start and its relation but stood about 5 px higher, top-aligned with the
-    40 px buttons. Wherever the state shares Start's line, its words' middle is the line's
-    middle, as Start's relation's is (the walk's layout sizes). The words are the mark's words
-    (``.shep-st-w``), not its shape, whose glyph box is the font's own (the portrait stop at
-    1080 x 1920 read the ring's box, 1.25 px over the line's middle, the words 0.75)."""
+    40 px buttons. Since L8 §2 (the owner's C and SW-LK5 of 2026-11-24) the run bar is two
+    groups: the cause is said once in the facts slot under Dataset and nothing stands beside
+    the actions; the job state stands under them, on their left edge (§2.2: the state slot
+    "sits under the actions, on their left edge"; the L8 close adds the edge, which lane T's
+    rewrite did not hold). Wherever the state shares the facts' line, its words' middle is the
+    facts' words' middle, as it was Start's (the walk's layout sizes). The words are the mark's
+    words (``.shep-st-w``), not its shape, whose glyph box is the font's own (the portrait stop
+    at 1080 x 1920 read the ring's box, 1.25 px over the line's middle, the words 0.75)."""
     stops = [s for s in ui_walk_first_use if s["page"] == "training" and not s.get("open")]
     shared = 0
     for stop in stops:
         bar = stop["extra"]["runbar"]
-        assert bar and bar["state"] and bar["why"], (stop["size"], bar)
+        assert bar and bar["state"] and bar["facts"] and bar["why"] is None, (stop["size"], bar)
         start = bar["start"]
-        if not (start["top"] <= bar["state"]["mid"] <= start["bottom"]):
+        assert bar["state"]["top"] >= start["bottom"] - 1, (stop["size"], bar)
+        assert abs(bar["mark"]["left"] - start["left"]) <= 1, (stop["size"], bar)
+        if abs(bar["state"]["top"] - bar["facts"]["top"]) > start["bottom"] - start["top"]:
             continue                                  # the state on a line of its own
         shared += 1
-        assert abs(bar["state"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
-        assert abs(bar["why"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
+        assert abs(bar["state"]["mid"] - bar["facts"]["mid"]) <= 1, (stop["size"], bar)
     assert shared, [s["size"] for s in stops]
 
 
@@ -3776,8 +4016,26 @@ def _pieces_page():
     def datasets(ctx):
         with gr.Column(elem_id="pc-panel", elem_classes=["shep-panel"]):
             shell.plain_html('<div class="shep-panel-hd"><h2>Shared pieces</h2></div>')
-            shell.plain_html(r.see_above("Start", notice), elem_id="pc-rel")
-            shell.plain_html(r.see_above("Import", notice).replace(
+            # R-WHY: a dimmed button with a phrase keyed to the D8 chip, one keyed to a
+            # notice, and that notice drawn on the screen.
+            shell.plain_html(r.notice_block(notice), elem_id="pc-why-notice")
+            # R-DETAILS: a notice whose lead line has room for its "Details ›".
+            shell.plain_html(r.notice_block({**notice, "action": ""}), elem_id="pc-details-notice")
+            gr.Button("Start", interactive=False, elem_id="pc-why-btn")
+            shell.plain_html(r.phrase_line("d8", control="pc-why-btn", lock=True), elem_id="pc-why-d8")
+            shell.plain_html(r.phrase_line(notice, control="pc-why-btn2"), elem_id="pc-why-ws")
+            # R-WHY beside the field help (the L8 S1 check, S1C-1 and S1C-2): a dimmed field with
+            # its note (``info=``) and its ⓘ, named by a phrase; and a phrase drawn before the
+            # button it explains, in one row.
+            gr.Textbox(label="Run", info="The run whose saves are listed.", interactive=False,
+                       elem_id="pc-why-field")
+            ctx.help.field("pc-why-field", "Run", "Which run the saves come from.")
+            shell.plain_html(r.phrase_line("d8", control="pc-why-field", lock=True), elem_id="pc-why-field-d8")
+            with gr.Row(elem_id="pc-why-row"):
+                shell.plain_html(r.phrase_line("d8", control="pc-why-row-btn", lock=True), elem_id="pc-why-row-d8")
+                gr.Button("Register", interactive=False, elem_id="pc-why-row-btn", scale=0, min_width=0)
+            shell.plain_html(r.phrase_line(notice, control="pc-rel-btn"), elem_id="pc-rel")
+            shell.plain_html(r.phrase_line(notice, control="pc-rel-end-btn").replace(
                 'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
                 elem_id="pc-rel-end")
             with gr.Row(elem_id="pc-bar", elem_classes=["shep-bar"]):
@@ -3824,21 +4082,90 @@ def _pieces_page():
                              f'id="pc-whole"><tbody><tr><td class="{CELL_WHOLE}">Record not readable</td>'
                              f'<td>{prose}</td></tr></tbody></table></div></div>', elem_id="pc-c12-box")
             # Two fit boxes with a cell whose words read as one while the room allows
-            # (`style.CELL_ROOMY`): one with the room, one (sized by `_PIECES_JS`) that holds
+            # (`style.CELL_ROOMY`) beside a column of prose, both sized by `_PIECES_JS` from the
+            # measured table: one with the room for the wide form with those words whole (and
+            # too little for the table's widest, where unmarked they would wrap), one that holds
             # the table only with those words wrapped.
             roomy = (f'<table class="shep-tbl {FIT_WIDE}"><tbody><tr><td class="shep-nowrap">a cell '
                      f'that never breaks</td><td class="shep-num"><span class="shep-muted {CELL_ROOMY}">'
-                     f'recorded epoch 9</span></td></tr></tbody></table>')
-            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-a" style="width: 640px">'
-                             f'{roomy}</div><div class="shep-tbl-wrap {FIT}" id="pc-roomy-b">{roomy}</div>',
+                     f'recorded epoch 9</span></td><td>a note in plain words that wraps as prose '
+                     f'does wherever its column is narrow</td></tr></tbody></table>')
+            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-a">{roomy}</div>'
+                             f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-b">{roomy}</div>',
                              elem_id="pc-roomy-box")
             shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-fit"><table class="shep-tbl {FIT_WIDE}">'
                              f'<tbody><tr>{cells}</tr></tbody></table></div>'
                              '<div style="height: 2400px"></div>', elem_id="pc-fit-box")
 
+    def placement(ctx):
+        # R-HELP (a bubble covers no control): a phrase keyed to the D8 chip (a tall bubble), the
+        # button it explains under it, room on both sides of them, a column of controls on the
+        # right side and none on the left.
+        side = "".join(f'<button type="button" id="pc-place-c{i}">Control {i}</button>' for i in range(8))
+        shell.plain_html(
+            '<div id="pc-place-row" style="display: flex; align-items: flex-start; gap: 24px; '
+            'padding: 48px 0 640px">'
+            '<div id="pc-place-free" style="width: 420px; height: 520px"></div>'
+            f'<div id="pc-place-mid" style="width: 220px">{r.phrase_line("d8", control="pc-place-btn", lock=True)}'
+            '<button type="button" id="pc-place-btn" disabled>Start</button></div>'
+            f'<div id="pc-place-side" style="display: flex; flex-direction: column; gap: 12px">{side}</div>'
+            '</div>', elem_id="pc-place")
+
+    def actions(ctx):
+        # R-WIDTH's button rule: a narrow panel whose footer holds one action, the same with two
+        # actions, and a wide panel whose fields stand side by side, its footer one action.
+        with gr.Row(elem_id="pc-span-row"):
+            with gr.Column(elem_id="pc-span-a", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-a-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-a-ft"):
+                    gr.Button("Save", elem_id="pc-span-a-btn")
+            with gr.Column(elem_id="pc-span-b", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-b-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-b-ft"):
+                    gr.Button("Check", elem_id="pc-span-b-check")
+                    gr.Button("Save", elem_id="pc-span-b-btn")
+            # One action beside a field in its row, and one action beside its words in a footer.
+            with gr.Column(elem_id="pc-span-d", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-d-name")
+                with gr.Row(elem_id="pc-span-d-ft"):
+                    gr.Dropdown(["cpu"], value="cpu", label="Device", elem_id="pc-span-d-field")
+                    gr.Button("Refresh", elem_id="pc-span-d-btn")
+            with gr.Column(elem_id="pc-span-e", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-e-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-e-ft"):
+                    gr.Button("Load", elem_id="pc-span-e-btn")
+                    gr.HTML("<span>Not loaded yet</span>", elem_id="pc-span-e-words")
+            # One action and its reason slot (`shep-beside`), not drawn while it is empty:
+            # Fine-tune's Start bar (its `.shep-ft-start-why` column).
+            with gr.Column(elem_id="pc-span-f", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-f-field")
+                with gr.Row(elem_classes=["shep-bar"], elem_id="pc-span-f-ft"):
+                    gr.Button("Start", elem_id="pc-span-f-btn")
+                    with gr.Column(elem_classes=["shep-beside"], elem_id="pc-span-f-slot", min_width=0):
+                        gr.HTML("", elem_id="pc-span-f-why")
+            # Two actions in a row, the first in a column of its own with a cover laid over it
+            # (Diagnosis' Run Diagnosis and Clear; the L8 close, CK8-3).
+            with gr.Column(elem_id="pc-span-g", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-g-field")
+                with gr.Row(elem_id="pc-span-g-ft"):
+                    with gr.Column(elem_id="pc-span-g-wrap", min_width=0, scale=1):
+                        gr.Button("Run", variant="primary", size="lg", elem_id="pc-span-g-btn")
+                        gr.HTML("<span></span>", elem_id="pc-span-g-cover")
+                    gr.Button("Clear", size="lg", elem_id="pc-span-g-clear", scale=0, min_width=0)
+        # An icon-only action beside a field (a field row's square, ``shep-icon-btn``).
+        with gr.Row(elem_classes=["shep-field-row"], elem_id="pc-span-icon-row"):
+            gr.Dropdown(["a"], value="a", label="Run", elem_id="pc-span-icon-field")
+            gr.Button("↻", elem_classes=["shep-icon-btn"], elem_id="pc-span-icon")
+        with gr.Column(elem_id="pc-span-c", elem_classes=["shep-panel"], min_width=0):
+            with gr.Row():
+                gr.Textbox(label="First", elem_id="pc-span-c-f1")
+                gr.Textbox(label="Second", elem_id="pc-span-c-f2")
+            with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-c-ft"):
+                gr.Button("Start", elem_id="pc-span-c-btn")
+
     pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
                                                        shell.CLINICAL)},
-             shell.DATASETS: datasets}
+             shell.DATASETS: datasets, shell.TRAINING: placement, shell.FINETUNE: actions}
     with gr.Blocks() as demo:
         ctx = shell.build_shell(demo, pages)
         shell.help_texts(ctx.help)
@@ -3937,19 +4264,112 @@ const QUEUE_JS = __QUEUE_JS__;
               fold: { top: fold.top, bottom: fold.bottom } },
     };
   });
-  // The roomy boxes: the second one as wide as its table at its narrowest with the roomy words
-  // wrapped (measured apart, beside the box, outside any fit box), then a resize so the layout
-  // pass measures it.
-  await page.evaluate(() => {
-    const b = document.getElementById('pc-roomy-b'), t = b.querySelector('table').cloneNode(true);
-    t.style.cssText = 'position: absolute; visibility: hidden; width: min-content';
-    b.parentElement.appendChild(t);
-    const wrapped = t.getBoundingClientRect().width, s = getComputedStyle(b);
-    t.remove();
-    b.style.width = (wrapped + parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth) + 2) + 'px';
+  // The roomy boxes, sized from the measured table (K6, never a fixed width): the first as wide
+  // as the table at its narrowest with the roomy words whole (a copy in a box marked roomy, as
+  // the layout pass measures it), the second as wide as it at its narrowest with them wrapped
+  // (a copy in a box not marked), each measured apart beside the boxes; then, at the first
+  // one's width, how many lines those words take in a copy of its box not marked roomy (they
+  // wrap there: the mark is what keeps them on one line); then a resize so the layout pass
+  // measures the boxes.
+  out.roomyBox = await page.evaluate(() => {
+    const a = document.getElementById('pc-roomy-a'), b = document.getElementById('pc-roomy-b');
+    const s = getComputedStyle(a), edges = parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth);
+    const copy = (marked, width) => {
+      const c = a.cloneNode(true);
+      c.removeAttribute('id'); c.removeAttribute('__NARROW__'); c.removeAttribute('__ROOMY__');
+      if (marked) { c.setAttribute('__ROOMY__', ''); }
+      c.style.cssText = 'position: absolute; visibility: hidden; left: 0; top: 0; width: ' + width;
+      a.parentElement.appendChild(c);
+      return c;
+    };
+    const narrowest = (marked) => { const c = copy(marked, 'auto'), t = c.querySelector('table');
+      t.style.width = 'min-content'; const w = t.getBoundingClientRect().width; c.remove(); return w; };
+    const whole = narrowest(true), wrapped = narrowest(false);
+    const widthA = whole + edges + 2, widthB = wrapped + edges + 2;
+    a.style.width = widthA + 'px'; b.style.width = widthB + 'px';
+    const c = copy(false, widthA + 'px'), r = document.createRange();
+    r.selectNodeContents(c.querySelector('.__CELL_ROOMY__'));
+    const unmarked = new Set([...r.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size;
+    c.remove();
+    return { whole, wrapped, widthA, widthB, unmarked };
   });
   await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
+  // R-DETAILS: the notice's "Details ›" on its lead's last line (the line's last row of words,
+  // the next step's link), and, opened, its rows under the line on the words' edge.
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(2);
+  const details = async () => page.evaluate(() => {
+    const n = document.querySelector('#pc-details-notice .shep-nb'), sum = n.querySelector('.shep-nb-more > summary');
+    const words = n.querySelector('.shep-nb-line .shep-nb-text'), lead = document.createRange();
+    lead.setStart(words, 0); lead.setEndBefore(n.querySelector('.shep-nb-more'));
+    const rows = [...lead.getClientRects()].filter((x) => x.width > 0), last = rows[rows.length - 1];
+    const s = sum.getBoundingClientRect();
+    const kv = n.querySelector('.shep-nb-kv'), k = kv ? kv.getBoundingClientRect() : null;
+    const r = document.createRange(); r.selectNodeContents(words.querySelector('.shep-st-w'));
+    return { sum: [s.left, s.top, s.right, s.bottom], last: [last.left, last.top, last.right, last.bottom],
+             wordsLeft: r.getClientRects()[0].left, kv: k && k.height ? [k.left, k.top, k.right, k.bottom] : null };
+  });
+  out.details = { closed: await details() };
+  await page.click('#pc-details-notice .shep-nb-more > summary'); await frames(2);
+  out.details.open = await details();
+  await page.click('#pc-details-notice .shep-nb-more > summary'); await frames(2);
+  // R-WHY: the dimmed button is described by its phrase; the phrase keyed to the D8 chip opens
+  // the one bubble with the chip's text as it is now; the one keyed to a notice focuses its link.
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(2);
+  out.why = { described: await page.evaluate(() => {
+    const b = document.getElementById('pc-why-btn'), btn = b.matches('button') ? b : b.querySelector('button');
+    const p = document.querySelector('#pc-why-d8 button.shep-why');
+    return { describedby: btn.getAttribute('aria-describedby'), phrase: p.id, focusable: p.tabIndex >= 0 && !p.disabled,
+             tag: p.tagName };
+  }) };
+  await page.click('#pc-why-d8 button.shep-why');
+  await page.waitForSelector('#shep-help-bubble:not([hidden])');
+  out.why.chip = await page.evaluate(() => {
+    const flat = (t) => (t || '').replace(/\s+/g, '');
+    const bubble = document.getElementById('shep-help-bubble'), p = document.querySelector('#pc-why-d8 button.shep-why');
+    return { bubble: flat(bubble.querySelector('.shep-bubble-bd').textContent),
+             chip: flat(document.querySelector('#shep-chips #shep-chip-d8-why').textContent),
+             title: bubble.querySelector('.shep-bubble-title').textContent, expanded: p.getAttribute('aria-expanded'),
+             bubbles: document.querySelectorAll('.shep-bubble').length };
+  });
+  await page.keyboard.press('Escape'); await frames(2);
+  // A dimmed field's description: its note, its help text and its phrase; with the phrase gone,
+  // only the phrase's id goes. A phrase drawn before the button it explains: its bubble leaves
+  // that button and the phrase uncovered.
+  const fieldBy = () => page.evaluate(() => {
+    const f = document.querySelector('#pc-why-field textarea, #pc-why-field input');
+    return (f.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+  });
+  out.why.field = { ids: await fieldBy(),
+                    phrase: await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').id) };
+  await page.click('#pc-why-row-d8 button.shep-why');
+  await page.waitForSelector('#shep-help-bubble:not([hidden])'); await frames(2);
+  out.why.row = await page.evaluate(() => {
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    return { bubble: q(document.getElementById('shep-help-bubble')), control: q(document.getElementById('pc-why-row-btn')),
+             phrase: q(document.querySelector('#pc-why-row-d8 button.shep-why')) };
+  });
+  await page.keyboard.press('Escape'); await frames(2);
+  await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').remove()); await frames(4);
+  out.why.field.after = await fieldBy();
+  // The notice keyed by the phrase is drawn out of view first (the L8 S1 check, S1C-10): a gap
+  // taller than the window between the notice and the phrase, the phrase scrolled to the
+  // window's foot, so activating the phrase must bring the notice into view as well as focus it.
+  const noticeSeen = () => page.evaluate(() => {
+    const a = document.activeElement, n = document.querySelector('#pc-why-notice .shep-nb'), r = n.getBoundingClientRect();
+    return { go: !!a && a.matches('button.shep-nb-go') && n.contains(a),
+             inView: r.top >= 0 && r.bottom <= document.documentElement.clientHeight };
+  });
+  await page.evaluate(() => {
+    const gap = document.createElement('div');
+    gap.id = 'pc-why-gap'; gap.style.height = `${2 * document.documentElement.clientHeight}px`;
+    document.getElementById('pc-why-ws').before(gap);
+    document.querySelector('#pc-why-ws button.shep-why').scrollIntoView({ block: 'end' });
+  }); await frames(2);
+  const whyBefore = await noticeSeen();
+  await page.click('#pc-why-ws button.shep-why'); await frames(4);
+  out.why.notice = { before: whyBefore.inView, ...(await noticeSeen()) };
+  await page.evaluate(() => document.getElementById('pc-why-gap').remove()); await frames(2);
   out.roomy = await page.evaluate(() => Object.fromEntries(['pc-roomy-a', 'pc-roomy-b'].map((id) => {
     const b = document.getElementById(id), span = b.querySelector('.__CELL_ROOMY__');
     const r = document.createRange(); r.selectNodeContents(span);
@@ -3967,6 +4387,178 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.evaluate(() => document.body.appendChild(document.createElement('div')));
   await frames(4);
   out.scroll.after = await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY }));
+  // R-HELP: the tall bubble of a phrase with controls on one side and none on the other, both
+  // sides in the window: where it opens, and every control it lies over. A window 840 px tall,
+  // so the phrase's bubble (its chip's answer, within the bubble's budget since the L8 close,
+  // and 44 px shorter since its "Esc to close" row went to the head, about 300 px) is tall in it.
+  await page.setViewportSize({ width: 1280, height: 840 }); await frames(2);
+  await page.click('#shep-page-training-button');
+  await page.waitForSelector('#pc-place-row button.shep-why');
+  await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById('pc-place-row').scrollIntoView({ block: 'start' }); });
+  await frames(4);
+  await page.click('#pc-place-row button.shep-why');
+  await page.waitForSelector('#shep-help-bubble:not([hidden])'); await frames(4);
+  out.place = await page.evaluate(() => {
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble);
+    const over = (r) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3];
+    const controls = [...document.querySelectorAll('button, input:not([type=hidden]), select, textarea, [role=radio], [role=checkbox]')]
+      .filter((c) => !bubble.contains(c) && c.getClientRects().length && getComputedStyle(c).visibility !== 'hidden');
+    return { bubble: b, height: b[3] - b[1], window: [document.documentElement.clientWidth, document.documentElement.clientHeight],
+             phrase: q(document.querySelector('#pc-place-row button.shep-why')), control: q(document.getElementById('pc-place-btn')),
+             side: q(document.getElementById('pc-place-side')), free: q(document.getElementById('pc-place-free')),
+             covers: controls.filter((c) => over(q(c))).map((c) => c.id || c.className || c.tagName) };
+  });
+  await page.keyboard.press('Escape'); await frames(2);
+  // R-HELP's slide (the L8 close): the same phrase near the window's right edge, its bubble's
+  // height measured above, a control in each of the two alignments beside it and one above and
+  // below it; the page itself hidden, so only this scene's controls count.
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(2);
+  out.slide = await page.evaluate(async (h) => {
+    const frames = (n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); });
+    document.querySelector('gradio-app').style.visibility = 'hidden';
+    const vw = document.documentElement.clientWidth, cy = 640, w = 320;
+    const scene = document.createElement('div'); scene.id = 'pc-slide'; document.body.appendChild(scene);
+    const put = (html, css) => { const d = document.createElement('div'); d.innerHTML = html;
+      d.style.cssText = `position: fixed; visibility: visible; ${css}`; scene.appendChild(d); return d; };
+    const phrase = document.querySelector('#pc-place-row button.shep-why').cloneNode(true);
+    phrase.removeAttribute('id'); phrase.setAttribute('data-for', 'pc-slide-btn');
+    const line = put('', `left: ${vw - 200}px; top: ${cy - 12}px; width: 180px`);
+    line.appendChild(phrase);
+    line.insertAdjacentHTML('beforeend', '<button type="button" id="pc-slide-btn" disabled>Start</button>');
+    await frames(2);
+    const g = line.getBoundingClientRect(), left = g.left - 10 - w + 40;
+    put('<button type="button" id="pc-slide-a">A</button>', `left: ${left}px; top: ${cy + h / 2 + 40}px`);
+    put('<button type="button" id="pc-slide-b">B</button>', `left: ${left}px; top: ${cy - h / 2 - 70}px`);
+    put(`<button type="button" id="pc-slide-c" style="width: ${g.width}px">C</button>`, `left: ${g.left}px; top: ${g.top - 60}px`);
+    put(`<button type="button" id="pc-slide-d" style="width: ${g.width}px">D</button>`, `left: ${g.left}px; top: ${g.bottom + 40}px`);
+    await frames(2);
+    phrase.click(); await frames(8);
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble);
+    // A cover as the placement counts one (help.py's controlBoxes): a control's box less a pixel
+    // at each edge, so a place that only meets its edge is none. The slide steps put the chosen
+    // place's edge anywhere in the step above A, the last pixel included.
+    const over = (r) => r[0] + 1 < b[2] && b[0] < r[2] - 1 && r[1] + 1 < b[3] && b[1] < r[3] - 1;
+    const out = { bubble: b, phrase: q(phrase), line: q(line), shown: !bubble.hidden,
+                  covers: [...scene.querySelectorAll('button')].filter((c) => c !== phrase && over(q(c))).map((c) => c.id) };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    scene.remove(); document.querySelector('gradio-app').style.visibility = '';
+    return out;
+  }, out.place.height);
+  await frames(2);
+  // R-HELP's shorter place (the L8 close, CK8-1): the same phrase at the window's left edge, a
+  // control down the window on its right (past a bubble's width), one above it and one under it lower than the bubble's
+  // head, lead and two lines but higher than its whole height: no place of its whole height is
+  // clear, a shorter one under the phrase is.
+  out.cap = await page.evaluate(async (h) => {
+    const frames = (n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); });
+    document.querySelector('gradio-app').style.visibility = 'hidden';
+    const vh = document.documentElement.clientHeight, cy = 300;
+    const scene = document.createElement('div'); scene.id = 'pc-cap'; document.body.appendChild(scene);
+    const put = (html, css) => { const d = document.createElement('div'); d.innerHTML = html;
+      d.style.cssText = `position: fixed; visibility: visible; ${css}`; scene.appendChild(d); return d; };
+    const phrase = document.querySelector('#pc-place-row button.shep-why').cloneNode(true);
+    phrase.removeAttribute('id'); phrase.setAttribute('data-for', 'pc-cap-btn');
+    const line = put('', `left: 16px; top: ${cy - 12}px; width: 180px`);
+    line.appendChild(phrase);
+    line.insertAdjacentHTML('beforeend', '<button type="button" id="pc-cap-btn" disabled>Start</button>');
+    await frames(2);
+    const g = line.getBoundingClientRect();
+    put(`<button type="button" id="pc-cap-r" style="width: 40px; height: ${vh - 16}px">R</button>`, `left: ${g.left + 400}px; top: 8px`);
+    put(`<button type="button" id="pc-cap-a" style="width: ${g.width}px">A</button>`, `left: ${g.left}px; top: ${g.top - 60}px`);
+    put('<button type="button" id="pc-cap-b" style="width: 320px">B</button>', `left: ${g.left}px; top: ${g.bottom + 10 + 0.8 * h}px`);
+    await frames(2);
+    phrase.click(); await frames(8);
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble), bd = bubble.querySelector('.shep-bubble-bd');
+    const over = (r) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3];
+    const out = { bubble: b, height: b[3] - b[1], whole: h, line: q(line), shown: !bubble.hidden,
+                  covers: [...scene.querySelectorAll('button')].filter((c) => c !== phrase && over(q(c))).map((c) => c.id),
+                  text: q(bd), lead: q(bd.firstElementChild), cue: bd.hasAttribute('data-shep-more') };
+    // Scrolled to its end, its last part (the Ref line) is read whole and the cue is gone.
+    bd.scrollTop = bd.scrollHeight; await frames(4);
+    out.end = { text: q(bd), last: q(bd.lastElementChild), cue: bd.hasAttribute('data-shep-more'), top: bd.scrollTop };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    scene.remove(); document.querySelector('gradio-app').style.visibility = '';
+    return out;
+  }, out.place.height);
+  await frames(2);
+  // R-HELP's narrower place (the L8 close's final check, F4): the same phrase at the window's left
+  // edge, a control down the window on its right 250 px past it (closer than a whole bubble's
+  // width, farther than the least), one above it and one under it: no place of the bubble's
+  // width is clear at any height, a narrower one beside the phrase is.
+  out.narrow = await page.evaluate(async () => {
+    const frames = (n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); });
+    document.querySelector('gradio-app').style.visibility = 'hidden';
+    const vh = document.documentElement.clientHeight, cy = 300;
+    const scene = document.createElement('div'); scene.id = 'pc-narrow'; document.body.appendChild(scene);
+    const put = (html, css) => { const d = document.createElement('div'); d.innerHTML = html;
+      d.style.cssText = `position: fixed; visibility: visible; ${css}`; scene.appendChild(d); return d; };
+    const phrase = document.querySelector('#pc-place-row button.shep-why').cloneNode(true);
+    phrase.removeAttribute('id'); phrase.setAttribute('data-for', 'pc-narrow-btn');
+    const line = put('', `left: 16px; top: ${cy - 12}px; width: 180px`);
+    line.appendChild(phrase);
+    line.insertAdjacentHTML('beforeend', '<button type="button" id="pc-narrow-btn" disabled>Start</button>');
+    await frames(2);
+    const g = line.getBoundingClientRect();
+    put(`<button type="button" id="pc-narrow-r" style="width: 40px; height: ${vh - 16}px">R</button>`, `left: ${g.right + 250}px; top: 8px`);
+    put(`<button type="button" id="pc-narrow-a" style="width: ${g.width}px">A</button>`, `left: ${g.left}px; top: ${g.top - 60}px`);
+    put(`<button type="button" id="pc-narrow-b" style="width: ${g.width}px">B</button>`, `left: ${g.left}px; top: ${g.bottom + 18}px`);
+    await frames(2);
+    phrase.click(); await frames(8);
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble), bd = bubble.querySelector('.shep-bubble-bd');
+    const over = (r) => r[0] + 1 < b[2] && b[0] < r[2] - 1 && r[1] + 1 < b[3] && b[1] < r[3] - 1;
+    const out = { bubble: b, width: b[2] - b[0], line: q(line), shown: !bubble.hidden,
+                  covers: [...scene.querySelectorAll('button')].filter((c) => c !== phrase && over(q(c))).map((c) => c.id),
+                  text: q(bd), lead: q(bd.firstElementChild) };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    // Opened again where a whole-width place is clear, it takes its whole width.
+    scene.querySelector('#pc-narrow-r').parentElement.remove(); await frames(2);
+    phrase.click(); await frames(8);
+    out.again = { width: bubble.getBoundingClientRect().width };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    scene.remove(); document.querySelector('gradio-app').style.visibility = '';
+    return out;
+  });
+  await frames(2);
+  // R-WIDTH's button rule: each footer's actions, their widths and their words' widths, and the
+  // footer's content box.
+  await page.click('#shep-page-finetune-button');
+  await page.waitForSelector('#pc-span-c-btn');
+  await page.addStyleTag({ content: `
+    #pc-span-a, #pc-span-b, #pc-span-d, #pc-span-e, #pc-span-f { flex: none !important; width: 300px !important; }
+    #pc-span-f-slot:not(:has(.shep-reason)) { display: none !important; }
+    #pc-span-c { flex: none !important; width: 900px !important; }
+    #pc-span-g { flex: none !important; width: 500px !important; }
+    #pc-span-g-wrap { position: relative; }
+    #pc-span-g-cover { position: absolute !important; inset: 0; pointer-events: none; }` });
+  await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
+  const spanOf = () => page.evaluate(() => Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((k) => {
+    const ft = document.getElementById(`pc-span-${k}-ft`), s = getComputedStyle(ft), r = ft.getBoundingClientRect();
+    const room = [r.left + ft.clientLeft + parseFloat(s.paddingLeft), r.right - ft.clientLeft - parseFloat(s.paddingRight)];
+    const buttons = [...ft.querySelectorAll('button')].map((b) => {
+      const c = b.cloneNode(true); c.removeAttribute('id');
+      c.style.cssText = 'position: absolute; visibility: hidden; width: max-content; min-width: 0; flex: none';
+      document.body.appendChild(c); const words = c.getBoundingClientRect().width; c.remove();
+      const q = b.getBoundingClientRect();
+      return { id: b.id, left: q.left, right: q.right, width: q.width, words };
+    });
+    return [k, { span: ft.hasAttribute('data-shep-span'), room, buttons, gap: parseFloat(s.columnGap) || 0 }];
+  })));
+  out.span = await spanOf();
+  // Its reason drawn in the slot beside the one action (`f`): the bar measured again.
+  await page.evaluate(() => { const w = document.getElementById('pc-span-f-why');
+    const at = w.querySelector('.html-container > *') || w.querySelector('.html-container') || w;
+    at.innerHTML = '<span class="shep-reason">Needs a dataset</span>'; });
+  await frames(4);
+  out.span.fDrawn = (await spanOf()).f;
+  out.span.icon = await page.evaluate(() => {
+    const q = document.getElementById('pc-span-icon').getBoundingClientRect();
+    return { width: q.width, height: q.height };
+  });
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -3991,6 +4583,200 @@ def pieces_seen(tmp_path_factory):
                         tmp_path_factory.mktemp("pieces"), base[:-len("gradio_api")])
 
 
+def test_a_notices_details_sits_on_its_lead_line_and_opens_under_it(pieces_seen):
+    """R-DETAILS (the owner's C of 2026-11-24): a one-line notice drew its "Details ›" alone on
+    a line under it. Where the lead's last line has room, its summary now lies in that line box,
+    after the words, and its rows open under the line, on the words' edge."""
+    closed, opened = pieces_seen["details"]["closed"], pieces_seen["details"]["open"]
+    s, last = closed["sum"], closed["last"]
+    mid = (s[1] + s[3]) / 2
+    assert last[1] <= mid <= last[3] and s[0] >= last[2], closed
+    assert closed["kv"] is None, closed
+    kv = opened["kv"]
+    assert kv is not None and kv[1] >= opened["last"][3] - 1, opened
+    assert abs(kv[0] - opened["wordsLeft"]) <= 1, opened
+
+
+def test_a_dimmed_controls_phrase_opens_or_locates_its_one_reason(pieces_seen):
+    """R-WHY (the owner's D6 of 2026-11-24): "see above" pointed at a reason that may have
+    scrolled away or sit in another region, and the full reason was repeated beside each
+    button. A phrase keyed to the D8 chip opens the one help bubble at the phrase with the
+    chip's hidden text as it is now (no copy, no second tooltip; the part of it that answers the
+    phrase, `chips.D8_WHY_ID`, the L8 close's C9); one keyed to a notice brings
+    the notice into view and moves the focus to its link; the dimmed button is described by
+    its phrase (``aria-describedby``, set by the shell's head script from ``data-for``)."""
+    why = pieces_seen["why"]
+    assert why["described"]["describedby"] == why["described"]["phrase"], why
+    assert why["described"]["tag"] == "BUTTON" and why["described"]["focusable"], why
+    chip = why["chip"]
+    assert chip["bubble"] and chip["bubble"] == chip["chip"], chip
+    assert chip["title"] == "Operator controls" and chip["expanded"] == "true", chip
+    assert chip["bubbles"] == 1, chip
+    # The notice was out of view when its phrase was activated: it came into view, its link
+    # focused.
+    assert why["notice"] == {"before": False, "go": True, "inView": True}, why
+
+
+def test_a_dimmed_fields_description_keeps_its_note_its_help_and_its_phrase(pieces_seen):
+    """The L8 S1 check (S1C-2): two head scripts wrote a dimmed field's ``aria-describedby``, the
+    field help's (its note and its help text) and the shell's (R-WHY's phrase), and each replaced
+    the whole attribute, so the last to run dropped the other's ids (Test's Run select and
+    Fine-tune's Run kept only their help text, or only their phrase). Each now adds and takes
+    back only its own ids (`help.DESCRIBED_BY_JS`): the field is described by its note, its help
+    text and its phrase, and with the phrase gone its note and its help text stay."""
+    field = pieces_seen["why"]["field"]
+    note, text = "shep-info-pc-why-field", "shep-help-text-pc-why-field"
+    assert {note, text, field["phrase"]} <= set(field["ids"]), field
+    assert field["ids"].index(note) < field["ids"].index(text), field
+    assert field["phrase"] not in field["after"] and {note, text} <= set(field["after"]), field
+
+
+def test_a_phrases_bubble_leaves_the_control_it_explains_and_the_phrase_uncovered(pieces_seen):
+    """The L8 S1 check (S1C-1): a phrase keyed to the D8 chip opens the one help bubble, which
+    kept uncovered only the phrase's own line, so the tall bubble fell on the button the phrase
+    explains (Test's Start test and Register, Models' Reload). The controls a phrase names
+    (``data-for``) are kept uncovered with its line, as a field is for its ⓘ (R-HELP)."""
+    row = pieces_seen["why"]["row"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert not overlap(row["bubble"], row["control"]), row
+    assert not overlap(row["bubble"], row["phrase"]), row
+
+
+def test_a_tall_bubble_opens_on_the_side_that_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24: a bubble covers no control; the L8 S1 fix pass: 20
+    of 24 read-only phrase bubbles still lay over a nearby field or button). The one placement
+    tries beside, then above, then below, and took the first side that fitted the window and
+    kept the field (here the phrase and the button it explains) clear, though it lay over other
+    controls. Among the sides it tries it now prefers one that covers no drawn control: a tall
+    bubble beside a phrase with a column of controls on its right and none on its left opens
+    on the left, beside the phrase, and lies over no control (its field still clear)."""
+    place = pieces_seen["place"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    bubble = place["bubble"]
+    assert place["height"] > place["window"][1] / 3, place          # a tall bubble
+    assert bubble[0] >= 0 and bubble[2] <= place["window"][0], place
+    assert place["covers"] == [], place
+    assert not overlap(bubble, place["side"]), place
+    assert not overlap(bubble, place["phrase"]) and not overlap(bubble, place["control"]), place
+    assert bubble[2] <= place["phrase"][0], place                    # beside it, on the free side
+
+
+def test_a_bubble_slides_along_its_side_to_a_place_that_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24; the L8 close): with the D8 phrase's bubble in its
+    budget, 8 of 28 read-only phrase bubbles still lay over a control, because each side was
+    tried only aligned from the phrase or ending at it, and in a 720 px window both alignments
+    of every side met a control while a place between them was clear. A phrase near the
+    window's right edge, a control in each alignment on its left and one above and one below
+    it: the bubble slides along its left side to the place between, beside the phrase, over no
+    control (the phrase and the control it explains still clear). A cover is read as the
+    placement counts one, a control's box less a pixel at each edge: with the bubble 44 px
+    shorter (its "Esc to close" row gone, 2026-11-25) the chosen step's bottom met A's top by
+    0.55 px, an edge the placement rightly counts as no cover."""
+    slide = pieces_seen["slide"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert slide["shown"] and slide["covers"] == [], slide
+    assert slide["bubble"][2] <= slide["line"][0], slide             # beside it, on its left
+    assert not overlap(slide["bubble"], slide["line"]), slide
+
+
+def test_a_bubble_no_place_of_whose_height_is_clear_opens_shorter_where_it_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24: "covers no control, readable, the full reference
+    reachable"; the L8 close, CK8-1): a read-only phrase's answer, about 300 px tall, still lay
+    over a control in 17 of 56 openings from 1850 x 960 to 1280 x 720 (Fine-tune's whole Device
+    field at 1550 x 830), because where every place of its whole height met a control the
+    placement took the one over the fewest. A phrase at the window's left edge, a control along
+    its right, one above it and one under it closer than the bubble's height: the bubble opens
+    under the phrase, shorter than its whole height, over no control, its lead read whole and
+    its text under the scroll cue; scrolled to its end, its last line (the Ref line) is read whole
+    and the cue is gone."""
+    cap = pieces_seen["cap"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert cap["shown"] and cap["covers"] == [], cap
+    assert not overlap(cap["bubble"], cap["line"]) and cap["bubble"][1] >= cap["line"][3], cap   # under it
+    assert cap["height"] < cap["whole"], cap                                       # shorter than whole
+    assert cap["lead"][3] <= cap["text"][3] and cap["cue"], cap                     # its lead whole, the cue
+    end = cap["end"]
+    assert end["top"] > 0 and end["last"][3] <= end["text"][3] + 1 and not end["cue"], cap
+
+
+def test_a_bubble_no_place_of_whose_width_is_clear_opens_narrower_where_it_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24: "covers no control, readable, the full reference
+    reachable"; the L8 close's final check, F4): configured at 1850 x 960 the pinned Training
+    "Dataset" bubble lay over the run bar's fingerprint facts, the Batch size field and the
+    Viewing select, because beside a field in a dense bar every place of its width met a control
+    at any height down to its least, and the placement then took the place over the fewest. A
+    phrase at the window's left edge, a control down the window 250 px past it on its right, one
+    above it and one under it: the bubble opens beside the phrase, narrower than its whole width
+    (220 px at the least), over no control, its lead read whole; with that control gone it
+    opens at its whole width again."""
+    narrow = pieces_seen["narrow"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert narrow["shown"] and narrow["covers"] == [], narrow
+    assert not overlap(narrow["bubble"], narrow["line"]) and narrow["bubble"][0] >= narrow["line"][2], narrow
+    assert 220 - 0.5 <= narrow["width"] < narrow["again"]["width"] - 0.5, narrow
+    assert narrow["lead"][3] <= narrow["text"][3], narrow                          # its lead whole
+
+
+def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces_seen):
+    """R-WIDTH's button rule (the owner's D12 of 2026-11-24: "whether a button is full width
+    depends on its action area"; the L8 S1 check, S1C-4: never built): Gradio grows a button with
+    its row and stretches it in a column, so a footer's actions took its whole width whatever it
+    held. A button is its words' width, full width only as the single action of an area no wider
+    than its fields (the layout pass's mark, ``data-shep-span``): a narrow panel's one action
+    spans its footer; two actions in the same footer, or one action under a wide row of fields,
+    keep their words' width, and so does one action beside a field or beside its words on its
+    line (the L8 S2 survey: Fine-tune's Refresh beside Device, Models' Load beside its state), and
+    one action beside a reason slot (``shep-beside``), drawn or empty: Fine-tune's Start spanned
+    its bar while its reason slot was empty (the L8 close; S2's open item 6), and kept its words'
+    width only by a page copy of the button rule. Two actions in a row, the first in a column of
+    its own under a cover, stand together (the L8 close, CK8-3: Diagnosis' column grew, and Run
+    Diagnosis stood a 230 px hole away from Clear)."""
+    span = pieces_seen["span"]
+    one, two, wide, field, words = (span[k] for k in "abcde")
+    assert [len(box["buttons"]) for box in (one, two, wide, field, words)] == [1, 2, 1, 1, 1], span
+    # Two actions, one action under a wide row of fields, or one action beside a field or its
+    # words: each its words' width.
+    for button in two["buttons"] + wide["buttons"] + field["buttons"] + words["buttons"]:
+        assert button["width"] <= button["words"] + 1, span
+    # One action in a footer no wider than the panel's field: it spans the footer.
+    (button,) = one["buttons"]
+    assert abs(button["left"] - one["room"][0]) <= 1 and abs(button["right"] - one["room"][1]) <= 1, one
+    assert one["span"] and not any(box["span"] for box in (two, wide, field, words)), span
+    # One action with a reason slot beside it (Fine-tune's Start; the L8 close): never spanned,
+    # its words' width with the slot empty and with its reason drawn, one width in both.
+    empty, drawn = span["f"], span["fDrawn"]
+    assert not empty["span"] and not drawn["span"], span
+    (before,), (after,) = empty["buttons"], drawn["buttons"]
+    assert before["width"] <= before["words"] + 1 and abs(before["width"] - after["width"]) <= 1, (empty, drawn)
+    # Two actions in a row, the first in a column of its own under a cover (Diagnosis' Run
+    # Diagnosis and Clear; the L8 close, CK8-3): each its words' width, side by side, no more
+    # than the row's gap between them (its column grew, and a 230 px hole stood between them).
+    pair = span["g"]
+    assert len(pair["buttons"]) == 2 and not pair["span"], pair
+    first, second = pair["buttons"]
+    assert all(b["width"] <= b["words"] + 1 for b in pair["buttons"]), pair
+    assert 0 <= second["left"] - first["right"] <= pair["gap"] + 1, pair
+    # A role's own size stays (the rule is the least specific): an icon-only button beside a
+    # field is a square (Test's Run ↻ became a narrow sliver under the first rule).
+    icon = span["icon"]
+    assert abs(icon["width"] - icon["height"]) <= 1, icon
+
+
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):
     """The sweep's L7 check (D13): the Models tree's "recorded epoch 9" stood on two lines in
     every older run's row at 1850 x 960 while the Model column had room; bound always, the tree
@@ -3998,8 +4784,13 @@ def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_see
     `style.CELL_ROOMY` reads as one line while its fit box holds the wide form with it whole
     (the layout pass's second measure, `style.ROOMY_ATTR`); in a box that holds the wide form
     only with those words wrapped, they wrap and the wide form stays, nothing sideways."""
-    roomy = pieces_seen["roomy"]
+    roomy, box = pieces_seen["roomy"], pieces_seen["roomyBox"]
     wide, tight = roomy["pc-roomy-a"], roomy["pc-roomy-b"]
+    # K6 (the owner, 2026-11-24: tests must catch the old problem): the boxes come from the
+    # measured table, not a fixed width. The first is wider than the table's narrowest with the
+    # words wrapped and too narrow for them whole unmarked (they take two lines there), so only
+    # the roomy mark keeps them on one line: without the layout pass's second measure they wrap.
+    assert box["wrapped"] < box["whole"] and box["unmarked"] > 1, box
     assert wide["roomy"] and not wide["narrow"] and wide["lines"] == 1, roomy
     assert not tight["roomy"] and not tight["narrow"] and tight["lines"] > 1, roomy
     assert wide["sideways"] <= 0 and tight["sideways"] <= 0, roomy
@@ -4029,7 +4820,7 @@ def test_a_separator_never_starts_a_line_and_a_whole_cell_keeps_its_line(pieces_
 
 def test_a_relations_words_start_beside_its_mark_and_its_page_still_places_it(pieces_seen):
     """S1 of the sweep's integration (the lanes' L2 R-a, L3 R1, L5 R2): a relation led by a mark
-    (`renderers.see_above`) in a box wider than its words starts its words one column gap after
+    (`renderers.phrase_line`) in a box wider than its words starts its words one column gap after
     its mark (the mark's ``auto`` column took the room the words left: 74 px on Fine-tune, 209 px
     on Test), and a page that places it at its line's end (``justify-content``) still does."""
     rel, end = pieces_seen["rel"], pieces_seen["relEnd"]
@@ -4323,6 +5114,28 @@ const LOOK_JS = __LOOK_JS__;
         <button type="button" id="dis-sec" disabled>Refresh</button>
         <button type="button" class="primary" id="dis-prim" disabled style="margin-left: 120px">Load this model</button>
       </div>
+      <div class="shep-panel" id="p8" style="left: 0; top: 770px; height: 120px; display: flex; gap: 16px">
+        <div class="rg" data-shep-more id="cue-graze" style="height: 64px; width: 200px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent)">
+          <p style="line-height: 20px">Runtime settings.</p><p style="line-height: 20px">What each allocator does</p>
+          <div style="height: 40px"></div><label><input type="checkbox"> Compile the model</label> <button type="button">About</button></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-near" style="height: 82px; width: 200px">
+          ${[1, 2, 3, 4, 5].map((i) => `<p style="line-height: 20px; margin-bottom: 9px">Key ${i}: its value</p>`).join('')}</div>
+      </div>
+      <div class="shep-panel" id="p9" style="left: 920px; top: 700px; height: 90px; display: flex; gap: 16px">
+        ${[['sliver', 58], ['half', 50]].map(([k, at]) => `<div class="rg" data-shep-more id="cue-${k}" style="height: 64px; width: 200px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent)">
+          <p style="margin: 0; line-height: 20px">Import folder</p><div style="height: ${at - 20}px"></div>
+          <p style="margin: 0; line-height: 19px">Create suggested folder</p><p style="margin: 0; line-height: 19px">Training evidence folders</p></div>`).join('')}
+      </div>
+      <div class="shep-panel" id="p7" style="left: 460px; top: 700px; height: 180px">
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-boxonly" style="height: 70px"><p>A first line.</p>
+          <input type="text" style="display: block; height: 36px"><div style="height: 40px"></div><p>The next field.</p></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-lonehead" style="height: 60px"><p>A first line.</p>
+          <div style="height: 16px"></div><div class="block"><span data-testid="block-info" style="display: block; margin-bottom: 10px">Split seed</span>
+          <input type="text" style="display: block; height: 36px"></div></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-headtop" style="height: 60px"><p style="margin: 0; line-height: 20px">A first line.</p>
+          <h3 style="margin: 4px 0; line-height: 20px; font-size: 15px">Options</h3>
+          <input type="number" value="10" style="display: block; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999"></div>
+      </div>
       <div class="shep-panel" id="p6" style="left: 920px; top: 500px; height: 180px">
         <div class="sw" id="rh-bad"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
           <tr id="rh-bad-row"><td>demo</td><td>3f56</td><td>${long}</td></tr></table></div>
@@ -4372,7 +5185,19 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     region whose overflow is only its padding), and a box whose table runs past its right edge with
     no sideways cue (and passes one with Compare's drawn cue before it). A box drawn as no box
     (``display: contents``, Gradio's blocks around Diagnosis' Top-K) hides and scrolls nothing:
-    words in one are judged, not taken as hidden for a screen reader or held by a region."""
+    words in one are judged, not taken as hidden for a screen reader or held by a region. Since
+    R-CUE (the owner's D4 of 2026-11-24) a fade is a cue only over a line of text (``#cue-boxonly``:
+    over a box's lower border and a gap, it was seen), and a region whose last line in view is a
+    field's label with its control under the edge is found (``#cue-lonehead``, ``edge-heading``),
+    and so is one whose last line is a heading over a field that shows only its box's top 12 px
+    (``#cue-headtop``; the L8 close, CK8-2). A fade whose top only grazes the last line's foot,
+    that line whole in the fade's upper half and the blank under it faded, is no cue
+    (``#cue-graze``; LOOK5 of the L8 sweep, L8-2 and L8-4: Settings' Runtime settings and Test's
+    Run at 1280 x 720 hid whole controls under such a fade, and E1 passed), while a fade that
+    draws its last line out is (``#cue-near``). Nor is a fade over a line the edge cuts that
+    shows less than half of itself above the edge (``#cue-sliver``; the L8 close's final check,
+    F3: first-use Data locations at 1366 x 768 faded the top 6 px of "Create suggested folder"),
+    while one over a line half above it is (``#cue-half``)."""
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
@@ -4392,8 +5217,31 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     # it); C4: a box whose overflow style scrolls but whose content fits it cuts nothing, so the
     # lines its region cuts are that region's (Fine-tune's Device radios were judged by their
     # own block's, which never scrolls).
-    assert _hits(found, "cue", "#cue-gap fades its last 28 px over nothing drawn"), found["cue"]
+    assert _hits(found, "cue", "#cue-gap fades its last 28 px over no line of text"), found["cue"]
     assert _hits(found, "cue", "#cue-inner holds"), found["cue"]
+    # R-CUE (the owner's D4 of 2026-11-24): a fade over a box's lower border and the gap under it
+    # is no cue (a control's border no longer counts, only a line of text or a field's value
+    # line), and a region whose last line in view is a field's label, its control all under the
+    # edge, seems to end at a title (Training's parameters at 1280 x 720).
+    assert _hits(found, "cue", "#cue-boxonly fades its last 28 px over no line of text"), found["cue"]
+    assert _hits(found, "edgeHead", '#cue-lonehead ends in view at the label "Split seed"'), found["edgeHead"]
+    assert not _hits(found, "cue", "#cue-lonehead"), found["cue"]
+    assert not _hits(found, "edgeHead", "#cue-good") and not _hits(found, "edgeHead", "#cue-boxonly"), found["edgeHead"]
+    # The L8 close (CK8-2): a heading whose one field shows only its box's top 12 px over the
+    # edge (a sliver of its value line, under half of it) ends the region at a title too
+    # (Diagnosis' Options over Top-K at 1280 x 720).
+    assert _hits(found, "edgeHead", '#cue-headtop ends in view at the heading "Options"'), found["edgeHead"]
+    # LOOK5 of the L8 sweep (L8-2, L8-4): a fade whose top only grazes the last line's foot (that
+    # line whole, in the fade's upper half) fades blank, its controls under the edge unseen; a
+    # fade that draws its last line out (its foot in the fade's lower half) is a cue.
+    assert _hits(found, "cue", "#cue-graze fades its last 32 px over no line of text it fades out"), found["cue"]
+    assert not _hits(found, "cue", "#cue-near"), found["cue"]
+    # The L8 close's final check (F3): a fade over a line the edge cuts with only its top 6 px
+    # above it (in the fade's faintest part) draws no words out, the region read as ended
+    # (first-use Data locations at 1366 x 768); with half of it above the edge it is read.
+    assert _hits(found, "cue", '#cue-sliver fades its last 28 px over no line of text it fades out (its last '
+                 'line, "Create suggested folder", shows '), found["cue"]
+    assert not _hits(found, "cue", "#cue-half"), found["cue"]
 
 
 def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
@@ -4468,6 +5316,205 @@ def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_
     assert not [b for b in found["beside"] if "#area-words" in b], found["beside"]
 
 
+#: A static page for R-ALIGN (`browser.LOOK_JS`'s ``rowCtl``): fields drawn as Gradio 6.30 draws
+#: them (a text box's label holding its title, its ``info=`` line and its box; a radio group's
+#: fieldset holding its title, its line and its options; a title with a line under it,
+#: ``has-info``, with less room under it than a plain one), each beside a plain field in a row of
+#: fields, measured as drawn and again with the shell's style sheet (`style.SHELL_CSS`).
+_ROW_CONTROL_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__, SHELL_CSS = __SHELL_CSS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const plain = (id) => `<div class="block" id="${id}"><label class="container"><span data-testid="block-info">Run name</span>`
+    + '<div class="input-container"><input type="text"></div></label></div>';
+  await page.setContent(`<!doctype html><html data-shep-layout="side"><head><style>
+    :root { --spacing-xs: 4px; --spacing-lg: 8px; }
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    label.container { display: block; }
+    span[data-testid="block-info"] { display: inline-block; font-size: 14px; line-height: 19.6px; }
+    span[data-testid="block-info"]:not(.has-info) { margin-bottom: var(--spacing-lg); }
+    span[data-testid="block-info"].has-info { margin-bottom: var(--spacing-xs); }
+    .info-text { font-size: 14px; line-height: 19.6px; margin-bottom: 6px; }
+    input[type=text] { font: inherit; height: 35px; box-sizing: border-box; width: 100%; }
+    .wrap { display: flex; gap: 8px; } .wrap > label { display: flex; align-items: center; height: 32px; }
+    fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+    .row { display: flex; gap: 16px; margin-bottom: 16px; } .row > .block { width: 220px; }
+    .shep-panel { position: absolute; left: 0; top: 40px; width: 900px; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x" class="gradio-container"><div class="shep-page"><div class="shep-panel" id="p1">
+      <div class="row" id="r-text">
+        <div class="block" id="f-note"><label class="container"><span data-testid="block-info" class="has-info">Patient ID</span>
+          <div class="info-text">Optional. Left blank, the server names it.</div>
+          <div class="input-container"><input type="text"></div></label></div>
+        ${plain('f-plain')}</div>
+      <div class="row" id="r-radio">
+        <fieldset class="block" id="f-radio"><span data-testid="block-info" class="has-info">Device</span>
+          <div class="info-text">No CUDA device here: auto and cuda are refused.</div>
+          <div class="wrap"><label><input type="radio" name="d">auto</label><label><input type="radio" name="d">cpu</label></div></fieldset>
+        ${plain('f-plain2')}</div>
+      <div class="row" id="r-wrap">
+        <div class="block" id="f-wrapped" style="width: 90px"><label class="container"><span data-testid="block-info" class="has-info">Gradient accumulation steps</span>
+          <div class="info-text">Batches per step.</div>
+          <div class="input-container"><input type="text"></div></label></div>
+        ${plain('f-plain3')}</div>
+      <div class="row" id="r-after">
+        <div class="block" id="f-after"><label class="container"><span data-testid="block-info">Split seed</span>
+          <div class="input-container"><input type="text"></div></label>
+          <div class="info-text">Read from the dataset's split manifest.</div></div>
+        ${plain('f-plain4')}</div>
+    </div></div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const before = await page.evaluate(() => window.__shepLook.check().layout);
+  await page.addStyleTag({ content: SHELL_CSS });
+  const after = await page.evaluate(() => window.__shepLook.check().layout);
+  // The note, read by a screen reader as before: the page's order is not changed.
+  const order = await page.evaluate(() => [...document.querySelector('#f-note label').children].map((e) => e.className || e.tagName));
+  console.log(JSON.stringify({ before, after, order }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_row_rules_find_a_note_between_a_label_and_its_control(tmp_path):
+    """R-ALIGN (the owner's A of 2026-11-24; the audit's A1: Fine-tune's Device, its note between
+    its label and its radios, beside Run name, its control 16 to 35 px under Run name's box):
+    ``row-control-top`` finds two labelled fields side by side whose first controls' tops are more
+    than 2 px apart, a text box's note and a radio group's note between label and control, and
+    passes a wrapped label (a width matter) and a note after its control (ragged bottoms are never
+    compared). With the shell's one rule (`style.SHELL_CSS`: a field's note follows its control)
+    the same fields pass, their labels still on one top line, and the page's order is unchanged
+    (the note keeps its ``aria-describedby`` place)."""
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    seen = run_node(_ROW_CONTROL_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS))
+                    .replace("__SHELL_CSS__", json.dumps(SHELL_CSS)), tmp_path, timeout=120)
+    before, after = seen["before"], seen["after"]
+    assert _hits(before, "rowCtl", "#f-note") and _hits(before, "rowCtl", "#f-radio"), before["rowCtl"]
+    assert not _hits(before, "rowCtl", "#f-wrapped") and not _hits(before, "rowCtl", "#f-after"), before["rowCtl"]
+    assert after["rowCtl"] == [], after["rowCtl"]
+    assert after["rowTop"] == [], after["rowTop"]
+    assert seen["order"][1:] == ["info-text", "input-container"], seen["order"]
+
+
+#: A static page for R-WHY's walk rules (`browser.LOOK_JS`: ``reasons``, ``pointer``, ``dimmed``):
+#: a header D8 chip refusing a forwarded request, then one page in panels, each rule's bad case
+#: beside its good one (each named in its test).
+_REASON_RULES_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await page.setContent(`<!doctype html><html data-shep-layout="side"><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    p { margin: 0 0 8px; } button { font: inherit; height: 32px; }
+    .shep-panel { position: absolute; width: 440px; border: 1px solid #ccc; padding: 8px; }
+    .shep-bar, .shep-grp { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .shep-chip-text { font-size: 14px; }
+  </style></head><body>
+    <div id="shep-chips"><span class="shep-chip shep-chip-d8 shep-chip-readonly" data-state="readonly" data-reason="d8">
+      <span class="shep-chip-text" title="Read-only: forwarded by a proxy">Read-only: forwarded by a proxy</span>
+      <span id="shep-chip-d8-text" hidden>For this request: the request was forwarded by a proxy.</span></span></div>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page">
+      <div class="shep-panel" id="p1" style="left: 0; top: 40px; height: 300px">
+        <div data-notice="workspaces_root" id="nt-one">No workspaces folder is set. Choose one in Settings.</div>
+        <div data-notice="workspaces_root" id="nt-two">No workspaces folder is set. Choose one in Settings.</div>
+        <p id="d8-again">🔒 Operator controls only: forwarded by a proxy. Folder paths are shown to operator controls only.</p>
+        <p id="ptr-above">○ Start disabled (see above).</p>
+        <p id="ptr-with">Read-only for this request: the reason is with the actions below.</p>
+        <p id="ptr-plain">The plots above show the latest run.</p>
+        <p id="ptr-paren">○ Start test: no checkpoint to test (see Run).</p>
+        <p id="ptr-seen">Kept (seen once on this server).</p>
+      </div>
+      <div class="shep-panel" id="p2" style="left: 470px; top: 40px; height: 300px">
+        <div class="shep-grp"><button type="button" class="primary" id="dim-line" disabled>Start</button>
+          <p class="shep-reason">○ Start disabled: no dataset is listed yet.</p></div>
+        <div class="shep-grp"><button type="button" id="dim-desc" disabled aria-describedby="dim-desc-why">Load</button>
+          <button type="button" class="shep-why" data-why="d8" id="dim-desc-phrase">Operator controls only</button>
+          <span id="dim-desc-why" hidden>Load disabled while a job runs.</span></div>
+        <div class="shep-grp"><button type="button" class="primary" id="dim-phrase" disabled aria-describedby="dim-phrase-why">Check</button>
+          <button type="button" class="shep-why" data-why="d8" id="dim-phrase-why">Operator controls only</button></div>
+        <div class="shep-bar" id="bar-same"><div class="shep-nb" data-notice="registry" data-for="dim-same" id="nb-same">○ No results registry is set. Choose one in Settings.</div>
+          <div class="shep-grp"><button type="button" class="primary" id="dim-same" disabled aria-describedby="nb-same">Register</button></div></div>
+        <div class="shep-bar" id="bar-other"><div class="shep-nb" data-notice="intake_dir" data-for="someone-else">○ No import folder is set.</div>
+          <div class="shep-grp" style="margin-top: 60px"><button type="button" class="primary" id="dim-other" disabled>Import</button></div></div>
+      </div>
+    </div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  console.log(JSON.stringify(await page.evaluate(() => window.__shepLook.check().layout)));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def reason_rules_seen(tmp_path_factory):
+    """The layout rules' findings on `_REASON_RULES_PAGE_JS`, once for the module."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    return run_node(_REASON_RULES_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)),
+                    tmp_path_factory.mktemp("reason-rules"), timeout=120)
+
+
+def test_the_reason_repeat_rule_finds_a_causes_reason_said_twice_on_one_screen(reason_rules_seen):
+    """R-WHY (the owner's D6 of 2026-11-24): the full reason of a cause is said once per screen.
+    ``reason-repeat`` extends ``notice-repeat``: a notice drawn twice is found by its key, and
+    D8's refusal is found where the header chip that carries it (``data-reason="d8"``) and a
+    block of the page both say its condition in D8's short words (read-only Settings said
+    "forwarded by a proxy" three times: the chip, the notice and the runtime foot). A notice drawn
+    once (``registry``) passes. Asked with ``notice-repeat``, a notice is said once, by
+    ``reason-repeat``."""
+    from tests.fixtures.browser import layout_problems
+
+    found = reason_rules_seen
+    assert found["reasons"].get("workspaces_root") == 2 and found["reasons"].get("d8") == 2, found["reasons"]
+    assert found["reasons"].get("registry") == 1, found["reasons"]
+    stop = [{"size": "1850x960", "page": "settings", "check": {"layout": found}}]
+    assert sorted(layout_problems(stop, rules=("notice-repeat", "reason-repeat"))) == [
+        "1850x960 settings: reason-repeat: d8 said 2 times",
+        "1850x960 settings: reason-repeat: workspaces_root said 2 times"]
+    assert layout_problems(stop, rules=("notice-repeat",)) == [
+        "1850x960 settings: notice-repeat: workspaces_root drawn 2 times"]
+
+
+def test_the_pointer_words_rule_finds_words_that_point_at_a_reason_elsewhere(reason_rules_seen):
+    """R-WHY: the place a pointer names may have scrolled away or be in another region, so no
+    visible words say "see above", "see below", "the reason is with" or a parenthesised
+    "(see <place>)" (Training's run view said "(see above)" at first use, read-only Settings'
+    Runtime "the reason is with the actions below", Test's Start "no checkpoint to test (see
+    Run)": the L8 S1 check, S1C-9). Words that only use "above", or "seen" in parentheses, pass."""
+    found = reason_rules_seen
+    assert _hits(found, "pointer", "#ptr-above") and _hits(found, "pointer", "#ptr-with"), found["pointer"]
+    assert _hits(found, "pointer", "#ptr-paren"), found["pointer"]
+    assert not _hits(found, "pointer", "#ptr-plain") and not _hits(found, "pointer", "#ptr-seen"), found["pointer"]
+    assert len(found["pointer"]) == 3, found["pointer"]
+
+
+def test_the_dimmed_words_rule_finds_disabled_said_beside_or_describing_a_dimmed_button(reason_rules_seen):
+    """SW-C11 (the owner's D6 of 2026-11-24): the dimmed look says a control cannot be used; the
+    words say what it needs. ``dimmed-words`` extends ``disabled-reason``: a disabled button whose
+    reason beside it (``#dim-line``) or whose describing words (``aria-describedby``,
+    ``#dim-desc``) say "disabled" is found; one beside its R-WHY phrase (``#dim-phrase``) passes,
+    and the phrase is a reason beside it for ``disabled-reason`` too. R-WHY's same-bar rule is
+    read from data: the cause's own notice in the same bar that names the button (``data-for``)
+    is its reason (``#dim-same``); a notice in the bar that names another control is not
+    (``#dim-other``)."""
+    found = reason_rules_seen
+    assert _hits(found, "dimmed", "#dim-line") and _hits(found, "dimmed", "#dim-desc"), found["dimmed"]
+    assert not _hits(found, "dimmed", "#dim-phrase") and not _hits(found, "dimmed", "#dim-same"), found["dimmed"]
+    assert not _hits(found, "disabled", "#dim-phrase") and not _hits(found, "disabled", "#dim-same"), found["disabled"]
+    assert _hits(found, "disabled", "#dim-other"), found["disabled"]
+
+
 def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_whole():
     """``in-view`` is held at every window at or above the display floor (`browser.at_floor`;
     the owner's decision of 2026-11-23), not only at the owner's two: a laptop's 1366 x 768 and
@@ -4488,10 +5535,13 @@ def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_
     fw, fh = floor_size()
     cut = ["#x \"Apply\" drawn 40 px under the window"]
     # A window no wider than tall is held at or above the stacked arrangement's floor (the
-    # owner's decision of 2026-11-23 on portrait windows), not the side-by-side floor's width.
+    # owner's decision of 2026-11-23 on portrait windows), not the side-by-side floor's width;
+    # so is a window wider than tall under the side-by-side floor's width (R-ARR, D11 of
+    # 2026-11-24: it stacks, at its own size, with no height floor).
     held = [f"{w}x{h}" for w, h in ((1850, 960), (1550, 830), (1366, 768), (fw, fh), (2560, 1440),
-                                    (1080, 1920), (1440, 2560), (sw, sw))]
-    below = [f"{fw - 1}x{fh}", f"{fw}x{fh - 1}", "1024x640", f"{sw - 1}x{2 * sw}"]
+                                    (1080, 1920), (1440, 2560), (sw, sw), (1100, 1050), (1024, 640),
+                                    (fw - 1, fh))]
+    below = [f"{fw}x{fh - 1}", f"{fw}x640", f"{sw - 1}x{2 * sw}", "800x600"]
     found = layout_problems([stop(size, cut) for size in held + below], rules=("in-view",))
     assert found == [f"{size} settings: in-view: {cut[0]}" for size in held], found
     one = layout_problems([stop(f"{fw}x{fh}", lines=[["datasets", "training", "finetune", "test", "models"]])],
@@ -4523,9 +5573,14 @@ def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_dr
     from tests.fixtures.browser import effective_size, floor_size, layout_problems
 
     fw, fh = floor_size()
-    assert effective_size("1024x640") == (fw, fh) and effective_size(f"{fw}x{fh}") == (fw, fh)
+    assert effective_size(f"{fw}x640") == (fw, fh) and effective_size(f"{fw}x{fh}") == (fw, fh)
     assert effective_size(f"{sw - 64}x{2 * sw}") == (sw, 2 * sw) and effective_size("1080x1920")[1] == 1920
-    assert effective_size(f"{sw}x{sw}") == (sw, sw) and effective_size(f"{sw - 1}x{sw - 1}") == (sw, sw)
+    assert effective_size(f"{sw}x{sw}") == (sw, sw) and effective_size(f"{sw - 1}x{sw - 1}") == (sw, sw - 1)
+    # R-ARR (D11 of 2026-11-24): a window wider than tall under the side-by-side floor's width
+    # stacks at its own width, with no height floor; under the stacked floor's width it is drawn
+    # at that width.
+    assert effective_size("1100x1050") == (1100, 1050) and effective_size("1233x640") == (1233, 640)
+    assert effective_size("1024x640") == (1024, 640) and effective_size("800x600") == (sw, 600)
 
     def stop(size, *, layout="side", short=True, marked=(), frame=(fw, fh), scroll=(0, 0), page="models",
              open_=None):
@@ -4537,21 +5592,32 @@ def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_dr
     floor, tall, under = f"{fw}x{fh}", f"{sw}x{2 * sw}", f"{sw - 64}x{2 * sw}"
     stacked = {"layout": "stack", "short": False, "marked": ["#t data-shep-narrow"], "frame": (sw, 3 * sw)}
     good = [stop(floor, marked=["#t data-shep-narrow"]),
-            stop("1024x640", marked=["#t data-shep-narrow"], scroll=(256, 80)),
+            stop(f"{fw}x640", marked=["#t data-shep-narrow"], scroll=(0, 80)),
             stop(f"{fw}x600", marked=["#t data-shep-narrow"], scroll=(0, 120)),
             stop("1440x1600", layout="stack", short=False, frame=(1440, 3000), scroll=(0, 1400)),
             # C6: a portrait window takes the stacked arrangement at or above its own floor.
             stop("1080x1920", layout="stack", short=False, frame=(1080, 3000), scroll=(0, 1080)),
             stop(tall, **stacked, scroll=(0, sw)),
-            stop(under, **stacked, scroll=(64, sw))]
+            stop(under, **stacked, scroll=(64, sw)),
+            # R-ARR: a window wider than tall under the side-by-side floor's width stacks at its
+            # own size (at its floor), and under the stacked floor's width it is drawn at it.
+            stop("1100x1050", layout="stack", short=False, frame=(1100, 2000), scroll=(0, 950)),
+            stop(f"{sw}x600", layout="stack", frame=(sw, 2000), scroll=(0, 1400)),
+            stop("800x600", layout="stack", frame=(sw, 2000), scroll=(64, 1400))]
     assert layout_problems(good, rules=("floor",)) == []
-    shrunk = layout_problems([good[0], stop("1024x640", layout="stack", marked=[], frame=(1024, 640),
+    shrunk = layout_problems([good[0], stop(f"{fw}x640", layout="stack", marked=[], frame=(fw, 640),
                                             scroll=(0, 0))], rules=("floor",))
     assert any(f"layout stack where {floor}'s is side" in p for p in shrunk), shrunk
     assert any(f"marked [] where {floor}'s is ['#t data-shep-narrow']" in p for p in shrunk), shrunk
-    assert any("the frame drawn [1024, 640]" in p for p in shrunk), shrunk
-    assert any("narrower than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    assert any(f"the frame drawn [{fw}, 640]" in p for p in shrunk), shrunk
     assert any("shorter than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    squeezed = layout_problems([good[8], stop("800x600", layout="stack", frame=(800, 2000), scroll=(0, 1400))],
+                               rules=("floor",))
+    assert any("narrower than its floor and the document does not scroll" in p for p in squeezed), squeezed
+    assert any(f"the frame drawn [800, 2000] where {sw}x600's" in p for p in squeezed), squeezed
+    sideways = layout_problems([stop("1100x1050", layout="stack", short=False, frame=(fw, 2000),
+                                     scroll=(180, 950))], rules=("floor",))
+    assert sideways == ["1100x1050 models: floor: the document scrolls sideways by 180 px"], sideways
     # Below the stacked floor a portrait window is the stacked floor's, never the side-by-side one's.
     narrow = layout_problems([good[0], good[5], stop(under, layout="stack", short=False, marked=[],
                                                      frame=(sw - 64, 3 * sw), scroll=(0, sw))],
@@ -4560,7 +5626,7 @@ def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_dr
     assert any(f"the frame drawn [{sw - 64}, {3 * sw}] where {tall}'s" in p for p in narrow), narrow
     assert any("narrower than its floor" in p for p in narrow), narrow
     assert not any(floor in p.split(": ", 1)[1] for p in narrow), narrow
-    alone = layout_problems([stop("1024x640", scroll=(256, 80), open_="#drawer"), good[0],
+    alone = layout_problems([stop(f"{fw}x640", scroll=(0, 80), open_="#drawer"), good[0],
                              stop(under, **stacked, scroll=(64, sw))], rules=("floor",))
     assert len(alone) == 2 and all("no stop at the area it is drawn at" in p for p in alone), alone
     assert any(f"({fw}x{fh})" in p for p in alone) and any(f"({tall})" in p for p in alone), alone
@@ -4592,9 +5658,49 @@ def test_the_sideways_rule_finds_a_region_wider_than_its_frame_a_mask_or_not(l7_
     assert not _hits(found, "sideways", "#side-good") and not _hits(found, "sideways", "#side-fits"), \
         found["sideways"]
     stops = [{"size": size, "page": "x", "check": {"layout": {"sideways": ["#t scrolls sideways"]}}}
-             for size in ("1280x720", "1024x640", "1080x1920", f"{sw - 1}x{2 * sw}")]
+             for size in ("1280x720", "1280x640", "1100x1050", "1080x1920", f"{sw - 1}x{2 * sw}")]
     assert layout_problems(stops, rules=("sideways-scroll",)) == [
-        "1280x720 x: sideways-scroll: #t scrolls sideways", "1080x1920 x: sideways-scroll: #t scrolls sideways"]
+        "1280x720 x: sideways-scroll: #t scrolls sideways", "1100x1050 x: sideways-scroll: #t scrolls sideways",
+        "1080x1920 x: sideways-scroll: #t scrolls sideways"]
+
+
+#: R-ARR's windows and what each takes (the owner's D11 of 2026-11-24, the spec's table): the
+#: arrangement, and whether the frame is drawn at the stacked floor's width (a window under it).
+_ARR_WINDOWS = (((1850, 960), "side"), ((1280, 720), "side"), ((1280, 640), "side"), ((1233, 640), "stack"),
+                ((1100, 1050), "stack"), ((1050, 1100), "stack"), ((800, 600), "stack"))
+#: What a window draws: the arrangement, the frame's width and how far the document scrolls sideways.
+_ARR_JS = r"""() => {
+  const se = document.scrollingElement, app = document.querySelector('gradio-app');
+  return { layout: document.documentElement.getAttribute('data-shep-layout'),
+           frame: app.getBoundingClientRect().width, overX: se.scrollWidth - se.clientWidth };
+}"""
+
+
+def test_a_window_wider_than_tall_stacks_where_side_by_side_does_not_fit(tmp_path):
+    """R-ARR (the owner's D11 of 2026-11-24, the user's relayed request): wider than tall only
+    means "try side by side first". At ``4a29637`` a landscape window under the display floor's
+    width (1100 x 1050) was raised to that floor before the fit decision, drawn side by side and
+    scrolled 180 px sideways, where its portrait twin (1050 x 1100) stacked with no sideways
+    scroll. Now a window wider than tall is side by side only at the display floor's width or
+    more and where the page fits; else it takes the stacked arrangement at its own width, with
+    no sideways scroll, and only a window under the stacked floor's width (800 x 600) is drawn at
+    that floor and scrolled sideways by what it lacks. Height never changes the arrangement
+    (1280 x 640 is side by side, drawn at the floor's height). Settings at first use."""
+    from src.webui.style import STACK_FLOOR_WIDTH
+    from tests.fixtures.browser import node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    stops = [{"size": list(size), "page": "settings", "check": False} for size, _ in _ARR_WINDOWS]
+    seen = walk_state("first_use", tmp_path, stops, extra_js=_ARR_JS)
+    for ((w, h), want), stop in zip(_ARR_WINDOWS, seen):
+        got = stop["extra"]
+        assert got["layout"] == want, (stop["size"], got)
+        if w >= STACK_FLOOR_WIDTH:
+            assert got["overX"] <= 0 and abs(got["frame"] - w) <= 1, (stop["size"], got)
+        else:
+            assert abs(got["frame"] - STACK_FLOOR_WIDTH) <= 1, (stop["size"], got)
+            assert abs(got["overX"] - (STACK_FLOOR_WIDTH - w)) <= 1, (stop["size"], got)
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured", "read_only"])
@@ -4625,6 +5731,131 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
     assert layout_problems(seen) == []
 
 
+#: The L8 close (CK8-2): Diagnosis' Options title, its scroll region's edge, and whether the title
+#: shows above that edge by a quarter of its height, and each of its controls (Top-K's value line,
+#: Explanations' box) by half of its height.
+_OPTIONS_EDGE_JS = r"""() => {
+  const title = document.querySelector('#shep-dx-options-label .shep-dx-opt');
+  if (!title || !title.getClientRects().length) { return null; }
+  let g = title.parentElement;
+  while (g && g !== document.body && !(/(auto|scroll)/.test(getComputedStyle(g).overflowY)
+         && g.scrollHeight > g.clientHeight + 1)) { g = g.parentElement; }
+  if (!g || g === document.body) { return { region: null }; }
+  const r = g.getBoundingClientRect(), edge = r.top + g.clientTop + g.clientHeight;
+  const range = document.createRange(); range.selectNodeContents(title);
+  const t = [...range.getClientRects()].filter((q) => q.width > 0).pop();
+  const shown = (q) => q.top < edge - Math.max(1, q.height / 4), seen = (q) => q.top < edge - Math.max(1, q.height / 2);
+  const line = (c) => {
+    const q = c.getBoundingClientRect();
+    if (c.type !== 'number' && c.type !== 'text') { return q; }
+    const s = getComputedStyle(c), a = parseFloat(s.paddingTop) + parseFloat(s.borderTopWidth);
+    const b = parseFloat(s.paddingBottom) + parseFloat(s.borderBottomWidth);
+    return { top: q.top + a, height: q.height - a - b };
+  };
+  const controls = ['#dx_top_k input', '#dx_explanations input'].map((sel) => document.querySelector(sel))
+    .filter((c) => c && c.getClientRects().length && c.getBoundingClientRect().width > 0);
+  return { region: g.id || g.className, edge, title: [t.top, t.bottom], titleShown: shown(t),
+           controls: controls.map((c) => ({ id: c.closest('[id]').id, shown: seen(line(c)) })) };
+}"""
+
+
+def test_diagnosis_options_title_never_ends_its_column_alone(tmp_path):
+    """**D4 on Diagnosis' Options** (the owner's D4 of 2026-11-24: "never show only a section
+    title with every control under the edge"; the L8 close, CK8-2): at first use at 1366 x 768
+    the Patient phenotypes column ended at its Options title, cut through its middle and faded,
+    Top-K and Explanations under the edge, and neither the walk's ``edge-heading`` rule nor the
+    shell's recut saw it: the title was a bare span, not a heading. Drawn as a heading, the
+    column ends in the gap above it. At first use at 1366 x 768, 1280 x 720 and 1280 x 640 the
+    Options title is never shown above its column's edge while every one of its controls lies
+    under it (a control seen by its value line, half of it above the edge)."""
+    from tests.fixtures.browser import layout_stops, node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    sizes = ((1366, 768), (1280, 720), (1280, 640))
+    seen = walk_state("first_use", tmp_path, layout_stops(("clinical",), sizes), extra_js=_OPTIONS_EDGE_JS)
+    got = {stop["size"]: stop["extra"] for stop in seen}
+    assert got["1366x768"] and got["1366x768"]["region"], got            # the column scrolls there
+    for size, at in got.items():
+        if not at or not at["region"] or not at["controls"]:
+            continue
+        assert not (at["titleShown"] and not any(c["shown"] for c in at["controls"])), (size, at)
+
+
+#: The L8 close, item 6: how many layout passes a change queues (the shell's script, as the
+#: dashboard's head carries it, counted by the frames it asks for), a change inside Gradio's
+#: status tracker and a change of a block's own content
+#: (`test_a_status_trackers_change_lays_nothing_out_again`).
+_TRACKER_PASS_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const head = require('fs').readFileSync(process.argv[2], 'utf8');
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
+  await page.setContent(`<!doctype html><html><head></head><body>
+    <div class="block" id="out">
+      <div class="wrap center hidden hide" data-testid="status-tracker"><span class="progress-text">0.1s</span></div>
+      <div id="content">A value</div>
+    </div>
+    <div id="shep-help-bubble" class="shep-bubble" style="position: fixed; left: 10px; top: 10px"><div class="shep-bubble-bd">Help</div></div>
+    <script>
+      window.__passes = 0;
+      const frame = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = (f) => { window.__passes += 1; return frame(f); };
+    </script>
+    ${head}</body></html>`);
+  const rest = () => page.evaluate(() => new Promise((done) => setTimeout(done, 400)));
+  const queued = async (change) => {
+    await rest();
+    await page.evaluate(() => { window.__passes = 0; });
+    await page.evaluate(change);
+    await rest();
+    return page.evaluate(() => window.__passes);
+  };
+  const out = {
+    tracker: await queued(() => {
+      const t = document.querySelector('[data-testid="status-tracker"]');
+      t.querySelector('.progress-text').textContent = '0.2s';
+      t.appendChild(document.createElement('span'));
+      t.classList.toggle('hide');
+    }),
+    content: await queued(() => { document.getElementById('content').textContent = 'Another value'; }),
+    bubble: await queued(() => {
+      const b = document.getElementById('shep-help-bubble');
+      b.classList.toggle('shep-at-right'); b.classList.toggle('shep-up');
+      b.querySelector('.shep-bubble-bd').textContent = 'Other help';
+    }),
+  };
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_status_trackers_change_lays_nothing_out_again(tmp_path):
+    """The L8 close, item 6 (why E1's walk never rested at the Diagnosis Load drawer): Gradio's
+    status tracker (``data-testid="status-tracker"``, each output's progress overlay, hidden for
+    a hidden progress) changes on every event sent, every timer's poll included, and each change
+    laid the whole page out again. Once every page was drawn (3,186 elements) a pass took about
+    200 ms, the trackers changed about 40 times a second, and a frame never came within the
+    walk's ten quiet frames of the next poll (the walk's sample at stop 74 of 79: 13 frames in
+    3 s, no request open). A change inside a tracker queues no layout pass; a change of a block's
+    own content still queues one. So too the help bubble, fixed over the page (the L8 close's
+    final fix): re-placed on each scroll, a change of its side (its class) laid the page out under
+    a region the reader had scrolled, and the region went back to its top (Training at 1366 x
+    768: "Reset to reference", focused, left under the edge)."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    head = tmp_path / "head.html"
+    head.write_text(shell.SHELL_HEAD, encoding="utf-8")
+    seen = run_node(_TRACKER_PASS_JS, tmp_path, str(head), timeout=120)
+    assert seen["content"] >= 1, seen
+    assert seen["tracker"] == 0, seen
+    assert seen["bubble"] == 0, seen
+
+
 def _walk_coverage(seen: list, state: str) -> list:
     """**What a layout walk of `state` must have measured** (E1's coverage), as the
     problems found: every page at every layout size; every drawer the state opens (none for a
@@ -4653,6 +5884,30 @@ def _walk_coverage(seen: list, state: str) -> list:
     return problems
 
 
+def test_a_walk_that_runs_past_its_limit_names_the_stop_it_was_at(tmp_path):
+    """The L8 close, item 6 (E1's time budget): a walk stopped at its limit raised
+    ``TimeoutExpired`` with nothing of where it was (E1[configured] at 1,500 s, S1C-3), and the
+    limit was one number for every walk. A walk names each stop as it reaches it, and one stopped
+    at its limit says the stop it was at; the limit is derived from the walk's stops
+    (`browser.walk_limit`), so the configured layout walk's has room for what it walks."""
+    from tests.fixtures.browser import (WALK_START_SECONDS, WALK_STOP_SECONDS, node_with_playwright,
+                                        run_node, walk_limit)
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    script = r"""
+for (const n of [1, 2, 3]) { process.stderr.write(`walk: stop ${n} of 5 (x at 1x1)\n`); }
+setTimeout(() => {}, 60000);
+"""
+    with pytest.raises(AssertionError) as caught:
+        run_node(script, tmp_path, timeout=3)
+    said = str(caught.value)
+    assert "ran past its 3 s" in said and "walk: stop 3 of 5" in said and "stop 2 of 5" not in said, said
+    stops = _layout_walk_stops(True)
+    assert walk_limit(stops) == WALK_START_SECONDS + WALK_STOP_SECONDS * len(stops)
+    assert walk_limit(stops + stops[:10]) > walk_limit(stops)
+
+
 def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
     """FX-2 (the sweep's L7): E1 checked which drawers opened, not that the configured
     walk's row-chosen Load drawer stops ran; with them removed it still passed. The coverage
@@ -4678,6 +5933,26 @@ def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
     assert _walk_coverage(pages, "read_only") == []
     assert _walk_coverage(pages + drawers[:1], "read_only")
     assert _walk_coverage([p for p in pages if p["page"] != "settings"], "read_only")
+
+
+def test_a_page_that_never_holds_still_is_a_walk_finding_by_its_page_and_size():
+    """The L8 LOOK5's L8-1: Training's fold opened and closed about 24 times a second at
+    1050 x 1100 with no input, and no walk could see it: 1050 x 1100 was in none, and the walk's
+    wait for the page to hold still read it every other frame (a page changing at every frame
+    read as still) and, had it never held still, measured it anyway. A stop that never held
+    still (``frames`` -1) is the ``settle`` finding of its size and page, with what kept moving
+    and the marks set most; a stop that held still is none. 1050 x 1100 is a layout size."""
+    from tests.fixtures.browser import LAYOUT_RULES, LAYOUT_SIZES, layout_problems
+
+    restless = {"moved": ["document height", "#shep-train-runview"],
+                "marks": [".shep-train-fold:aria-expanded x88", "#shep-train-setby:data-shep-own-line x88"]}
+    stops = [{"size": "1050x1100", "page": "training", "frames": -1, "restless": restless,
+              "check": {"layout": {}}},
+             {"size": "1100x1050", "page": "training", "frames": 3, "check": {"layout": {}}}]
+    found = layout_problems(stops, rules=("settle",))
+    assert len(found) == 1 and found[0].startswith("1050x1100 training: settle: "), found
+    assert "#shep-train-runview" in found[0] and "aria-expanded x88" in found[0], found
+    assert "settle" in LAYOUT_RULES and (1050, 1100) in LAYOUT_SIZES
 
 
 def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
@@ -4709,16 +5984,136 @@ def test_a_state_said_as_a_sentence_and_a_note_in_a_span_keep_the_measure():
     reached: one line 816 px wide at 1550 x 830, where every go link lands.
     Datasets' note beside Use for training was an inline span too, its
     max-width ignored (493 px). A state said as a sentence is a reason line
-    led by its mark (`renderers.marked_line`: a block at the measure, the mark
-    in a column of its own); a note in a span is an inline box that keeps the
-    measure (both 470 px, measured)."""
+    led by its mark in a column of its own, a block at the measure; a note in a
+    span is an inline box that keeps the measure (both 470 px, measured).
+    Settings says its first start as the one notice since L8 (M2; the L8
+    close retargets this test at what Settings draws, `data_locations.notice_html`,
+    no longer `renderers.marked_line`, which it does not draw): a block
+    (``shep-nb``) at the measure, its state in the line's words column, the
+    mark in a column of its own."""
+    from types import SimpleNamespace
+
     from src.webui.components import data_locations as dl
     from src.webui.components import renderers as r
     from src.webui.style import SHELL_CSS
 
-    line = r.marked_line("neutral", dl.NOTHING_SET)
-    assert line.startswith('<p class="shep-reason">') and 'aria-hidden="true">○' in line
-    assert r.e(dl.NOTHING_SET) in line
+    view = SimpleNamespace(file=SimpleNamespace(problem=None, repairable=False), applicable=(),
+                           nothing_set=True)
+    notice = dl.notice_html(view, SimpleNamespace(allowed=True))
+    block = re.search(r'<div class="shep-nb\b[^"]*"[^>]*>\s*<div class="shep-nb-line">'
+                      r'<span class="shep-nb-mark\b[^"]*"[^>]*>○.*?</span></span>'
+                      r'<span class="shep-nb-text">(.*?)</span>', notice, re.S)
+    assert block, notice
+    assert r.e(dl.NOTHING_SET) in block.group(1), notice
+    assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-nb")
+    assert "grid-template-columns: var(--shep-nb-mark-w, 1em) minmax(0, 1fr)" in _rule(
+        SHELL_CSS, ".shep-nb-line, .shep-nb-rel")
     assert "display: inline-block" in _rule(SHELL_CSS, "span.shep-note")
     assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-note")
     assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-reason")
+
+
+#: R-WIDTH's growing roles in their containers, on a page of the shell's style sheet alone: a
+#: search box with its role beside the same in the shared list's search row, and a path box with
+#: its role in a row and in a column (Gradio's row, column and the form it wraps a row's fields
+#: in, whose direction is its parent's).
+_ROLE_BOX_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const css = require('fs').readFileSync(process.argv[2], 'utf8');
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+  const field = (id, role) => `<div class="block ${role}" id="${id}"><label>Box</label><input type="text"></div>`;
+  await page.setContent(`<!doctype html><html><head><style>${css}
+    .row { display: flex; flex-direction: row; width: 900px; } .column { display: flex; flex-direction: column; width: 900px; height: 600px; }
+    .form { display: flex; flex-direction: inherit; }</style></head><body><div class="gradio-container">
+    <div class="row">${field('s-plain', 'shep-w-search')}</div>
+    <div class="row shep-search-row shep-grp"><span class="shep-search-lbl">Search</span>${field('s-row', 'shep-w-search')}<button>Clear</button></div>
+    <div class="row"><div class="form">${field('p-row', 'shep-w-path')}</div></div>
+    <div class="column"><div class="form">${field('p-col', 'shep-w-path')}</div></div>
+  </div></body></html>`);
+  const out = await page.evaluate(() => Object.fromEntries(['s-plain', 's-row', 'p-row', 'p-col'].map((id) => {
+    const e = document.getElementById(id), s = getComputedStyle(e), r = e.getBoundingClientRect();
+    return [id, { minWidth: s.minWidth, flex: s.flex, height: r.height }];
+  })));
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def role_boxes(tmp_path_factory):
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    root = tmp_path_factory.mktemp("role-boxes")
+    (root / "page.css").write_text(SHELL_CSS, encoding="utf-8")
+    return run_node(_ROLE_BOX_JS, root, str(root / "page.css"), timeout=120)
+
+
+def test_a_search_box_takes_its_roles_width_in_the_search_row(role_boxes):
+    """R-WIDTH (m1-result's "Needs from shared" 2; the L8 close): the shared list's search row
+    gave its box a width of its own (``.shep-search-row > :not(:first-child):not(button)``, 0,2,1)
+    that overrode the box's role (``.shep-w-search``, 0,1,0), both !important, so the role was
+    inert there. The row's rule is a default (the least specific, as the button rule's is, S2's
+    d0c9ba6): the box grows and keeps its floor as its role says, in the row as anywhere."""
+    plain, row = role_boxes["s-plain"], role_boxes["s-row"]
+    assert (row["minWidth"], row["flex"]) == (plain["minWidth"], plain["flex"]), role_boxes
+
+
+def test_a_path_box_grows_along_a_row_and_keeps_its_height_in_a_column(role_boxes):
+    """R-WIDTH (t-result's "Needs from shared" 2; the L8 close): the path and search roles grew
+    by a flex basis (``flex: 1 1 var(--shep-w-grow-min)``) wherever they stood, and in a column a
+    basis is a height: a path box stood 24ch tall (lane T moved Training's typed path into a row to
+    avoid it). The basis is scoped to row containers (a row, a bar, a group, the form Gradio wraps
+    a row's fields in): in a column the box is as tall as in a row, and in a row it still grows."""
+    in_row, in_column = role_boxes["p-row"], role_boxes["p-col"]
+    assert abs(in_column["height"] - in_row["height"]) <= 1, role_boxes
+    assert in_row["flex"].startswith("1 1 "), role_boxes
+
+
+#: R-WIDTH at a wide window, Fine-tune at first use: Epochs' input box and its content width,
+#: one ``ch`` of its font, the "More settings" title's words and its mark, and what lies under
+#: the title's words (`test_fields_take_their_roles_width_and_an_accordions_mark_stays_by_its_title`).
+_ROLE_WIDTH_JS = r"""() => {
+  const input = document.querySelector('#ft_num_epochs input');
+  const s = getComputedStyle(input), r = input.getBoundingClientRect();
+  const probe = document.createElement('span');
+  probe.style.cssText = `position:absolute;visibility:hidden;font:${s.font};letter-spacing:${s.letterSpacing}`;
+  probe.textContent = '0'.repeat(100); document.body.appendChild(probe);
+  const ch = probe.getBoundingClientRect().width / 100; probe.remove();
+  const content = r.width - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight)
+    - parseFloat(s.borderLeftWidth) - parseFloat(s.borderRightWidth);
+  const tokens = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shep-w-num'));
+  const head = document.querySelector('#ft_more button.label-wrap');
+  const label = [...head.children].find((e) => !e.classList.contains('icon')) || head;
+  const range = document.createRange(); range.selectNodeContents(label);
+  const words = [...range.getClientRects()].filter((x) => x.width > 0);
+  const last = words[words.length - 1], icon = head.querySelector('.icon').getBoundingClientRect();
+  const em = parseFloat(getComputedStyle(head).fontSize);
+  const hit = document.elementFromPoint(words[0].left + 2, (words[0].top + words[0].bottom) / 2);
+  return { content, ch, tokens, inputWidth: r.width, gap: icon.left - last.right, em,
+           hitIsToggle: !!hit && hit.closest('button.label-wrap') === head };
+}"""
+
+
+def test_fields_take_their_roles_width_and_an_accordions_mark_stays_by_its_title(tmp_path):
+    """R-WIDTH (the owner's D12 of 2026-11-24): at 2560 x 1440 Fine-tune's Epochs box was about
+    440 px wide for a two-digit number, and "More settings"' mark stood about 1100 px from its
+    title. A number field now takes the short number's width (``--shep-w-num`` of its own font,
+    in ``ch``), white space beside it allowed, and an accordion's mark lies within 1em after its
+    title's words, the whole title row still the one toggle."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    stops = [{"size": [2560, 1440], "page": "finetune", "focus": False}]
+    seen = walk_state("first_use", tmp_path, stops, extra_js=_ROLE_WIDTH_JS)
+    got = seen[0]["extra"]
+    assert got["tokens"] and got["tokens"] > 0, got
+    assert got["content"] <= got["tokens"] * got["ch"] + 1, got
+    assert 0 <= got["gap"] <= got["em"], got
+    assert got["hitIsToggle"], got

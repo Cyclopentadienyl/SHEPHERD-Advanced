@@ -2798,11 +2798,18 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 （Settings › Stop service），再重新啟動。在執行中的那個做 Save 與 Apply，絕不會讓一次什麼都沒設定的
 啟動被拒絕。自 6a2d52e 的審查起；以前這樣的啟動會開啟正在執行的那個並回報成功）。**Data locations** 面板每個位置
 一列（Workspaces folder、Results registry、Import folder、Training evidence folders）：誰需要它、
-目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框，
-附帶：
+目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框。
+沒有生效值的列保持路徑框打開（「Set to」）：那就是下一步。已設定的列在路徑框的位置顯示它的值與
+**Change…**（自 2026-11-24 起），按下後在原處打開路徑框（「Change to」），焦點移入框內，並在 Check
+與 Save 旁附上 **Cancel**；Cancel 或 Esc 會關閉它並清除輸入的文字，一次改變了該列的 Save 也會關閉它。
+已設定的列，其生效的值與來源位於名稱旁時，Change… 就在它們結束的那一行，與「Advanced: source ›」
+同一行，不另占一行（自 2026-11-25 起）。路徑框附帶：
 
 - **Check**：以工作讀取時相同的規則檢查這個值（絕對路徑、已存在的目錄、兩個病人層級的位置須在
-  repository 之外），顯示解析後的路徑，以及伺服器自己的清單在其中找到什麼（「1 workspace」）；
+  repository 之外），顯示「● Usable」與解析後的路徑，再於自己的一行說明伺服器自己的清單在其中找到
+  什麼（「Holds 1 workspace.」）；資料夾還是空的時，先說明這一點，再說明其內容會出現在哪裡（「Holds no
+  workspace yet. Each workspace built in it appears in Datasets.」，registry 則是「Holds no cohort version
+  yet. Each one imported into it appears in Research › Test.」）；
 - **Save**：儲存並立即套用（見下文）；被拒絕的值不會儲存任何東西，並說明原因；
 - **Create suggested folder**，用於尚未設定的必要資料夾：服務帳號 home 下的
   `~/SHEPHERD-data/workspaces`、`~/SHEPHERD-data/registry` 或 `~/SHEPHERD-data/import`，只在按下
@@ -2845,9 +2852,12 @@ yet …」）並提供 **Apply**，下次啟動時也會套用。所以工作看
 `deployment.json.unreadable-<UTC 時間>`；在那之前 Save 關閉。無法開啟的檔案（權限、磁碟）要在原處
 修正，絕不改名。
 
-**對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖：
-「Operator controls only: <原因>」在各列上方說一次，每一列則在其路徑框、Check 與 Save 正下方的一行
-寫著「🔒 Operator controls only」（2026-11-19 起）。一個已設定但被拒絕的值顯示為「<Folder> set when the service
+**對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖。
+各列上方的一則通知說明這代表什麼：「🔒 Folder paths are hidden in this read-only view.」（自 2026-11-24
+起；D8 的完整原因由頁首 chip 說明），每一列則說一次短語「🔒 Operator controls only」：已設定的列在
+上鎖的「🔒 Change…」旁，兩者永遠在同一行（名稱欄放得下兩者時就在「Advanced: source ›」那一行，否則在
+生效的值與來源下方的一行），其他列在 Check 與 Save 旁。這個短語會打開 D8 的原因，該列每個因它變暗的控制項
+都把它讀作自己的說明。一個已設定但被拒絕的值顯示為「<Folder> set when the service
 started（或 saved in Settings）is refused: an operator sees why in Settings › Data locations」，
 絕不顯示拒絕原因本身的文字，因為它會照原樣重複輸入的值（相對路徑或 `~` 路徑不會被路徑遮蔽處理隱藏）。
 
@@ -3149,7 +3159,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；每個所選任務都會讀取的其他設定在 More settings 下，只選一個任務時另有該任務自己的設定（見下文）；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
-| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會停用並顯示鎖，"Operator controls only: <原因>" 只寫一次，在按鈕正上方的那一行；兩個欄位上方的一行說明原因寫在下方的操作旁 |
+| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會變暗並顯示鎖，短語「Operator controls only」只寫一次，在按鈕所在的那一行；它也指名這兩個欄位，並會打開 D8 的原因（自 2026-11-24 起） |
 
 - 選中的區域（Diagnosis 或 Research）以填色加粗體顯示，Settings 被選中時也一樣；選中的研究頁面
   以底線加粗體顯示，滑鼠停在其他研究頁面上時只加淺色底，不加底線，因此同一時間只有一個頁面看起來
@@ -3160,17 +3170,20 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
   的），不跟著背景執行中的工作（那由 GPU chip 說明），也不允許或拒絕任何操作。Diagnosis 與
   Settings 不顯示。
 - 不會有任何分頁被收進選單。視窗較窄或放大倍率較高時，兩個 chip 與 Settings 會移到 Diagnosis 與
-  Research 下方自己的一行（不論這兩個分頁佔幾行），因此 chip 不會蓋住任何分頁；階段說明會移到研究
+  Research 下方自己的一行（不論這兩個分頁佔幾行），chip 從品牌名稱的左緣開始，Settings 在該行的右端
+  （自 2026-11-24 起），因此 chip 不會蓋住任何分頁；階段說明會移到研究
   頁面下方自己的一行，仍在右側；研究頁面的分頁只在它們本身放不下時才換行。
 - 瀏覽器分頁的標題會說明目前位置，例如 `Training · Research — SHEPHERD-Advanced`。重新載入
   頁面會回到目前顯示的頁面，連同它的階段說明：由這個瀏覽器分頁記住顯示的是哪一頁（網址不保留
   位置）。
-- 視窗寬大於高時，頁面的各面板若能以各自的最小寬度並排放下，就並排顯示（在顯示下限的 1280 px
-  寬度，每個頁面都放得下）：頁面本身不捲動，某個區域的內容超出空間時，在它自己的面板內捲動。
-  視窗寬不大於高，或面板並排放不下時，各區域上下堆疊，由頁面捲動。決定版面的不是固定的視窗
-  尺寸。自 2026-11-23 起，版面最多縮到顯示下限為止（寬大於高的視窗為 1280 × 720 CSS 像素，
-  寬不大於高的視窗為 864 × 864）：視窗在任一方向小於下限時，該方向照下限的尺寸繪製，由瀏覽器
-  捲動整個頁面。佈景主題最小的文字為 14 px。
+- 版面依寬度決定（自 2026-11-24 起）。視窗寬大於高、寬度至少 1280 CSS 像素，而且頁面的各面板能以
+  各自的最小寬度並排放下時，就並排顯示（在 1280 px 寬度，每個頁面都放得下）：頁面本身不捲動，某個
+  區域的內容超出空間時，在它自己的面板內捲動。其他視窗，包括寬不大於高的視窗，以及寬度不足以並排的
+  橫向視窗（1100 × 1050，或 1233 × 640，也就是 1850 × 960 的視窗放大到 150 %），各區域一律上下堆疊，
+  由頁面捲動。高度從不改變版面，決定版面的也不是固定的視窗尺寸。並排時，版面最多縮到顯示下限
+  1280 × 720 CSS 像素為止（自 2026-11-23 起）：較矮的視窗照 720 px 高繪製，由瀏覽器捲動整個頁面。
+  上下堆疊時，下限是 864 px 寬，沒有高度下限：較窄的視窗照 864 px 寬繪製，並左右捲動。佈景主題最小的
+  文字為 14 px。
 - 無論系統或瀏覽器要求深色模式，儀表板一律以它的淺色配色顯示（它的配色沒有深色版本，而
   Gradio 的深色模式會讓頁面上的文字無法閱讀）；網址會加上 `?__theme=light`。Gradio 自己的頁尾
   （它的 API 頁面、「Built with Gradio」與它自己的「Settings」）不再顯示。
@@ -3198,7 +3211,13 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 的完整原因。它從不重複任何標頭的值。
 
 **鎖代表被拒絕。** 只有唯讀的 chip 以鎖開頭。D8 之後的控制項在 D8 允許這個瀏覽器的請求時不顯示
-鎖；D8 拒絕時它會停用、在文字前顯示鎖，並在旁邊附上 "Operator controls only: <原因>"。
+鎖；D8 拒絕時它會變暗、在文字前顯示鎖，並在旁邊附上簡短的「Operator controls only」（自 2026-11-24
+起）。D8 的完整原因只由 chip 說一次。這個短語是一個連結樣式的按鈕：它在旁邊的泡泡中打開 chip 針對這個
+請求的回答（狀態、D8 的原因與它的 Ref 行），螢幕閱讀器也把它讀作該控制項的說明。因其他原因而變暗的
+控制項同樣附上該原因的短語：缺少設定時是「Needs a workspaces folder」、「Needs a results registry」或
+「Needs an import folder」（已設定但無法使用時是「Workspaces folder not usable」之類），它會把說明該原因的
+通知捲入畫面，並把焦點移到通知的連結；「GPU in use」與「GPU lock not usable」打開 GPU chip 的原因。頁面
+自己的原因是一行頁面上的文字，從需要什麼說起（「Choose a dataset to start.」）。它們都不說「disabled」。
 
 **GPU jobs** 顯示哪個受管理的工作佔用唯一的 GPU 名額（§4.11）：
 
@@ -3206,20 +3225,28 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 |---|---|
 | `GPU jobs: none` | 沒有受管理的訓練或評估工作在執行，也沒有在 CUDA 上服務的模型。它從不說「free」：這個鎖是協作式的（不取鎖的 GPU 行程不會被它擋下），而在 CPU 上推論不取鎖 |
 | `GPU job: training (job runner)`、`GPU job: test run (job runner)` | 本服務啟動的工作；停止中時加上 `· stopping` |
-| `GPU: inference (this service)` | 本服務正在 CUDA 上服務模型，它持有 GPU 鎖直到操作者停止推論（§4.11）。ⓘ 說明停止的地方：Diagnosis 上的 Stop inference，或 `POST /api/v1/pipeline/stop`。Research 的 Start 控制項旁也寫著同樣的話（"…; stop it with Stop inference on Diagnosis"） |
+| `GPU: inference (this service)` | 本服務正在 CUDA 上服務模型，它持有 GPU 鎖直到操作者停止推論（§4.11）。ⓘ 說明停止的地方：Diagnosis 上的 Stop inference，或 `POST /api/v1/pipeline/stop`。Research 的 Start 控制項旁顯示短語「GPU in use」，它會打開這個 ⓘ |
 | `GPU: inference (pid 41822, since 09:58 UTC)` | 另一個服務的 CUDA 推論持有這把鎖（同一個 workspaces root 上的另一台伺服器） |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | 某個不是本服務啟動的行程持有 GPU 鎖（正式的 CLI，或同一把鎖上另一台伺服器的 job runner）；chip 只顯示其持有者紀錄所寫的內容：指令、pid 與開始時間 |
 | `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
-| `GPU jobs: refused, no workspaces folder` | 沒有設定 workspaces 資料夾，所以沒有 GPU 鎖，在 ⚙ Settings › Data locations 中選擇一個之前，每個訓練與測試執行都會被拒絕（§4.11、§4.12）。*2026-11-16 以前它寫作「refused, lock not configured」並指名 `SHEPHERD_WORKSPACES_ROOT`* |
-| `GPU jobs: not read`（灰色） | 無法讀取狀態。鎖的設定無法使用時，ⓘ 會說明，但只對 D8 允許的瀏覽器顯示路徑 |
+| `GPU jobs: not set up`（灰色 ○） | 沒有設定 workspaces 資料夾，所以沒有 GPU 鎖，在 ⚙ Settings › Data locations 中選擇一個之前，每個訓練與測試執行都會被拒絕（§4.11、§4.12）；ⓘ 寫出這一步。*2026-11-22 以前它寫作「refused, no workspaces folder」，2026-11-16 以前寫作「refused, lock not configured」並指名 `SHEPHERD_WORKSPACES_ROOT`* |
+| `GPU jobs: not read yet`（灰色，無標記） | 頁面還沒讀取狀態（剛載入時；此時操作者 chip 寫著「Operator controls: not read yet」） |
+| `GPU jobs: could not be read`（灰色 ○） | 讀取失敗，因此無法確認狀態 |
+| `GPU jobs: lock not usable`（紅色 ✕） | 鎖的設定已設定但無法使用，因此每個受管理的 GPU 工作都會被拒絕。ⓘ 會說明原因，但只對 D8 允許的瀏覽器顯示路徑 |
+
+自 2026-11-24 起，這四個狀態各有自己的文字與外觀；在那之前，「not read」代表其中不只一個狀態。
 
 ### 說明：ⓘ 按鈕
 
 以前印在 Diagnosis、Training Console 與 Runtime Settings 各欄位下方的說明，現在放在欄位名稱
 後面的 ⓘ 裡。把滑鼠指向它（短暫停留後泡泡才打開，滑鼠只是經過不會打開）、用 Tab 移到它，或點擊
 它：說明會出現在一個泡泡中，滑鼠可以移進泡泡閱讀。點擊（或 Enter、Space）會把它固定打開，成為一個
-對話框；按 Esc 或點擊其他地方會關閉它。點擊欄位名稱仍會把游標放進欄位。泡泡會在它所說明的欄位
-旁邊打開，旁邊放不下就在上方，再不行就在下方，永遠不會蓋住該欄位；它也永遠不會比視窗高：較長
+對話框，標題列的 × 旁有加框的 Esc 鍵，兩者是同一個關閉按鈕（自 2026-11-25 起，取代內文下方的
+「Esc to close」一列）；按 Esc、這個按鈕或點擊其他地方會關閉它。點擊欄位名稱仍會把游標放進欄位。泡泡會在它所說明的欄位
+旁邊、上方或下方打開，必要時沿著那一側滑動，永遠不會蓋住該欄位（原因短語的泡泡則不蓋住短語所說明的
+控制項）。在放得下的位置中，它選一個不蓋住其他控制項的位置；沒有任何這樣的位置放得下整個泡泡時，它在
+不蓋住控制項、仍能顯示開頭一句與其後兩行的最高位置以較矮的高度打開，文字在泡泡內捲動並帶捲動提示；
+只有連這樣的位置都沒有時，才選蓋住最少控制項的位置（自 2026-11-24 起）。它永遠不會比視窗高：較長
 的文字在泡泡內捲動。必須一直可見的內容仍然直接印出：拒絕的原因、工作的狀態、合成資料的標記、
 未經驗證的來源，以及 Training Console 對 HGT 的 AMP 拒絕（「Disabled: HGT requires full float32
 …」）。螢幕閱讀器會先讀欄位下方印出的那一行，再讀它的說明（自 ops-wiring 這一輪的 B5 起）。
@@ -3228,8 +3255,8 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 
 第一個畫面分為三個面板：病患的表型、排名的候選，以及選中候選的細節（Evidence · Explanation ·
 Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上按 Enter）就會在細節面板顯示該
-候選。並排顯示時（見上文〈導覽〉的版面規則），每個面板在自己內部捲動；視窗寬不大於高時，三個
-面板上下堆疊，由頁面捲動。
+候選。並排顯示時（見上文〈導覽〉的版面規則），每個面板在自己內部捲動；上下堆疊時（視窗寬不大於高，
+或寬度不足以並排），三個面板上下堆疊，由頁面捲動。
 
 **Patient ID** 留空時以「沒有 id」送出：伺服器為結果給它自己的 id（`patient_…`），因此不同
 瀏覽器的結果絕不會共用同一個（M5-2 之前，空白欄位會以 `webui_patient` 送出）。
@@ -3277,7 +3304,8 @@ HPO terms 欄位（標籤、格式說明與輸入框，166 px）；在較矮的�
   "✕ Load refused" 或 "○ Not loaded"（服務啟動後從未載入任何模型），停止或拒絕發生的時間寫在狀態
   旁邊（"○ Stopped at 10:15:00 UTC"）。不接受診斷時，下方是伺服器的開頭說明（"By an operator"，
   或載入被拒絕的原因，並指名持有 GPU 鎖者），完整
-  原因在 "Details ›" 之下，點一下即可看到（如何載入模型、啟動設定）。載入只由這個狀態表達，不論是
+  原因在 "Details ›" 之下，點一下即可看到（如何載入模型、啟動設定）；第一次使用、沒有設定 workspaces
+  資料夾時，兩者都在狀態那一行的 "Details ›" 之下（見下表）。載入只由這個狀態表達，不論是
   哪個頁面或用戶端發起的；
 - **■ Stop inference**，在有模型服務時出現（操作者控制項，§4.13；唯讀瀏覽器看到上鎖的按鈕）。它
   會先詢問："Stop inference of model <12 hex>? Diagnoses already accepted finish; new ones are
@@ -3299,11 +3327,11 @@ HPO terms 欄位（標籤、格式說明與輸入框，166 px）；在較矮的�
 | "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model），且目前有服務內容。× 可關閉它。停止不會產生這個通知：由狀態說一次，先前的通知也會消失 |
 | 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
-| "○ Not loaded"、"Nothing has been loaded since the service started"、"Details ›" 與 "Load a model…" | 沒有服務任何模型，而且自啟動以來從未服務過（什麼都沒設定；自 K7 起，圖從不單獨服務）。「沒有服務」只在這裡說一次，附這唯一的動作：Run Diagnosis 呈灰色且無法點擊，下方寫著 "Disabled until a model is loaded."（滑鼠指向它，或以 Tab 移到它，會說明原因）。API 用戶端此時提出請求，會得到附完整原因的 503（§4.7） |
-| "○ Stopped at HH:MM:SS UTC"、"By an operator"、"Back to research ›" | 推論已停止（由操作者、為了 Restart Backend，或在服務關閉時）；"Details ›" 有伺服器的完整原因。Run Diagnosis 顯示 "Disabled until a model is loaded." |
+| "○ Not loaded"、"Nothing has been loaded since the service started"、"Details ›" 與 "Load a model…" | 沒有服務任何模型，而且自啟動以來從未服務過（什麼都沒設定；自 K7 起，圖從不單獨服務）。「沒有服務」只在這裡說一次，附這唯一的動作：Run Diagnosis 呈灰色且無法點擊，下方寫著 "Load a model first."（滑鼠指向它，或以 Tab 移到它，會說明原因）。API 用戶端此時提出請求，會得到附完整原因的 503（§4.7）。沒有設定 workspaces 資料夾時（第一次使用），狀態、原因與下一步是同一行："○ Not loaded: no workspaces folder is set. Choose one in Settings › Data locations"，由 "Details ›" 結束這一行，其中有 "Nothing has been loaded since the service started"、完整原因與資料夾的各列（自 2026-11-25 起；之前是一個灰色的 "Not loaded" 標籤疊在資料夾自己的提示之上） |
+| "○ Stopped at HH:MM:SS UTC"、"By an operator"、"Back to research ›" | 推論已停止（由操作者、為了 Restart Backend，或在服務關閉時）；"Details ›" 有伺服器的完整原因。Run Diagnosis 顯示 "Load a model first." |
 | "✕ Load refused at HH:MM:SS UTC" 與原因 | 在沒有服務任何模型時，一次載入（或啟動時的載入）被拒絕，例如 "CUDA inference is refused: the GPU is in use by <持有者>…" |
-| "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Disabled until a model is loaded."；API 用戶端得到 503）。之後卡片顯示 "Stopped" |
-| "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
+| "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Load a model first."；API 用戶端得到 503）。之後卡片顯示 "Stopped" |
+| "🔒 Change model…" 呈灰色，旁邊是「Operator controls only」 | 唯讀的瀏覽器（§4.13）；這個短語會打開 D8 的原因。它永遠看不到 checkpoint 清單 |
 
 結果上方的**標記（badge）**（§4.7）把結果的整個 served identity 與卡片最近一次的讀取比對，而
 卡片在每次診斷後都會再讀一次；讀取失敗或早於結果的讀取，絕不會顯示 "Produced by the model in
@@ -3354,11 +3382,11 @@ save"、"Best pooled MRR"）並附其 model fingerprint；顯示最近四個 run
 所服務的內容，但要等新模型通過檢查並發布之後；在那之前什麼都不變（使用中的模型繼續回答每個瀏覽
 器），已產生的結果保留自己的身分。確認畫面打開期間，清單本身的
 底部列會隱藏，讓 from → to 各列與這句話保持在畫面內；"Keep <舊>" 會放棄這次確認。確認畫面打開
-期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。按下
+期間，Run Diagnosis 變暗："Finish or cancel the model change first."。按下
 "Reload with <新>" 之後，確認畫面只顯示這個頁面的等待（"Reload sent; waiting for the server's
 answer… 00:00:42"）與 Close（關閉不會中止重新載入；180 秒後為 Read again 與 Close），因此無法
 再要求第二次重新載入。卡片以伺服器自己的狀態 "Loading" 表達這次載入，與其他頁面或用戶端發起的載入
-相同；Run Diagnosis 顯示 "Disabled until the model load started here answers."。Cancel 或 × 關閉
+相同；Run Diagnosis 顯示 "The model load started here has not answered yet."。Cancel 或 × 關閉
 抽屜而不重新載入。重新載入期間，Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）：卡片持續
 讀取伺服器的狀態，重新載入回應後，卡片顯示當時使用中的模型，結果不會再顯示；期間按 "Change model…" 會重新打開抽屜，顯示
 重新載入的狀態。在 Research › Models 中，Close 也以同樣方式關閉確認畫面。
@@ -3443,8 +3471,8 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 **run bar** 永遠不捲動：
 
 - **Dataset**：伺服器的 workspace 清單，與 Datasets 的相同；每個選項就是 workspace 的名稱
-  （無法訓練的另附原因），它的身分只由選單旁的 chip 說一次。選擇一個時會讀取它的 manifest 與
-  紀錄，chip 顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
+  （無法訓練的另附原因），它的身分只由 Dataset 與 Run name 下方的資料行說一次（只有整個 bar 排成
+  一行時才在選單旁，見下文）。選擇一個時會讀取它的 manifest 與紀錄，那一行顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
   **Details ›**（指紋、建置時間、來源、數量與種子，每列一項，manifest 的檔案與各自的 digest，
   **All datasets ›**）。頁面打開時選的是 Datasets 的 **Use for training ›** 所選的 workspace，
   否則是這個分頁先前的選擇，否則是執行中工作的，否則是 serving 讀取的那一個（它可訓練時），
@@ -3457,11 +3485,19 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   啟動或停止中是 ■，完成是綠色 ●，只有失敗才是紅色 ✕。失敗或停止的 run 永遠不會是綠色。閒置是
   正常狀態，所以它的狀態標籤是一般的淡色文字，不是膠囊。不論 run 檢視顯示哪個 run，狀態標籤永遠
   是訓練工作的。
-- **Run name**，接著是**一行原因**，說明畫出的某個動作為何停用：對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
-  占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
-  since …)」，或在 CUDA 上服務模型時的「GPU: inference (this service); stop it with Stop
-  inference on Diagnosis」；無論哪種情況，job runner 都會自己拒絕啟動）。畫出的動作都沒有停用時，
-  沒有原因行。
+- **Run name**，在 Dataset 旁邊。自 2026-11-24 起，bar 分為兩組：要設定的（Dataset 與 Run name，
+  其下是資料行）與要執行的（Start、Continue… 與 Stop，其下是工作的狀態）。只有資料行是資料集的身分、
+  動作旁沒有任何說明，而且這一列放得下時（例如選了資料集的 1850 × 960），它才排成一行；較窄時，兩組
+  整組移動。**沒有選擇資料集時**，資料行以共用通知的形式說明原因，整個畫面只說一次，附下一步與
+  **Details ›**：第一次使用時是「○ No workspaces folder is set. Training needs one. Choose one in
+  Settings › Data locations」（GPU 鎖的各列在它的 Details 中），資料夾中沒有列出任何資料集時是「The
+  server lists no dataset yet.」與「Build one on the server with a command in Datasets ›」，已列出資料集
+  但尚未選擇時是「Choose a dataset to start.」；Start 與 Continue… 會變暗，旁邊不另加說明（那一行指名
+  它們，螢幕閱讀器也把它讀作它們的說明）。**動作本身的原因**是動作旁的一個短語：對唯讀瀏覽器是
+  「Operator controls only」（它會打開 D8 的原因），另一個工作或本服務的 CUDA 推論占用 GPU 時是「GPU in
+  use」（它會打開 GPU chip 的原因；測試執行時其後有 **Open Test ›**），或「GPU lock not usable」；無論
+  哪種情況，job runner 都會自己拒絕啟動。訓練工作執行中或停止中時，動作下方的工作狀態就是 Start 與
+  Continue… 變暗的原因。沒有任何東西變暗時，沒有短語。
 - **Start、Continue…、Stop。** Stop 只在訓練工作執行中或停止中才畫出。它會先詢問：「Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
   yet, this run cannot be continued. Once it has stopped, the page says where it can be
@@ -3661,12 +3697,14 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 期間，run bar 不顯示它的任何動作（Start、Continue…、Stop），也不說原因（R-49），它的 **Run
 name** 仍在，為抽屜啟動的新 run（接續或分支）命名（如同 `--run-name` 與 `POST
 /api/v1/training/branch`）；抽屜唯一的關閉鈕是標題列的 **Close**。**4. Start** 是抽屜欄位下方
-的頁尾，放著 **Continue Training**（或 **Start branch**），旁邊是啟動的原因，說明
-擋住它的是什麼、該怎麼做：「Start branch disabled: the parent’s dataset is not this workspace’s
-current one.」、「… the check refuses a setting you edited; change it, then check again.」、「… the
-checkpoint changed since it was chosen. Refresh the list, then check it again.」、「… the typed
-path is not a checkpoint the run list holds. …」或「… the check says this checkpoint cannot be
-branched.」（原因寫在檢查中）。只說一次：被檢查拒絕的啟動（包括清單中沒有的路徑）不另加自己的
+的頁尾，放著 **Continue Training**（或 **Start branch**），旁邊是啟動的原因，以頁面
+自己的文字、從需要什麼說起，說明擋住它的是什麼、該怎麼做（自 2026-11-24 起）：「The parent’s dataset
+is not this workspace’s current one.」、「The check refuses a setting you edited. Change it, then check
+again.」、「The checkpoint changed since it was chosen. Refresh the list, then check it again.」、「The
+typed path is not a checkpoint the run list holds. …」或「The check says this checkpoint cannot be
+branched.」（原因寫在檢查中）；工作執行中或停止中時是「A training job is running.」或「The training job
+is stopping.」；有自己短語的原因就是那個短語（「Needs a workspaces folder」，它會移到 run bar 的通知、
+「GPU in use」、「Operator controls only」）。只說一次：被檢查拒絕的啟動（包括清單中沒有的路徑）不另加自己的
 通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明，以表示拒絕的紅色 ✕
 開頭。在寬的
 視窗中，抽屜內容捲動時頁尾仍留在畫面上；檢查之後，抽屜內容會捲動到顯示其結果的位置。從清單選的
@@ -3694,7 +3732,7 @@ gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑�
 Branch 時則是「Needed to change a setting: it shows them and the plan. Without it, the branch keeps
 the parent’s settings.」（要修改的設定只在檢查之後出現），在 1850 x 960
 下抽屜打開時第 3 步就在畫面中。主機沒有 CUDA 裝置時，每個 Device 欄位（參數、抽屜、Fine-tune）
-都在標籤下說明「No CUDA device here: auto and cuda are refused; choose cpu.」，Check checkpoint 或
+都在標籤下說明「No CUDA device here: auto and cuda are refused. Choose cpu.」，Check checkpoint 或
 任何啟動的拒絕都用頁面的用語：「Device auto needs CUDA, which is not available here; choose cpu
 for development. Nothing was started.」（訓練行程自己的句子才寫 `--device`；R-32）。抽屜打開期間若 run
 bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
@@ -3704,7 +3742,7 @@ bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›�
 run，最新的在前（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個 checkpoint
 後就會出現），每個選項與 Run 選單的命名方式相同（「ui-live-stop-02 · GATv2 2026-10-24 17:39」）；
 選項的值是 run 的完整 id，所以文字永遠不會改變讀取哪個 run。選擇一個 run 會顯示它的曲線與 Export
-CSV，其他一概不變：run bar、它的狀態標籤、原因行、動作按鈕，以及失敗工作的橫幅，永遠顯示訓練工作。
+CSV，其他一概不變：run bar、它的狀態標籤、原因短語、動作按鈕，以及失敗工作的橫幅，永遠顯示訓練工作。
 沒有選擇時，檢視跟隨 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，跟隨 workspace 最新的
 run。只要 run bar 顯示的是做出選擇時的 workspace，而且之後沒有工作啟動，選擇就會保留（新工作一啟動
 就顯示它；中途改看另一個 workspace 不會結束選擇，回到原本的 workspace 時會再次顯示所選的 run）。選單旁的
@@ -3770,7 +3808,8 @@ has no curves: choose another run in Viewing.」，或該 run 沒有 run 目錄�
   圖區顯示「The charts could not be loaded. Trying again…」，每 3 秒重試一次，最多 20 次；已畫出的
   run 在重新要求較新 epoch 的期間保留它的圖表。
 
-**唯讀的瀏覽器**看到同一個頁面，每個動作都停用並附上 D8 的原因，而且不會為它開啟任何
+**唯讀的瀏覽器**看到同一個頁面，每個動作都變暗，旁邊是短語「Operator controls only」，它會打開
+D8 的原因，而且不會為它開啟任何
 checkpoint：run 標題的標籤顯示「dataset not shown · operator control」，狀態只給出 run 的
 狀態，也不顯示 parent 清單。Viewing 選單、metrics、圖表與資料集紀錄對它的讀取方式與對操作者
 相同。
@@ -3827,12 +3866,11 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   `SHEPHERD_DEVICE`），各自有自己的 ⓘ。**Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
-  會在量測之前拒絕。Start 會說明它為何不可用：先說持有 GPU 的是什麼，用 GPU chip 的字眼，
-  與 Training 及 Fine-tune 的 Start 說法相同（「Disabled: GPU job: training (job runner).」；在 CUDA
-  上服務模型時是「Disabled: GPU: inference (this service); stop it with Stop inference on
-  Diagnosis.」），因為那期間任何選擇都無法讓它可用，然後才是缺少某個選擇或另一個圖譜；workspace 已
-  列出 checkpoint 而尚未選擇時為「Disabled: choose the run, then the checkpoint to test.」，這是頁面
-  唯一要求這個選擇的地方。量測的拒絕以白話名稱指稱量測，協定名稱只出現在結尾的「Ref:」（「…which the
+  會在量測之前拒絕。Start 旁邊會說明它為何不可用：先說持有 GPU 的是什麼，以短語「GPU in use」表示，
+  與 Training 及 Fine-tune 的 Start 相同（它會打開 GPU chip 的原因：持有者，以及在 CUDA 上服務的模型持有它時
+  在哪裡停止本服務的推論；自 2026-11-24 起），因為那期間任何選擇都無法讓它可用；然後才是缺少某個選擇或
+  另一個圖譜，以頁面自己的文字、從需要什麼說起；workspace 已列出 checkpoint 而尚未選擇時為「Choose the
+  run, then the checkpoint to test.」，這是頁面唯一要求這個選擇的地方。量測的拒絕以白話名稱指稱量測，協定名稱只出現在結尾的「Ref:」（「…which the
   patients-like-me measurement needs. Import a source that lists causal_genes. Ref:
   patients_like_me.」）。工作的標題列顯示其狀態（Running、Completed、紅色的
   Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色），以及已經過的時間或以 UTC 表示的結束時間；
@@ -3913,11 +3951,11 @@ mygene2、research_selection 或 institutional_acceptance）以及遺失 term �
 **Commit as version …** 以相同的輸入重新準備，並在顯示過的 preview id 下提交：
 預覽之後表單有變更，或之後來源或圖譜有變更，都會被拒絕。一次只執行一個預覽或提交；提交之後
 抽屜會關閉，並選取新的版本。並排顯示時，抽屜在頁面內蓋住 Run 與 Result；上下堆疊時（視窗寬不
-大於高，見〈導覽〉的版面規則），它是視窗右緣的覆蓋層。兩種情況下抽屜都在其內部捲動，打開時鍵盤焦點
+大於高，或寬度不足以並排，見〈導覽〉的版面規則），它是視窗右緣的覆蓋層。兩種情況下抽屜都在其內部捲動，打開時鍵盤焦點
 會移到它的標題。
 
-**唯讀的瀏覽器**可以看到各版本、它們的報告與狀態、工作與結果：每個控制項都不可用，並寫明
-「Operator controls only: <原因>」（筆記的 Who 與 What 欄位也一樣），checkpoint 清單也不顯示。每個控制項都在後端檢查它自己的
+**唯讀的瀏覽器**可以看到各版本、它們的報告與狀態、工作與結果：每個控制項（筆記的 Who 與 What 欄位
+也一樣）都會變暗，旁邊是短語「Operator controls only」，它會打開 D8 的原因；checkpoint 清單也不顯示。每個控制項都在後端檢查它自己的
 請求（§4.13）。不會顯示伺服器的絕對路徑：registry、workspace 根目錄、intake 目錄、證據目錄或
 repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），其他路徑寫作「a server path」。
 
@@ -4031,11 +4069,13 @@ parent 無法取得的原因時，也在此完整列出）；任何警告以 ▲
   K8-6e.1 起）絕不顯示為結果、也不算作結果：紀錄下方是 "▲ 1 record for these weights cannot be read
   as a result; it is kept as written." 與一張小表 Index · Registration · Report · Reason（它未以可讀
   形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded results · 3 (1 not
-  readable)"。沒有紀錄時，分段依原因說明並給出下一步，不指出任何檔案（「No recorded result yet」：
-  此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過；「Next: start a test of it with Register
-  when the run ends checked; its result then appears here.」與動作「Test this model ›」，它會開啟 Test
-  頁並選好此 workspace 與 checkpoint；唯讀檢視則說明記錄結果是操作者控制項，沒有動作），沒有
-  東西可計數的分段名稱不顯示「· 0」。唯讀檢視列出同樣的項目，取自該 route，包括群組的註記（其回答中
+  readable)"。沒有紀錄時，分段以一行說明狀態並附 **Details ›**，只給一個動作，不指出任何檔案（自 2026-11-24
+  起）：「○ No recorded result yet」（此 checkpoint 旁登錄的結果屬於其他權重時是「No recorded result for
+  these weights」），接著是「Test this model ›」，它會開啟 Test 頁並選好此 workspace 與 checkpoint。
+  Details 中是原因（此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過：登錄在同一組權重另一份
+  副本旁的結果不會顯示在這裡）與下一步（「Start a test of it with Register when the run ends checked. Its
+  result then appears here.」）。唯讀檢視則直接說明記錄結果是操作者控制項，沒有動作。沒有東西可計數的
+  分段名稱不顯示「· 0」。唯讀檢視列出同樣的項目，取自該 route，包括群組的註記（其回答中
   的 `contest.notes`、`contest.notes_readable`）；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
   測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
@@ -4094,22 +4134,22 @@ parent 無法取得的原因時，也在此完整列出）；任何警告以 ▲
 **Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
 checkpoint）。選取了它可以提供服務的一列之後，旁邊會以白話說明它的作用（「Serves this model for
-diagnosis once you confirm the change. Results already recorded keep the model they were made
-with.」）；選取之前什麼也不寫。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
+diagnosis once you confirm.」；已產生的結果保留自己的身分，由確認畫面說明）；選取之前什麼也不寫。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
 model spec 的檔案為「Record not readable: written before the model spec: not readable by this
 build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在顯示時、更換 workspace 時以及
 每一次 Load 之後讀取，
 包括沒有改變任何服務內容的 Load（重新載入被拒絕、再次載入正在使用的模型），因此期間發生的變化會顯示
 出來；頁面上沒有任何東西依計時器執行。
 
-**上下堆疊時**（視窗寬不大於高，各區域上下堆疊；見〈導覽〉的版面規則），選取一列會捲動到它的細節區並把鍵盤焦點
+**上下堆疊時**（視窗寬不大於高，或寬度不足以並排，各區域上下堆疊；見〈導覽〉的版面規則），選取一列會捲動到它的細節區並把鍵盤焦點
 移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。
 
 ### ⚙ Settings 與執行環境那一行
 
 **Settings** 自 2026-11-16 起有兩個面板：左邊（窄版時在上方）的 **Data locations**，在這裡選擇、
 檢查、儲存並套用 workspaces 資料夾、結果 registry、匯入資料夾與訓練證據資料夾（§4.12）；右邊的
-**Runtime settings**。第一次啟動時寫「○ Nothing is set yet …」，並為每個必要的列提供建議資料夾；其他
+**Runtime settings**。第一次啟動時寫「○ Nothing is set yet. Each folder is needed only by what its row names.」並附
+**Details ›**，並為每個必要的列提供建議資料夾；其他
 頁面照常開啟，需要某個資料夾的頁面會在自己的位置說明，並指向 Settings › Data locations。
 
 **Runtime settings**（自 ops-wiring 這一輪的 B5 起是一個面板）先說明正在執行的與已儲存的：**Allocator
@@ -4128,13 +4168,13 @@ rounded、Native no tuning；後端啟動時讀取一次）與 **Compile the mod
 一次（「Stop the service? …」，Stop service now 或 Cancel），GPU 工作執行時停用，然後經由後端有序的停止
 （SIGTERM 啟動的那一個）停止後端；記錄中會寫明（「Stopping the service (pid N): asked for by Stop service
 in Settings.」）。再從桌面項目或 `launch_shepherd.sh` 啟動它。對唯讀的瀏覽器，這兩個欄位不能更改，
-每個按鈕都會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
+每個按鈕都會顯示鎖，旁邊是短語「Operator controls only」，它會打開 D8 的原因。
 
 **執行環境那一行**在每個頁面的底部，先寫問題的後果，再寫原因：「▲ No CUDA device visible: GPU
 training is unavailable. torch is built for CUDA 13.0. Check the driver and CUDA libraries.」（失去某項
 能力時為紅色 ✕，例如「GNN scoring cannot run: torch is not importable (…)」）；沒有問題時寫
 「Runtime: every checked module imports.」。版本（torch、CUDA、PyG、原生擴充、Voyager）在
-**Versions ›** 下，點一下即可看到。`GET /api/v1/system/runtime` 以相同的文字回傳相同的問題。
+**Versions ›** 下，點一下即可看到。`GET /api/v1/system/runtime` 也在其 `issues` 清單中回傳這些句子。
 
 ## 4.15 PyTorch Geometric 的版本（自 Batch 1 起，2026-10-26）
 

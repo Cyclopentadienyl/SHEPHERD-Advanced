@@ -556,4 +556,4 @@ class TestTheNoModelMatrix:
             assert ("Operator controls only" in card.change_reason_html(state)) is not operator
             assert "Not loaded" in card.body_html(state)
         # One reason for everyone (B4): the card says why, and who can load.
-        assert panel.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: load a model first."
+        assert panel.RUN_DISABLED_NO_MODEL == "Load a model first."
