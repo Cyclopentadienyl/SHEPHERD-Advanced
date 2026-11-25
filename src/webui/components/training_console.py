@@ -229,7 +229,7 @@ from src.models.bundle.spec import (ENCODER_DECLARATIONS, REFERENCE_SOURCES, Spe
                                     declared_fields, hops_problem, reference_spec)
 from src.utils.run_plan import new_run_hops, new_run_values
 from src.utils.gpu_lock import lock_state
-from src.webui.components import charts
+from src.webui.components import charts, display
 from src.webui.components import renderers as r
 from src.webui.components.chips import busy_words, chips_on_change, gated, gpu_chip_from
 from src.webui.components.help import HIT_TARGET, REF_PREFIX
@@ -4845,9 +4845,10 @@ def create_training_tab(ctx: Any) -> None:
             # to one window.
             with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel", "shep-sized"],
                            min_width=0):
-                # Stacked, the body is built shown and only the reader folds it, with
-                # "Hide" / "Show" (R-60; the owner's D9 of 2026-11-25: `FOLD_JS`); side by
-                # side the body is always shown and the toggle is not.
+                # Stacked, the body starts as the reader chose in Settings › Display
+                # (shown by default, folded, or by the room) and "Hide" / "Show" folds and
+                # opens it (R-60; the owner's D9 of 2026-11-25: `FOLD_JS`); side by side the
+                # body is always shown and the toggle is not.
                 plain_html('<div class="shep-panel-hd"><h2>Parameters</h2>'
                            '<span class="shep-panel-right">for the next base run</span>'
                            '<button type="button" class="shep-link shep-train-fold" '
@@ -5087,11 +5088,13 @@ def create_training_tab(ctx: Any) -> None:
     # The fast poll's hand-off of a change it found (`_poll`).
     changed = gr.JSON(value=None, visible=False, elem_id=CHANGED_ID)
 
-    # The page shown: the list read again, then the run bar whole, in that order.
+    # The page shown: the list read again, then the run bar whole, in that order;
+    # then the page's panels marked as showing the session's selection (`ANSWERED_JS`:
+    # the Automatic choice's fold waits for it, `FOLD_JS`).
     ctx.on_page_open(TRAINING, {
         "fn": _open, "inputs": [ws, ctx.training_workspace],
         "outputs": [ws, dataset, chip, ctx.training_workspace, cache, resources],
-        "show_progress": "hidden", **in_order}).then(**view_step)
+        "show_progress": "hidden", **in_order}).then(**view_step).then(None, js=ANSWERED_JS)
 
     # The shell's timers (outside gr.Tabs), read-only polls without the queue.
     # The fast one writes the chips, and hands every change of a piece (the
@@ -5271,28 +5274,174 @@ def create_training_tab(ctx: Any) -> None:
 
 
 
-#: **The parameters' fold, stacked** (R-60; the owner's D9 of 2026-11-25): the body is built
-#: shown ("Hide", ``aria-expanded="true"``), so the body is there from the page's first
-#: frame; "Hide" folds it under its title and "Show" opens it again. The state is the button's own
-#: ``aria-expanded``, which the style sheet reads (side by side the body is always shown and
-#: the button is not); a ``button``, so Enter and Space toggle it too. **Only the reader
-#: folds it**: nothing measures the room, waits for the page's answers or decides again on a
-#: resize, so their Hide or Show holds across windows of either arrangement. A reader who
-#: works in such a window uses every block, shown saves a click before use, and the page
-#: scrolls; this retired the fold by the room (the D9 of 2026-11-24) and with it its late
-#: open and the run view's jump (F2). "More training settings" and "Model" stay closed.
+#: The mark the render that follows the page's opening leaves on the page's panels
+#: (``#shep-train-page``) once it is drawn (`ANSWERED_JS`, the page open's last step): the page
+#: then shows the session's selection, not the build's placeholders (Automatic's fold waits for
+#: it, `FOLD_JS`).
+ANSWERED_ATTR = "data-shep-answered"
+ANSWERED_JS = ("() => { var p = document.getElementById('shep-train-page'); "
+               f"if (p) {{ p.setAttribute('{ANSWERED_ATTR}', ''); }} }}")
+
+#: The mark on the page's panels (``#shep-train-page``) once the run view stands where it stays:
+#: under the Automatic choice the style sheet keeps the run view invisible in its place until
+#: the fold has decided (F2's option (c), the owner's preference of 2026-11-25), so it is first
+#: seen in its final place; the reader's own fold, their work in the body or `HOLD_MOST_MS`
+#: set it too.
+PLACED_ATTR = "data-shep-placed"
+#: The longest the Automatic choice keeps the run view invisible (ms after Training is first
+#: seen undecided): where the page's first answers never come (an error, a lost connection),
+#: the run view is shown anyway, the body as it stands, if Training is still shown stacked
+#: then (a reader who left before it, and comes back before the answers, waits again: shown
+#: anyway, the run view would have jumped when they came). The fold measured with them took
+#: 1.2 to 2.4 s from the click on a busy test host (the sweep's F2 recordings).
+HOLD_MOST_MS = 5000
+
+#: **The parameters' fold, stacked** (R-60; the owner's D9 of 2026-11-25, revised the same
+#: day): "Hide" folds the body under its title and "Show" opens it again; the state is the
+#: button's own ``aria-expanded``, which the style sheet reads (side by side the body is always
+#: shown and the button is not); a ``button``, so Enter and Space toggle it too. **How it
+#: starts is the reader's choice in ⚙ Settings › Display** (`display`, saved in their browser
+#: and read before the page is painted): the header's script sets the button before Training
+#: is first painted (the body is built shown, "Hide"; the style sheet folds it from the
+#: choice alone in a frame drawn before the header):
+#:
+#: - **Shown** (the default, the owner's D9): shown; the page never folds or opens it, and the
+#:   page scrolls.
+#: - **Folded**: folded; the page never opens it.
+#: - **Automatic** (the fold by the room, the D9 of 2026-11-24, kept by the owner's revision):
+#:   shown unless folding it brings more of the run view's charts (its plot cards) into the
+#:   first screen (the window's height from the page's top) than showing it leaves there, which
+#:   is what folding trades the main parameters for: the charts following the run bar. So it
+#:   is shown wherever the page with it shown holds the charts, and whenever the run view draws
+#:   no chart (first use, a dataset with no run yet), where folding gains nothing but blank
+#:   window (the L8 LOOK5's L8-3). Both states are measured, never read from a window size:
+#:   the body is drawn folded, then shown and laid out (`shell.py`'s ``ShepShell.layOut``: the
+#:   marks of what it holds, the "Set by you" line's own line among them, are then those of the
+#:   body shown), all before anything is painted, so deciding never changes what it decides
+#:   from (L8-1: the body opened and closed about 24 times a second). It waits for the page's
+#:   first answers (`ANSWERED_ATTR`, and the run view's figure not ``aria-busy``), the body
+#:   folded as built and the run view invisible in its place (`PLACED_ATTR`: F2's (c), so the
+#:   run view never jumps when the body opens), at most `HOLD_MOST_MS`. It is decided again
+#:   only when what it hangs on changes: the arrangement (the layout pass's mark), the page's
+#:   size, the window's size (its height alone included), the fonts, the page's answers and
+#:   Training shown again; never by a timer or a poll, and only while Training is shown. Once
+#:   the reader worked in the body (a press or a key in it: opening "More training settings"
+#:   grew the page past the window, and the measure folded the body they were working in),
+#:   nothing decides for them again.
+#:
+#: **The reader's own Hide or Show wins** for the page session, whatever the choice, across
+#: resizes and page switches. A new choice made in Settings applies at once to this page
+#: (`display.PARAMS_EVENT`) unless its reader used the button here. "More training settings"
+#: and "Model" stay closed.
 FOLD_JS = r"""
+var pressed = false, worked = false, waiting = null;
+function fold() { return element.querySelector('.shep-train-fold'); }
+function panels() { return element.closest('#shep-train-page') || document.getElementById('shep-train-page'); }
+function choice() { return window.ShepDisplay ? window.ShepDisplay.params() : '__SHOWN__'; }
+function show(b, open) {
+  var want = open ? 'true' : 'false';
+  if (b.getAttribute('aria-expanded') !== want) { b.setAttribute('aria-expanded', want); }
+  var words = open ? 'Hide' : 'Show';
+  if (b.textContent !== words) { b.textContent = words; }
+}
+// The run view stands where it stays: Automatic's hold ends.
+function placed() {
+  var p = panels();
+  if (p && !p.hasAttribute('__PLACED__')) { p.setAttribute('__PLACED__', ''); }
+}
+// The choice's start, before Training is first painted: Shown shown, Folded and Automatic folded.
+(function () { var b = fold(); if (b) { show(b, choice() === '__SHOWN__'); } })();
+function used(e) {
+  if (e.target && e.target.closest && e.target.closest('#shep-train-params-bd')) { worked = true; placed(); }
+}
+document.addEventListener('pointerdown', used, true);
+document.addEventListener('keydown', used, true);
 element.addEventListener('click', function (e) {
   var b = e.target.closest ? e.target.closest('.shep-train-fold') : null;
   if (!b) { return; }
-  var open = b.getAttribute('aria-expanded') !== 'true';
-  b.setAttribute('aria-expanded', open ? 'true' : 'false');
-  b.textContent = open ? 'Hide' : 'Show';
+  pressed = true;
+  show(b, b.getAttribute('aria-expanded') !== 'true');
+  placed();
 });
-"""
+function layOut() { if (window.ShepShell && window.ShepShell.layOut) { window.ShepShell.layOut(); } }
+// How much of the run view's charts (the union of its plot cards) lies in the first screen.
+function charts() {
+  var cards = document.querySelectorAll('#shep-train-runview .shep-chart'), top = Infinity, bottom = -Infinity;
+  for (var i = 0; i < cards.length; i++) {
+    var r = cards[i].getBoundingClientRect();
+    if (r.height > 0) { top = Math.min(top, r.top); bottom = Math.max(bottom, r.bottom); }
+  }
+  if (!(bottom > top)) { return 0; }
+  return Math.max(0, Math.min(bottom + window.scrollY, window.innerHeight) - Math.max(top + window.scrollY, 0));
+}
+// Automatic's hold at its longest: the run view shown anyway, the body as it stands, if
+// Training is still shown stacked; else nothing is placed, and its next showing waits again.
+function atMost() {
+  waiting = null;
+  if (element.getClientRects().length && document.documentElement.getAttribute('data-shep-layout') === 'stack') {
+    placed();
+  }
+}
+// Automatic: the fold by the room.
+function byRoom() {
+  var b = fold(), page = panels();
+  if (choice() !== '__AUTO__' || pressed || worked || !b || !page || !element.getClientRects().length
+      || document.documentElement.getAttribute('data-shep-layout') !== 'stack') { return; }
+  if (!page.hasAttribute('__ANSWERED__')
+      || document.querySelector('#shep-train-runview .shep-charts[aria-busy="true"]')) {
+    if (waiting === null) { waiting = setTimeout(atMost, __HOLD_MOST__); }
+    return;
+  }
+  if (b.getAttribute('aria-expanded') !== 'false') { b.setAttribute('aria-expanded', 'false'); }
+  var folded = charts();
+  b.setAttribute('aria-expanded', 'true');
+  layOut();
+  var open = charts() + 0.5 >= folded;
+  show(b, open);
+  if (!open) { layOut(); }
+  placed();
+}
+var pending = false;
+function later() {
+  if (pending) { return; }
+  pending = true;
+  requestAnimationFrame(function () { pending = false; byRoom(); });
+}
+// A new choice in Settings: applied at once unless the reader used the button here.
+document.addEventListener('__EVENT__', function () {
+  var b = fold();
+  if (pressed || !b) { return; }
+  worked = false;
+  if (choice() === '__AUTO__') {
+    var p = panels();
+    if (p) { p.removeAttribute('__PLACED__'); }
+    if (waiting !== null) { clearTimeout(waiting); waiting = null; }
+    later();
+    return;
+  }
+  show(b, choice() === '__SHOWN__');
+  placed();
+});
+new MutationObserver(later).observe(document.documentElement,
+  {attributes: true, attributeFilter: ['data-shep-layout']});
+var page = panels();
+if (page) {
+  new MutationObserver(later).observe(page,
+    {attributes: true, subtree: true, attributeFilter: ['__ANSWERED__', 'aria-busy']});
+}
+var shell = document.getElementById('shep-shell') || document.body;
+if (window.ResizeObserver) { var sized = new ResizeObserver(later); sized.observe(shell); sized.observe(element); }
+window.addEventListener('resize', later);
+if (document.fonts && document.fonts.ready) { document.fonts.ready.then(later); }
+later();
+""".replace("__ANSWERED__", ANSWERED_ATTR).replace("__PLACED__", PLACED_ATTR) \
+    .replace("__HOLD_MOST__", str(HOLD_MOST_MS)).replace("__EVENT__", display.PARAMS_EVENT) \
+    .replace("__SHOWN__", display.SHOWN).replace("__AUTO__", display.AUTO)
 
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
 _PAGE = f"#shep-page-{TRAINING}"
+#: The root element's attribute of the reader's Parameters choice (`display`).
+_PARAMS = display.PARAMS_ATTR
 
 #: The smallest plot area the run view draws side by side (M5-3: about 70 to
 #: 100 px at 1536 x 760), and the room uPlot takes around it in the plot's box
@@ -5696,6 +5845,13 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {SIDE} {{ {_PAGE} .shep-train-fold {{ display: none; }} }}
 {STACK} {{
   {_PAGE} #shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd {{ display: none !important; }}
+  /* Folded and Automatic start folded (`FOLD_JS`): in a frame drawn before the header's
+     script has set its button, the choice read in the head (`display.PARAMS_ATTR`) folds the
+     body, so Training's first painted frame is in the choice's starting state. */
+  &:is([{_PARAMS}="{display.FOLDED}"], [{_PARAMS}="{display.AUTO}"]) {_PAGE} #shep-train-params:not(:has(.shep-train-fold)) > #shep-train-params-bd {{ display: none !important; }}
+  /* Automatic: the run view invisible in its place until the fold has decided (F2's (c),
+     `PLACED_ATTR`), then shown where it stays. */
+  &[{_PARAMS}="{display.AUTO}"] {_PAGE} #shep-train-page:not([{PLACED_ATTR}]) #shep-train-runview {{ visibility: hidden; }}
   {_PAGE} .shep-banner-tail {{ max-height: none; overflow: visible; }}
 }}
 """

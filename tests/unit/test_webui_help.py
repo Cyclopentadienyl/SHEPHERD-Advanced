@@ -1227,8 +1227,9 @@ const QUEUE_JS = __QUEUE_JS__;
       // The page drawn: its panel shown and its own requests answered.
       await page.waitForSelector(panel, { state: 'visible' });
       await idle();
-      // Every accordion opened (Training's Parameters are shown as built at every window: only
-      // the reader folds them, the owner's D9 of 2026-11-25).
+      // Every accordion opened (Training's Parameters are shown as built at every window under
+      // the default Display choice, Shown, nothing being saved in this browser: the owner's D9
+      // of 2026-11-25).
       for (const acc of await page.$$(panel + ' button.label-wrap:not(.open)')) {
         if (await acc.isVisible()) { await acc.click(); }
       }
@@ -1376,7 +1377,8 @@ def test_no_component_keeps_ordinary_help_in_info(built):
     time only on the Training page's base form, its Continue drawer's
     Branch fields and the Fine-tune page's fields, the one field of each
     setting (`FIELD_FORMATS`, by its setting or its model spec field), when
-    each of Settings' two fields applies (`runtime_settings.FIELD_INFO`), and
+    each of Settings' fields applies (`runtime_settings.FIELD_INFO`: the two
+    runtime fields and, since 2026-11-25, where the Display choice applies), and
     the Diagnosis fields' rules (`diagnosis_panel.FIELD_INFO`: which HPO ids
     are read, what a blank Patient ID does); no ordinary help is kept there."""
     from src.webui.components import diagnosis_panel as dp

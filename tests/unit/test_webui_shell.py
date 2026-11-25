@@ -3552,7 +3552,7 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     assert fixed["scrolledHeight"] == fixed["height"] == fixed["backHeight"], fixed
 
 
-def test_the_training_parameters_are_shown_and_only_the_reader_folds_them_when_stacked(built):
+def test_the_training_parameters_start_as_the_readers_choice_and_their_own_fold_wins_when_stacked(built):
     """R-60: at 960 x 960 (stacked) the full Parameters panel pushed the run
     view's first plot below the fold (page scroll 1386 px). Stacked, the
     parameters then started folded under their title, "Show" opening them (its
@@ -3560,11 +3560,20 @@ def test_the_training_parameters_are_shown_and_only_the_reader_folds_them_when_s
     always shown and the toggle is not. Measured on the demo workspace at
     960 x 960: the first plot at y 607-867, the page not scrolled.
     The owner's D9 of 2026-11-25: stacked, the body is built shown ("Hide",
-    ``aria-expanded="true"``) and only the reader folds it: the button's click
-    (Enter and Space on it) is the fold's one listener, so nothing measures the
-    room, waits for the page's answers or decides again on a resize. The style
-    sheet still folds the body on the button's ``aria-expanded`` stacked only, and
-    hides the button side by side (the browser tests are `test_training_page.py`'s)."""
+    ``aria-expanded="true"``) and only the reader folds it. The owner's revision
+    of the same day: how it starts is each reader's choice in ⚙ Settings ›
+    Display (`display`, read in the head before anything is painted): the
+    header's script sets the button from it as it loads (Shown shown, Folded and
+    Automatic folded), and under Automatic the fold by the room decides after
+    the page's first answers (``ANSWERED_JS``, the page open's last step; the
+    shell's ``ShepShell.layOut`` for its measure), the run view held invisible
+    in its place until then (`PLACED_ATTR`, at most `HOLD_MOST_MS`). The
+    reader's click (Enter and Space on the button) wins: nothing decides again
+    once they used it. The style sheet folds the body on the button's
+    ``aria-expanded`` stacked only, and on the choice alone while the header is
+    not drawn; it hides the button side by side (the browser tests are
+    `test_training_page.py`'s)."""
+    from src.webui.components import display
     from src.webui.components import training_console as tc
 
     demo, _ctx = built
@@ -3572,11 +3581,24 @@ def test_the_training_parameters_are_shown_and_only_the_reader_folds_them_when_s
     assert ('<button type="button" class="shep-link shep-train-fold" aria-expanded="true" '
             'aria-controls="shep-train-params-bd">Hide</button>') in head.value
     assert tc.FOLD_JS in head.js_on_load
-    assert re.findall(r"addEventListener\('(\w+)'", tc.FOLD_JS) == ["click"]
-    assert "b.setAttribute('aria-expanded', open ? 'true' : 'false');" in tc.FOLD_JS
+    assert re.findall(r"addEventListener\('([\w-]+)'", tc.FOLD_JS) == [
+        "pointerdown", "keydown", "click", display.PARAMS_EVENT, "resize"]
+    assert "show(b, choice() === 'shown')" in tc.FOLD_JS
+    assert "show(b, b.getAttribute('aria-expanded') !== 'true');" in tc.FOLD_JS
+    assert "if (pressed || !b) { return; }" in tc.FOLD_JS
+    assert f"setTimeout(atMost, {tc.HOLD_MOST_MS})" in tc.FOLD_JS and "function atMost()" in tc.FOLD_JS
+    assert tc.ANSWERED_ATTR in tc.ANSWERED_JS and "window.ShepShell.layOut()" in tc.FOLD_JS
+    assert "layOut: layout," in shell.SHELL_HEAD
+    stacked = stack(tc.PAGE_CSS)
     assert ('#shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd '
-            "{ display: none !important; }") in stack(tc.PAGE_CSS)
+            "{ display: none !important; }") in stacked
+    assert (f'&:is([{display.PARAMS_ATTR}="folded"], [{display.PARAMS_ATTR}="auto"]) {tc._PAGE} '
+            "#shep-train-params:not(:has(.shep-train-fold)) > #shep-train-params-bd "
+            "{ display: none !important; }") in stacked
+    assert (f'&[{display.PARAMS_ATTR}="auto"] {tc._PAGE} #shep-train-page:not([{tc.PLACED_ATTR}]) '
+            "#shep-train-runview { visibility: hidden; }") in stacked
     assert ".shep-train-fold { display: none; }" in side(tc.PAGE_CSS)
+    assert display.PARAMS_ATTR not in side(tc.PAGE_CSS)
 
 
 # --------------------------------------------------------------------------- the tab groups and the go link

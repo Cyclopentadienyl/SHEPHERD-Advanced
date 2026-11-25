@@ -24,6 +24,11 @@ skill's §2), every value it shows escaped:
 - **Acceleration**: no toggle; the area says "Not implemented yet"
   (`ACCELERATION`): new acceleration work is deferred, and each run's record
   keeps what it ran with.
+- **Display** (its own panel, "this browser"; the owner's D9 revision of
+  2026-11-25): how Training's Parameters start where Training stacks its two
+  panels, Shown (the default), Folded or Automatic (`display`), saved in this
+  browser only and applied at once (`DISPLAY_NOTE`). Nothing of it reaches
+  the server, so it has no Apply and no operator lock.
 - **Actions**: Apply Settings saves the fields to
   ``.shepherd_runtime_settings.json`` (`src.config.runtime_presets`), which the
   launcher reads at start-up (`scripts/launch/shep_launch.py`) and Restart
@@ -72,7 +77,7 @@ from src.config.runtime_presets import (
     running_allocator,
     save_runtime_settings,
 )
-from src.webui.components import data_locations
+from src.webui.components import data_locations, display
 from src.webui.components import renderers as r
 from src.webui.components.chips import gated, operator_only
 from src.webui.operator_access import operator_access
@@ -482,12 +487,24 @@ def _after_apply(question, request: gr.Request):
     return (*_refresh_restart_lock(request), *_restart_question_closed(question, request))
 
 
+#: **⚙ Settings › Display** (the owner's D9 revision of 2026-11-25): this browser's own
+#: layout choice, saved in the browser and applied at once (`display`), never on the server:
+#: no Apply, no operator lock, so a read-only viewer may change it too. Its one field is how
+#: Training's Parameters start where Training stacks its panels (`display.PARAMS_CHOICES`).
+DISPLAY_NOTE = ("Saved in this browser only and applied at once. It changes only this page's "
+                "layout, so a read-only viewer can change it too.")
+DISPLAY_PARAMS = "shep-display-params"
+DISPLAY_PARAMS_LABEL = "Training parameters"
+
 #: When each field applies, visible under it (its ``info=``: a fact that
 #: changes what happens, never only behind the ⓘ; the WebUI skill's §7).
 FIELD_INFO = {
     "allocator_preset": "Read once when the backend starts: Restart Backend applies a saved "
                         "change.",
     "torch_compile": f"{COMPILE_EXPERIMENTAL} {COMPILE_READ[:1].upper()}{COMPILE_READ[1:]}.",
+    # Where the Display choice applies: stacked only (side by side the Parameters are always shown).
+    DISPLAY_PARAMS: "How they start where Training stacks its two panels: a portrait or narrow "
+                    "window.",
 }
 
 #: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
@@ -506,6 +523,14 @@ FIELD_HELP = {
         "- PyG workloads: may graph-break, fall back to eager or run slower\n"
         "- Not yet measured with it: GATv2, the one architecture built today\n"
         "- Restart: none needed",
+    ),
+    DISPLAY_PARAMS: (
+        "Training parameters",
+        "How the Parameters start where Training stacks its two panels.\n\n"
+        "- Shown: the page scrolls, and it never folds them (the default)\n"
+        "- Folded: folded under their title, and the page never opens them\n"
+        "- Automatic: shown unless folding brings more of a run's charts into view\n"
+        "- Hide or Show on Training: holds there until the page is loaded again",
     ),
 }
 
@@ -553,11 +578,30 @@ def create_runtime_settings_tab(ctx: Any) -> None:
     saved_alloc, saved_compile = _saved(settings)
 
     with gr.Row(elem_id="shep-settings-cols", elem_classes=["shep-page"], equal_height=False):
-        # Data locations (UI-06) on the left, Runtime settings on the right;
-        # narrow, one above the other.
+        # Data locations (UI-06) on the left, Runtime settings beside it, then
+        # Display (this browser's own choices); narrow, one above the other.
         data_locations.create_data_locations_panel(ctx)
         controls = _runtime_panel(ctx, settings, saved_alloc, saved_compile)
+        _display_panel(ctx)
     _wire_runtime_panel(ctx, *controls)
+
+
+def _display_panel(ctx: Any) -> None:
+    """⚙ Settings › Display (`DISPLAY_NOTE`): this browser's choice of how Training's
+    Parameters start, stacked. Its events never reach the server: the page load shows the
+    choice the head script read (`display.READ_PARAMS_JS`), and the reader's pick is saved in
+    the browser and applied to the open page at once (`display.WRITE_PARAMS_JS`). Never gated:
+    it changes only this reader's page, so a read-only viewer may change it too."""
+    with gr.Column(elem_classes=["shep-panel", "shep-display", "shep-sized"], elem_id="shep-display"):
+        plain_html('<div class="shep-panel-hd"><h2>Display</h2>'
+                   '<span class="shep-panel-right">this browser</span></div>'
+                   f'<p class="shep-intro">{r.e(DISPLAY_NOTE)}</p>', elem_id="shep-display-hd")
+        with gr.Column(elem_id="shep-display-bd"):
+            params = gr.Radio(choices=display.PARAMS_CHOICES, value=display.PARAMS_DEFAULT,
+                              label=DISPLAY_PARAMS_LABEL, info=FIELD_INFO[DISPLAY_PARAMS],
+                              elem_id=DISPLAY_PARAMS)
+    ctx.blocks.load(None, outputs=[params], js=display.READ_PARAMS_JS, show_progress="hidden")
+    params.input(None, inputs=[params], js=display.WRITE_PARAMS_JS, show_progress="hidden")
 
 
 def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
@@ -659,16 +703,21 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: just above them).
 PAGE_CSS = f"""
 {_PAGE} #shep-settings-cols {{ gap: 16px !important; }}
-/* **The two panels, sized by what they hold** (M4, the shared `shep-sized`): Data locations
+/* **The three panels, sized by what they hold** (M4, the shared `shep-sized`): Data locations
    grows a little faster; it keeps "Set to", a box of a path's room and Check and Save on one line
-   (30rem), Runtime settings its facts' keys beside their values (24rem). The shell's layout rule
-   reads these minimums (`src/webui/shell.py`): side by side from about 910 px of window, else
-   one panel above the other. Side by side each panel is as tall as what it holds, at most the
-   page's height; then its body scrolls inside it, its foot (Apply Settings) in view, never the
-   page (the skill's §1.1; the sweep's L7, SW-LK1: at 1366 x 768 the page itself scrolled and
-   Apply Settings was out of view). */
-{_PAGE} .shep-panel.shep-dl {{ --shep-panel-basis: 40rem; --shep-panel-grow: 11; --shep-panel-min: 30rem; }}
+   (30rem), Runtime settings its facts' keys beside their values (24rem), Display its one choice
+   (14rem). The shell's layout rule reads these minimums (`src/webui/shell.py`): side by side
+   from the display floor's width, else one panel above the other. Side by side each panel is as
+   tall as what it holds, at most the page's height; then its body scrolls inside it, its foot
+   (Apply Settings) in view, never the page (the skill's §1.1; the sweep's L7, SW-LK1: at
+   1366 x 768 the page itself scrolled and Apply Settings was out of view). Display's room is
+   Runtime settings': Data locations starts from the width its rows take whole at the owner's
+   window (58rem; with Display at the 40rem it had, its body scrolled at 1850 x 960 at first use
+   and read-only), and Runtime settings, whose lines are short, gives way first in a narrower
+   window. */
+{_PAGE} .shep-panel.shep-dl {{ --shep-panel-basis: 58rem; --shep-panel-grow: 11; --shep-panel-min: 30rem; }}
 {_PAGE} .shep-panel.shep-settings {{ --shep-panel-basis: 30rem; --shep-panel-grow: 9; --shep-panel-min: 24rem; }}
+{_PAGE} .shep-panel.shep-display {{ --shep-panel-basis: 15rem; --shep-panel-grow: 0; --shep-panel-min: 14rem; }}
 /* Side by side Runtime settings grows to a readable width at most; stacked, it is as wide as Data
    locations above it, the two panels on one edge each side (a portrait window 1080 px wide drew it
    8 px short of Data locations' right edge). */
@@ -678,7 +727,7 @@ PAGE_CSS = f"""
   {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) {{ flex: 0 1 auto !important; min-height: 0 !important; overflow: auto !important; }}
   {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) > * {{ flex-shrink: 0 !important; }}
 }}
-{_PAGE} #shep-settings-bd {{ padding: 14px 16px !important; gap: 12px !important; }}
+{_PAGE} :is(#shep-settings-bd, #shep-display-bd) {{ padding: 14px 16px !important; gap: 12px !important; }}
 {_PAGE} #shep-settings-ft > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} #shep-settings-ft > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} #shep-settings-ft > #runtime_access_reason {{ flex-basis: 100% !important; }}
@@ -694,7 +743,8 @@ PAGE_CSS = f"""
 
 
 __all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "COMPILE_EXPERIMENTAL",
-           "COMPILE_READ", "FIELD_HELP", "FIELD_INFO", "PAGE_CSS", "RESTART_BUSY",
+           "COMPILE_READ", "DISPLAY_NOTE", "DISPLAY_PARAMS", "DISPLAY_PARAMS_LABEL", "FIELD_HELP",
+           "FIELD_INFO", "PAGE_CSS", "RESTART_BUSY",
            "RESTART_CONFIRM_LABEL", "RESTART_IDLE", "RESTART_QUESTION", "RESTART_STOPS_SERVING",
            "STOP_CONFIRM_LABEL", "STOP_DONE", "STOP_LABEL", "STOP_QUESTION", "allocator_words",
            "create_runtime_settings_tab", "facts_html", "restart_applies", "running_html",
