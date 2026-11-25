@@ -729,8 +729,9 @@ LOOK_JS = r"""
        content runs past its edge, below it with no scroll cue (the shared R-73 cue,
        ``shep-scroll-cue``: a mask drawn while more is below, or R-CUE's edge cue,
        ``data-shep-more-edge``, where the edge falls in a gap), or with a fade that lies over no
-       line of text (a gap, a box's border, a graphic's blank: R-CUE, the owner's D4 of
-       2026-11-24), sideways with no sideways cue (a mask, or the drawn cue just before it,
+       line of text it fades out (a gap, a box's border, a graphic's blank, or a line whose foot
+       lies in the fade's upper half, left whole: R-CUE, the owner's D4 of 2026-11-24), sideways
+       with no sideways cue (a mask, or the drawn cue just before it,
        Compare's ``shep-rs-cue``); what runs past a nested region is that region's own;
      - edgeHead (R-CUE): a scroll region whose last line in view is a heading or a field's label
        while all of its controls lie under the edge (a control seen by its value line where it
@@ -894,15 +895,21 @@ LOOK_JS = r"""
         // sweep's L7 check, C1, before it): the fade (its length read from the region's own mask)
         // over a gap between fields, a box's lower border or a graphic's blank reads as nothing,
         // the next field under the edge unseen. A line of words or a field's value line drawn in
-        // the fade by a quarter of its own height or more shows it.
+        // the fade by a quarter of its own height or more shows it, where the fade draws it out:
+        // its foot in the fade's lower half or under the edge (LOOK5 of the L8 sweep, L8-2 and
+        // L8-4: a 32 px fade whose top 10 px met a title 22 px over the edge left the title whole
+        // and faded only blank, Settings' torch.compile and Test's last rows hidden under it).
         const m = /calc\(100% - ([\d.]+)px\)/.exec(String(getComputedStyle(g).maskImage || getComputedStyle(g).webkitMaskImage));
         const fade = m ? parseFloat(m[1]) : 0, top = box.bottom - fade;
         const into = (r) => Math.min(r.bottom, box.bottom) - Math.max(r.top, top);
-        const seen = lines.some((it) => g.contains(it.el) && scroller(it.el, 'y') === g && into(it.r) >= past(it.r));
+        const inFade = lines.filter((it) => g.contains(it.el) && scroller(it.el, 'y') === g && into(it.r) >= past(it.r));
+        const seen = inFade.some((it) => it.r.bottom >= box.bottom - fade / 2);
         if (fade > 0 && !seen) {
-          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over no line of text: what lies under `
-            + `its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen (first: `
-            + `"${clip(below[0].t, 30)}")`);
+          const last = inFade.reduce((a, b) => (!a || b.r.bottom > a.r.bottom ? b : a), null);
+          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over no line of text${last
+            ? ` it fades out (its last line ends ${Math.round(box.bottom - last.r.bottom)} px over the edge, in the `
+              + `fade's upper half)` : ''}: what lies under its edge starts ${Math.round(below[0].r.top - box.bottom)} px `
+            + `below it, no cue seen (first: "${clip(below[0].t, 30)}")`);
         }
       }
       // edgeHead (R-CUE): the last line in view is a heading or a field's label while everything
@@ -1866,7 +1873,8 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       view holds;
     - ``scroll-cue``: a scroll region whose drawn content runs past its edge with no cue: below
       it, no R-73 scroll cue (``shep-scroll-cue``'s mask, or R-CUE's edge cue where the edge
-      falls in a gap) or a fade over no line of text (a gap, a box's border, a graphic's blank);
+      falls in a gap) or a fade over no line of text it fades out (a gap, a box's border, a
+      graphic's blank, a line whose foot lies in the fade's upper half);
       sideways, no mask and no drawn cue just before it (Compare's ``shep-rs-cue``): a table
       wider than its panel, its cells cut;
     - ``edge-heading`` (R-CUE, the owner's D4 of 2026-11-24): a scroll region whose last line in

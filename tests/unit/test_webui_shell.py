@@ -5039,6 +5039,13 @@ const LOOK_JS = __LOOK_JS__;
         <button type="button" id="dis-sec" disabled>Refresh</button>
         <button type="button" class="primary" id="dis-prim" disabled style="margin-left: 120px">Load this model</button>
       </div>
+      <div class="shep-panel" id="p8" style="left: 0; top: 770px; height: 120px; display: flex; gap: 16px">
+        <div class="rg" data-shep-more id="cue-graze" style="height: 64px; width: 200px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent)">
+          <p style="line-height: 20px">Runtime settings.</p><p style="line-height: 20px">What each allocator does</p>
+          <div style="height: 40px"></div><label><input type="checkbox"> Compile the model</label> <button type="button">About</button></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-near" style="height: 82px; width: 200px">
+          ${[1, 2, 3, 4, 5].map((i) => `<p style="line-height: 20px; margin-bottom: 9px">Key ${i}: its value</p>`).join('')}</div>
+      </div>
       <div class="shep-panel" id="p7" style="left: 460px; top: 700px; height: 180px">
         <div class="rg shep-scroll-cue" data-shep-more id="cue-boxonly" style="height: 70px"><p>A first line.</p>
           <input type="text" style="display: block; height: 36px"><div style="height: 40px"></div><p>The next field.</p></div>
@@ -5103,7 +5110,11 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     over a box's lower border and a gap, it was seen), and a region whose last line in view is a
     field's label with its control under the edge is found (``#cue-lonehead``, ``edge-heading``),
     and so is one whose last line is a heading over a field that shows only its box's top 12 px
-    (``#cue-headtop``; the L8 close, CK8-2)."""
+    (``#cue-headtop``; the L8 close, CK8-2). A fade whose top only grazes the last line's foot,
+    that line whole in the fade's upper half and the blank under it faded, is no cue
+    (``#cue-graze``; LOOK5 of the L8 sweep, L8-2 and L8-4: Settings' Runtime settings and Test's
+    Run at 1280 x 720 hid whole controls under such a fade, and E1 passed), while a fade that
+    draws its last line out is (``#cue-near``)."""
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
@@ -5137,6 +5148,11 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     # edge (a sliver of its value line, under half of it) ends the region at a title too
     # (Diagnosis' Options over Top-K at 1280 x 720).
     assert _hits(found, "edgeHead", '#cue-headtop ends in view at the heading "Options"'), found["edgeHead"]
+    # LOOK5 of the L8 sweep (L8-2, L8-4): a fade whose top only grazes the last line's foot (that
+    # line whole, in the fade's upper half) fades blank, its controls under the edge unseen; a
+    # fade that draws its last line out (its foot in the fade's lower half) is a cue.
+    assert _hits(found, "cue", "#cue-graze fades its last 32 px over no line of text it fades out"), found["cue"]
+    assert not _hits(found, "cue", "#cue-near"), found["cue"]
 
 
 def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
