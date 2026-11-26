@@ -3538,7 +3538,7 @@ Seen in 70 before and after pairs (`compare/<state>-<page>-<WxH>.jpg`, both stat
 - **Not applicable (under the display floor, OWN-SW5)**: the tabs' split, the operator chip's ellipsis and the chips' edge at 390x844.
 - **Left (the owner)**: the runtime API's human-readable `issues` text changed with the footer (the L7 checks' C13; the fixers read it as a message, not an API word): to confirm; the look (H01).
 - **Decided (the owner, 2026-11-24, C13)**: the runtime line keeps its two sentences, its facts and states unchanged; the docs say truthfully that this diagnostic text is also returned by the API, never that every API output is byte-identical. S2's f35f234: both guides say "`GET /api/v1/system/runtime` also returns these sentences, in its `issues` list", and their quote of the CPU device note reads "auto and cuda are refused. Choose cpu.", as the UI does. The owner's look (H01) is pending, as for every row.
-- **Closed at**: — (code-verified at cb60dbb; the owner's confirmation and look, and the external review pending)
+- **Closed at**: — (code-verified at cb60dbb; the wording decided by the owner on 2026-11-24, C13; the owner's look and the external review pending)
 
 #### SW-LK10 · Test at first use: the Run and Checkpoint selects are empty grey boxes with no words
 
