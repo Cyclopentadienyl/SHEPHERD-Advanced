@@ -4254,7 +4254,10 @@ const save = (page, choice) => (choice ? page.addInitScript(([key, value]) => {
 
 
 #: Training for an operator, opened afresh at each window (``[w, h]``), with the
-#: Parameters choice of ``process.argv[4]`` saved (none: the default): from the
+#: Parameters choice of ``process.argv[4]`` saved (none: the default), once every
+#: face of the page's fonts is loaded (as a reader who opens Training after the
+#: dashboard has loaded has them; ``process.argv[5]``: the font files answered that
+#: many ms late, a slow host): from the
 #: click on Research (Training is its default page) each frame that draws
 #: Training's panels is read after its rendering (in a task posted from the
 #: frame's callback: what the frame painted, not a state that a callback later
@@ -4281,8 +4284,19 @@ __SAVE_JS__
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
     await save(page, process.argv[4] || '');
+    const late = Number(process.argv[5] || 0);
+    if (late) {
+      await page.route('**/static/fonts/**', async (route) => {
+        await new Promise((r) => setTimeout(r, late));
+        try { await route.continue(); } catch (e) { /* the page has gone */ }
+      });
+    }
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+    // A face that arrives after Training's first frame redraws its text from the fallback
+    // (`font-display: swap`), a line box a pixel taller or shorter: IBM Plex Sans 600 under
+    // the fields' labels moved the run view 2 px at 1100 x 1050, which is not a fold.
+    await page.evaluate(() => Promise.allSettled([...document.fonts].map((face) => face.load())));
     await page.evaluate(() => {
       const frames = window.__trainFrames = [], after = new MessageChannel();
       after.port1.onmessage = () => {
@@ -4361,10 +4375,11 @@ def _with_a_run(built, tmp_path, monkeypatch):
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
 
 
-def _first_frames(case, built, monkeypatch, tmp_path, choice=""):
-    """`_SHOWN_JS` at every stacked window and the owner's side-by-side one, for an operator at
-    first use or with a run's charts, the Parameters choice `choice` saved (none: the default);
-    each window's reading by ``"<w>x<h>"``, each frame split into its fields."""
+def _first_frames(case, built, monkeypatch, tmp_path, choice="", sizes=None, late_fonts=0):
+    """`_SHOWN_JS` at every stacked window and the owner's side-by-side one (or `sizes`), for an
+    operator at first use or with a run's charts, the Parameters choice `choice` saved (none:
+    the default), the font files answered `late_fonts` ms late (none: as served); each
+    window's reading by ``"<w>x<h>"``, each frame split into its fields."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
 
@@ -4375,10 +4390,11 @@ def _first_frames(case, built, monkeypatch, tmp_path, choice=""):
         monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
     else:
         _with_a_run(built, tmp_path, monkeypatch)
-    sizes = [*_STACKED, *_SIDE]
+    sizes = sizes or [*_STACKED, *_SIDE]
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_SHOWN_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
-                        base[:-len("gradio_api")], json.dumps(sizes), choice, timeout=600)
+                        base[:-len("gradio_api")], json.dumps(sizes), choice, str(late_fonts),
+                        timeout=600)
     assert set(seen) == {f"{w}x{h}" for w, h in sizes}, seen
     for drawn in seen.values():
         drawn["states"] = [now.split("|") for now, _ms in drawn["frames"]]
@@ -4425,6 +4441,27 @@ def test_stacked_the_parameters_are_shown_from_trainings_first_frame_and_never_f
         # painted; they move the run view as they did before D9, and are read apart.)
         assert len({s[3] for s in states}) == 1, where
         assert {s[7] for s in states} == {"visible"}, where
+
+
+def test_stacked_a_font_that_arrives_late_is_not_read_as_a_move_of_the_run_view(
+        built, monkeypatch, tmp_path):
+    """The first-frame readings (`_SHOWN_JS`) start once the page's fonts are in. At 4b76af9
+    the Shown test above failed now and then at first use at 1100 x 1050 on a loaded
+    machine (in the full suite, and in a file run beside two other browser runs): the run
+    view's place moved 2 px (405 to 407) about 115 ms after Training's first frame. Not a
+    fold: IBM Plex Sans 600 had not arrived when Training was first painted, so the fields'
+    labels were drawn in the fallback (``font-display: swap``), and when the face came each
+    of the two rows of fields above the run view was a pixel taller. Here the font files
+    are answered 3 s late (a slow host), which at 4b76af9 moved the run view 2 px in every
+    run; now Training is opened once every face is loaded, and from its first frame the
+    body is shown and the run view's place holds."""
+    seen = _first_frames("first_use", built, monkeypatch, tmp_path, sizes=[[1100, 1050]],
+                         late_fonts=3000)
+    drawn = seen["1100x1050"]
+    states = drawn["states"]
+    assert drawn["settled"] and states and drawn["frames"][0][1] == 0, drawn
+    assert {(*s[:3], s[7]) for s in states} == {("stack", "true Hide", "true", "visible")}, drawn
+    assert len({s[3] for s in states}) == 1, drawn
 
 
 @pytest.mark.parametrize("case", ["first_use", "configured"])
