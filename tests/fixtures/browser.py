@@ -458,8 +458,8 @@ LOOK_JS = r"""
      - edge: in a panel's left part, a heading, paragraph, reason, notice, empty state, field
        label or field box whose left edge is 1 px to 2em off the panel heading's (lists, tables,
        term rows and the words after a status mark aside); a text by where its drawn words
-       start, and none placed at its end or centred (its ``text-align``, a flex row's
-       ``justify-content``, an auto margin);
+       start, and none whose placement at its end or centre (its ``text-align``, a flex row's
+       ``justify-content``, an auto margin) moved the words of its one line;
      - clipped: a control cut by an ancestor that hides its overflow and is no scroll region (a
        box of ``display: contents`` draws no box, so it clips nothing);
      - empty: a panel with no visible words or control under its header;
@@ -555,22 +555,17 @@ LOOK_JS = r"""
     const top = layer && document.elementFromPoint(x, y);
     return !!top && layer.contains(top);
   };
-  /* Where an element's own words or box start: a box (a field, a select's wrap) at its border;
-     a text where what it draws starts, never where the box holding it starts: the client rects
-     of its visible text nodes (`Range`), of an icon in its line (an ``svg`` or an ``img``) and
-     of a box drawn inside it (a tag or a chip, with a background or a left border: Diagnosis'
-     "○ Not loaded" tag starts at its border, its words 9 px in); one that draws none of these
-     at its content edge (after its padding and border). */
+  /* What a text draws, as client rects: its visible text nodes (`Range`), an icon in its line
+     (an ``svg`` or an ``img``) and a box drawn inside it (a tag or a chip, with a background or
+     a left border: Diagnosis' "○ Not loaded" tag starts at its border, its words 9 px in). */
   const drawsBox = (x) => {
     const cs = getComputedStyle(x);
     return !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(cs.backgroundColor) || cs.backgroundImage !== 'none'
       || (parseFloat(cs.borderLeftWidth) > 0 && !['none', 'hidden'].includes(cs.borderLeftStyle));
   };
-  const startOf = (e) => {
-    const r = e.getBoundingClientRect();
-    if (e.matches('input, textarea, .wrap')) { return r.left; }
-    let left = Infinity;
-    const take = (q) => { if (q.width > 0 && q.height > 0) { left = Math.min(left, q.left); } };
+  const marks = (e) => {
+    const out = [];
+    const take = (q) => { if (q.width > 0 && q.height > 0) { out.push(q); } };
     // An svg is one icon: its box, never its parts.
     const walker = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
       (x) => (x.parentElement.closest('svg') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT));
@@ -585,6 +580,23 @@ LOOK_JS = r"""
       range.selectNodeContents(n);
       for (const q of range.getClientRects()) { take(q); }
     }
+    return out;
+  };
+  const leftOf = (q) => q.reduce((m, x) => Math.min(m, x.left), Infinity);
+  /* The width of a margin the browser read as ``auto`` on side ``k`` (``left``, ``right``), as
+     drawn; 0 for any other margin. */
+  const autoMargin = (x, k) => {
+    const m = x.computedStyleMap ? x.computedStyleMap() : null;
+    return m && String(m.get(`margin-${k}`)) === 'auto'
+      ? parseFloat(getComputedStyle(x)[k === 'left' ? 'marginLeft' : 'marginRight']) || 0 : 0;
+  };
+  /* Where an element's own words or box start: a box (a field, a select's wrap) at its border;
+     a text where what it draws starts (`marks`), never where the box holding it starts; one
+     that draws nothing at its content edge (after its padding and border). */
+  const startOf = (e) => {
+    const r = e.getBoundingClientRect();
+    if (e.matches('input, textarea, .wrap')) { return r.left; }
+    const left = leftOf(marks(e));
     if (left < Infinity) { return left; }
     const s = getComputedStyle(e);
     return r.left + (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.borderLeftWidth) || 0);
@@ -597,11 +609,7 @@ LOOK_JS = r"""
      under the controls it explains, never on a column's left edge. */
   const placed = (e) => {
     const s = getComputedStyle(e);
-    const auto = (x) => {
-      const m = x.computedStyleMap ? x.computedStyleMap() : null, cs = getComputedStyle(x);
-      const side = (k) => !!m && String(m.get(`margin-${k}`)) === 'auto' && parseFloat(cs[`margin${k === 'left' ? 'Left' : 'Right'}`]) > 1;
-      return side('left') ? (side('right') ? 'centre' : 'end') : null;
-    };
+    const auto = (x) => (autoMargin(x, 'left') > 1 ? (autoMargin(x, 'right') > 1 ? 'centre' : 'end') : null);
     if (['right', '-webkit-right', 'end'].includes(s.textAlign)) { return 'end'; }
     if (['center', '-webkit-center'].includes(s.textAlign)) { return 'centre'; }
     if (s.display.includes('flex') && s.flexDirection.startsWith('row')) {
@@ -619,6 +627,26 @@ LOOK_JS = r"""
       return auto(c) || 'start';
     }
     return 'start';
+  };
+  /* A text whose placement moved its words off a left edge: placed at its end or centred
+     (`placed`), drawn on one line (the middle of each thing it draws lies within the height of
+     each other: an icon or a tag beside its words is on their line, a second line's words lie
+     below the first's), and its words start right of where they would placed at its start (its
+     content edge, before a left margin the browser read as auto: one that pushed its own box).
+     A text that says it is so placed and still draws its words there (a box shrink-wrapped
+     round them, a line that fills its box) or wraps (the text brief allows ``right`` and
+     ``center`` on one-line text only, and a wrapped line starts near its box's left edge) is
+     read where its words start, as any text (the review of the UI-SW-ER3 C change). */
+  const movedOff = (e) => {
+    if (placed(e) === 'start') { return false; }
+    const q = marks(e);
+    if (!q.length) { return false; }
+    const mids = q.map((x) => (x.top + x.bottom) / 2);
+    const oneLine = Math.max(...mids) <= Math.min(...q.map((x) => x.bottom))
+      && Math.min(...mids) >= Math.max(...q.map((x) => x.top));
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    const rest = r.left - autoMargin(e, 'left') + (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.borderLeftWidth) || 0);
+    return oneLine && leftOf(q) > rest + 1;
   };
   const layout = () => {
     const shownNow = shownPage(), tab = shownNow.tab;
@@ -779,14 +807,14 @@ LOOK_JS = r"""
       if (!head || !visible(head)) { continue; }
       const pr = p.getBoundingClientRect(), edge = startOf(head);
       const em = parseFloat(getComputedStyle(head).fontSize) * 2;
-      // A text by where its drawn words start, and only one placed at its start: a text aligned
-      // to its end or centred is no left edge (the external review of ffb1483, UI-SW-ER3 C:
+      // A text by where its drawn words start, and none whose one line its placement at its end
+      // or centre moved off its left edge (the external review of ffb1483, UI-SW-ER3 C:
       // Diagnosis' "Operator controls only", aligned right under the buttons it explains, was
       // read by its paragraph's left edge, 14 px off the title's); a box by its border, unless
       // its own words are centred.
       const off = [...p.querySelectorAll(EDGE)].filter((e) => visible(e) && !e.closest(HANG) && !e.closest(SKIP))
         .filter((e) => (e.matches('input, textarea, .wrap') ? getComputedStyle(e).textAlign !== 'center'
-                                                             : placed(e) === 'start'))
+                                                             : !movedOff(e)))
         .map((e) => [e, startOf(e)])
         .filter(([, x]) => x < pr.left + 0.4 * pr.width)
         .map(([e, x]) => [e, Math.round(x - edge)])

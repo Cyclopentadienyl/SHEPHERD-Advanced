@@ -5054,10 +5054,12 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
 
 #: A static page for the ``edge`` rule (`browser.LOOK_JS`' ``layout``), shown as the shell shows
 #: one: under a panel's title, texts in a row 14 px in from the title's edge (as Diagnosis'
-#: "Operator controls only" stood under its right-hand buttons), each placed its own way, three
+#: "Operator controls only" stood under its right-hand buttons), each placed its own way, four
 #: of them a line 880 px wide placed at the end of the row's 886 (its words 20 px off the
-#: title's edge, inside the rule's 2em, so only how it is placed sets it apart); and a text
-#: whose words a child's margin moves 14 px in while its box starts on the edge.
+#: title's edge, inside the rule's 2em, so only how it is placed sets it apart); a text whose
+#: words a child's margin moves 14 px in while its box starts on the edge; and two that say
+#: they are placed at their end and still start on a left edge: a line aligned right in a box
+#: shrink-wrapped round its words, and two such lines aligned right in one box.
 _EDGE_RULE_PAGE_JS = r"""
 const { chromium } = require('playwright');
 const LOOK_JS = __LOOK_JS__;
@@ -5083,6 +5085,9 @@ const LOOK_JS = __LOOK_JS__;
       <div class="row"><p id="edge-right" style="text-align: right"><span class="line">Aligned right</span></p></div>
       <div class="row"><p id="edge-flex" style="display: flex; justify-content: flex-end"><span class="line">Packed at the end</span></p></div>
       <div class="row"><p id="edge-auto" style="display: flex"><span class="line" style="margin-left: auto">Pushed by an auto margin</span></p></div>
+      <div class="row" style="display: flex"><p id="edge-own" class="line" style="margin-left: auto">Pushed by its own auto margin</p></div>
+      <div class="row" style="display: flex; flex-direction: column; align-items: flex-start; text-align: right"><p id="edge-shrink">Aligned right, its box no wider</p></div>
+      <div class="row"><p id="edge-wrap" style="text-align: right"><span class="line">Aligned right</span> <span class="line">and on two lines</span></p></div>
       <div class="row"><p class="shep-reason" id="edge-phrase" style="display: flex; justify-content: end; text-align: right; margin: 2px 0 0 auto"><span aria-hidden="true">&#128274;</span><span><button type="button" class="shep-why">Operator controls only</button></span></p></div>
     </div></div></div></body></html>`);
   await page.addScriptTag({ content: LOOK_JS });
@@ -5099,13 +5104,19 @@ def test_the_edge_rule_reads_where_a_texts_words_start_and_passes_one_placed_at_
     explains (R-WHY's phrase beside the dimmed controls, the owner's D6; ``text-align: right``,
     ``justify-content: end``), was read by its paragraph's left edge, 14 px off the title's,
     and the read-only walk failed on it. The rule now reads a text where its drawn words start
-    (their client rects) and passes one placed at its end, as the text itself says: aligned
-    right, packed at the end of a flex row, or pushed by an auto margin. A text placed at its
-    start whose words stand 14 px off the title's edge is still found, in a box 14 px in, and
-    with its box on the edge and its words moved in by a child's margin (which the box's
-    measure never saw). A text starts where it draws: at a tag drawn in it (its border; the
-    first walk with words alone found Diagnosis' "○ Not loaded" tag 9 px off, its words inside
-    the tag's padding) and at an icon's box."""
+    (their client rects) and passes a line whose placement at its end moved its words, as the
+    text itself says: aligned right, packed at the end of a flex row, or pushed by an auto
+    margin (a child's, or its own). A text placed at its start whose words stand 14 px off the
+    title's edge is still found, in a box 14 px in, and with its box on the edge and its words
+    moved in by a child's margin (which the box's measure never saw). A text starts where it
+    draws: at a tag drawn in it (its border; the first walk with words alone found Diagnosis'
+    "○ Not loaded" tag 9 px off, its words inside the tag's padding) and at an icon's box.
+
+    The review of that change: a text that says it is placed at its end was passed even where
+    that moved nothing (a box shrink-wrapped round its one line draws its words at the box's
+    left edge) and where it wraps (the text brief allows ``right`` and ``center`` on one-line
+    text only, and a wrapped line starts near its box's left edge), so a real misalignment
+    there went unseen. Both are found again, where their words start."""
     from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -5114,8 +5125,12 @@ def test_the_edge_rule_reads_where_a_texts_words_start_and_passes_one_placed_at_
                      timeout=120)
     assert [e for e in found["edge"] if e.startswith("#edge-left +14 px off #title")], found["edge"]
     assert [e for e in found["edge"] if e.startswith("#edge-child +14 px off #title")], found["edge"]
-    for placed in ("#edge-right", "#edge-flex", "#edge-auto", "#edge-phrase"):
+    for placed in ("#edge-right", "#edge-flex", "#edge-auto", "#edge-own", "#edge-phrase"):
         assert not [e for e in found["edge"] if placed in e], (placed, found["edge"])
+    # Placed at its end, and yet on a left edge: one line in a box no wider than its words, and
+    # lines that wrap (each 6 px in from the box's edge, as the lines above).
+    assert [e for e in found["edge"] if e.startswith("#edge-shrink +14 px off #title")], found["edge"]
+    assert [e for e in found["edge"] if e.startswith("#edge-wrap +20 px off #title")], found["edge"]
     # What a text draws starts at a tag drawn in it (its border, its words 9 px in: Diagnosis'
     # "○ Not loaded" at first use) and at an icon (its box, whatever its drawing leaves blank).
     for drawn in ("#edge-tag", "#edge-icon"):
