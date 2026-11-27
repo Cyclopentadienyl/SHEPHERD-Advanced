@@ -297,7 +297,10 @@ def test_settings_offers_the_display_choice_to_every_viewer_within_the_owners_wi
 #: region): its facts' top and then their foot each in the body's view, and each field's
 #: control (Memory allocator's box, Compile's box and its words) in the middle of the body's
 #: view, whole in it and in the window, the control itself under its middle (nothing over it),
-#: not disabled; and the page's own scroll after each, never moved.
+#: not disabled; and after each, only the body scrolled: every other box from it up to the page
+#: (the panel too, which hides its overflow and so can be scrolled by a script, never by a
+#: reader) still at its start, and the body itself moved where the control lay outside its view;
+#: and whether the body's own overflow scrolls (auto or scroll, as a reader scrolls it).
 _UNDER_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -335,19 +338,33 @@ const QUEUE_JS = __QUEUE_JS__;
       const inView = (e) => { const r = box(body), top = r.top + body.clientTop, bottom = top + body.clientHeight;
         return { top: e.top >= top - 0.5 && e.top < bottom, bottom: e.bottom <= bottom + 0.5 && e.bottom > top,
                  whole: e.top >= top - 0.5 && e.bottom <= bottom + 0.5 }; };
-      const still = () => se.scrollTop === 0 && se.scrollLeft === 0;
+      // Only the body scrolled to bring `el` into view: every other box from `el` up to the page
+      // keeps its scroll at its start (`scrollIntoView` scrolls a box that hides its overflow too,
+      // a panel that clips what a reader can never scroll to).
+      const only = (el) => {
+        for (let a = el.parentElement; a; a = a.parentElement) {
+          if (a !== body && (a.scrollTop !== 0 || a.scrollLeft !== 0)) { return false; }
+        }
+        return se.scrollTop === 0 && se.scrollLeft === 0;
+      };
+      // And the body is a region a reader scrolls (its overflow scrolls, not hidden: a box that
+      // hides its overflow is scrolled by a script alone).
+      first.region = ['auto', 'scroll'].includes(getComputedStyle(body).overflowY);
       const facts = document.getElementById('runtime_facts');
       facts.scrollIntoView({ block: 'start', inline: 'nearest' });
-      const head = inView(box(facts)).top && still();
+      const head = inView(box(facts)).top && only(facts);
       facts.scrollIntoView({ block: 'end', inline: 'nearest' });
-      const foot = inView(box(facts)).bottom && still();
+      const foot = inView(box(facts)).bottom && only(facts);
       first.facts = { head, foot };
       const reach = (at, input) => {
         const control = document.querySelector(at), own = document.querySelector(input);
+        const from = body.scrollTop, away = !inView(box(control)).whole;
         control.scrollIntoView({ block: 'center', inline: 'nearest' });
         const e = box(control), hit = document.elementFromPoint((e.left + e.right) / 2, (e.top + e.bottom) / 2);
         return { whole: inView(e).whole && e.top >= 0 && e.bottom <= innerHeight,
-                 hit: !!hit && control.contains(hit), enabled: !!own && !own.disabled, still: still() };
+                 hit: !!hit && control.contains(hit), enabled: !!own && !own.disabled,
+                 // Only the body scrolled, and it did where the control lay outside its view.
+                 only: only(control) && (!away || body.scrollTop !== from) };
       };
       first.allocator = reach(CONTROL('#allocator_preset'), '#allocator_preset input');
       first.compile = reach('#torch_compile label:has(input[type=checkbox])', '#torch_compile input[type=checkbox]');
@@ -389,8 +406,9 @@ def test_settings_display_gives_way_first_under_runtime_settings(footer, monkeyp
     way first), its options in its body's view; and what Runtime settings holds is reached in
     its body, its one scroll region: its facts' top and foot each brought into the body's
     view, and each field's control (Memory allocator's, Compile's) brought into it whole,
-    nothing over it, not disabled, the page itself never scrolled. Fails on 36c0592 (Display
-    drawn whole while Runtime settings' body scrolled).
+    nothing over it, not disabled, and only the body scrolled to bring each (no other box up
+    to the page moved, the body did where the control lay outside its view). Fails on 36c0592
+    (Display drawn whole while Runtime settings' body scrolled).
 
     UI-SW-ER3 A (the external review of ffb1483): this test asked Memory allocator's box to be
     in view unscrolled at 1366 x 768. How much of Runtime settings' body is in view first
@@ -400,7 +418,13 @@ def test_settings_display_gives_way_first_under_runtime_settings(footer, monkeyp
     give-way order and the reach, which the test now asks for. Where the room is is not. Run
     with this host's own footer, and with the reviewer's two-line warning stood in
     (`_TWO_LINE_RUNTIME`), where the old check fails on this host too (Memory allocator's box
-    314 px down a 233 px view at 1366 x 768, the reviewer's numbers)."""
+    314 px down a 233 px view at 1366 x 768, the reviewer's numbers).
+
+    The review of that change: `scrollIntoView` scrolls every box around its target, one that
+    hides its overflow too (the panel, `.shep-panel`), so asking only that the page did not
+    scroll let a body that no longer scrolled, its panel clipping it, pass: the control was
+    "reached" where no reader could scroll. Each reach now asks that only the body scrolled,
+    and the body that its overflow scrolls (not hidden, which a script alone scrolls)."""
     import src.webui.app as webui_app
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
@@ -429,8 +453,8 @@ def test_settings_display_gives_way_first_under_runtime_settings(footer, monkeyp
         tall, least = got["display"]
         if got["more"]:                                                         # Display gave way first
             assert least > 0 and tall <= least + 1, where
-        assert got["facts"] == {"head": True, "foot": True}, where
+        assert got["region"] and got["facts"] == {"head": True, "foot": True}, where
         for field in ("allocator", "compile"):
-            assert got[field] == {"whole": True, "hit": True, "enabled": True, "still": True}, (field, where)
+            assert got[field] == {"whole": True, "hit": True, "enabled": True, "only": True}, (field, where)
     # At the display floor the two cannot both be whole, so the give-way is measured there.
     assert seen["1280x720"]["more"], seen
