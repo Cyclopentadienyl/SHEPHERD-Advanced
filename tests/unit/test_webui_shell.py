@@ -5827,7 +5827,9 @@ def test_diagnosis_options_title_never_ends_its_column_alone(tmp_path):
 
 
 #: UI-SW-ER2 (the external review of ffb1483): Diagnosis' fields region (``#shep-dx-fields``) as
-#: its room changes, with controlled facts rather than this host's own: the footer's environment
+#: its room changes, with controlled facts rather than this host's own: the footer's lead drawn as
+#: the product's own warning mark (``__WARN_LEAD__``, `renderers.status_mark`) whatever this host's
+#: runtime reports (a host with no issue draws plain words there, no mark), its environment
 #: warning stood in on one line and then on two (the product's own sentences, as many as make
 #: that many lines), and for each the footer drawn taller in 3 px steps (a stand-in padding, so
 #: the region's edge sweeps up across its Patient ID field wherever this host's fonts put it),
@@ -5840,10 +5842,15 @@ def test_diagnosis_options_title_never_ends_its_column_alone(tmp_path):
 #: region's height kept, the caret drawn. Everything stood in is put back after.
 _DX_FIELDS_SWEEP_JS = r"""async () => {
   const region = document.getElementById('shep-dx-fields'), foot = document.querySelector('.shep-rt');
-  const words = foot && foot.querySelector('.shep-st-w');
   const label = document.getElementById('shep-lbl-dx_patient_id');
   const input = document.querySelector('#dx_patient_id input, #dx_patient_id textarea');
-  if (!region || !words || !label || !input) { return null; }
+  const lead = foot && foot.firstElementChild;
+  if (!region || !lead || !label || !input) { return null; }
+  // The footer's lead, this host's own, swapped for the product's warning mark; put back after.
+  const keptLead = lead.outerHTML;
+  lead.insertAdjacentHTML('beforebegin', __WARN_LEAD__);
+  lead.remove();
+  const mark = foot.firstElementChild, words = mark.querySelector('.shep-st-w');
   const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const pass = async () => { window.ShepShell.layOut(); await frames(); await frames(); };
   const SAID = ['No CUDA device visible: GPU training is unavailable.', 'torch is built for CUDA 13.0.',
@@ -5875,7 +5882,7 @@ _DX_FIELDS_SWEEP_JS = r"""async () => {
     return low;
   };
   const box = (e) => { const r = e.getBoundingClientRect(); return [r.top, r.bottom]; };
-  const kept = words.textContent, out = { lines: [], steps: [] };
+  const out = { lines: [], steps: [] };
   for (const want of [1, 2]) {
     let k = 1;
     words.textContent = SAID.slice(0, k).join(' ');
@@ -5914,7 +5921,8 @@ _DX_FIELDS_SWEEP_JS = r"""async () => {
     }
   }
   foot.style.removeProperty('padding-bottom');
-  words.textContent = kept;
+  mark.insertAdjacentHTML('beforebegin', keptLead);
+  mark.remove();
   region.scrollTop = 0;
   await pass();
   return out;
@@ -5933,20 +5941,26 @@ def test_diagnosis_fields_never_end_at_a_title_over_its_moved_box_as_their_room_
     no title with every control it heads under the edge, and no box's top left over the edge in
     the gap, a title and the field it labels under the edge together.
 
-    Controlled facts (`_DX_FIELDS_SWEEP_JS`): the warning stood in on one line and on two, and
-    for each the footer drawn taller in 3 px steps, so the edge sweeps across the Patient ID
-    field (the steps must cross it: the edge it would have uncut inside the field at some step).
-    At every step, the Load drawer shut and open: the walk finds no ``edge-heading`` or
-    ``scroll-cue`` finding for the region, no box's top is left over the edge in the gap, and
-    where Patient ID's input lies under the edge, focusing it scrolls the region until it is
-    whole in view, uncovered, the region's height kept and the caret drawn. Fails on c78b9fd."""
+    Controlled facts (`_DX_FIELDS_SWEEP_JS`): the footer's lead drawn as the product's warning
+    mark on every host (a host whose runtime has no issue draws plain words there, which the
+    sweep first needed to find: the review of this test), the warning stood in on one line and
+    on two, and for each the footer drawn taller in 3 px steps, so the edge sweeps across the
+    Patient ID field (the steps must cross it: the edge it would have uncut inside the field at
+    some step). At every step, the Load drawer shut and open: the walk finds no
+    ``edge-heading`` or ``scroll-cue`` finding for the region, no box's top is left over the edge
+    in the gap, and where Patient ID's input lies under the edge, focusing it scrolls the region
+    until it is whole in view, uncovered, the region's height kept and the caret drawn. Fails on
+    c78b9fd."""
     from tests.fixtures.browser import node_with_playwright, walk_state
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     stops = [{"size": [1280, 720], "page": "clinical", "check": False},
              {"size": [1280, 720], "page": "clinical", "check": False, "open": _LOAD_DRAWER}]
-    seen = walk_state("first_use", tmp_path, stops, extra_js=_DX_FIELDS_SWEEP_JS)
+    from src.webui.components.renderers import status_mark
+
+    sweep = _DX_FIELDS_SWEEP_JS.replace("__WARN_LEAD__", json.dumps(status_mark("warn", "")))
+    seen = walk_state("first_use", tmp_path, stops, extra_js=sweep)
     for stop in seen:
         got, where = stop["extra"], stop.get("open", "shut")
         assert got and got["lines"] == [1, 2], (where, got)
