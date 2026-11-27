@@ -984,9 +984,17 @@ _SHELL_JS = r"""
     }
     return value;
   }
+  // **The room a box gives what it holds**, in fractions of a pixel as that is laid out in it:
+  // its border box less its borders, its padding and the scrollbar it draws beside content that
+  // runs past its foot. Every fit is judged against it with no slack: a form is drawn whole only
+  // while its narrowest is no wider. Its client width is rounded to a whole pixel, and judged by
+  // it with half a pixel's slack a whole table up to half a pixel wider than its box was drawn in
+  // it and cut, at some windows and not at the next (UI-SW-ER3 B's other direction, Datasets).
   function roomOf(box) {
-    var s = getComputedStyle(box);
-    return box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+    var s = getComputedStyle(box), sides = px(s.borderLeftWidth) + px(s.borderRightWidth);
+    var scrolls = s.overflowY === 'scroll' || (s.overflowY === 'auto' && box.scrollHeight > box.clientHeight);
+    var bar = scrolls ? Math.max(0, box.offsetWidth - box.clientWidth - sides) : 0;
+    return box.getBoundingClientRect().width - sides - bar - px(s.paddingLeft) - px(s.paddingRight);
   }
   function width(el) { return el.getBoundingClientRect().width; }
   // Each box is measured with its own mark taken off (put back before anything is painted; an
@@ -1022,8 +1030,7 @@ _SHELL_JS = r"""
   function want(box, need) {
     var panel = panelOf(box);
     if (!panel) { return; }
-    var row = panel.parentElement, s = getComputedStyle(row), n = 0;
-    var spare = row.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+    var row = panel.parentElement, s = getComputedStyle(row), n = 0, spare = roomOf(row);
     var kids = Array.prototype.filter.call(row.children, drawn);
     for (var j = 0; j < kids.length; j++) {
       var min = kids[j] === panel ? 0 : lengthPx(kids[j], '--shep-panel-min');
@@ -1046,13 +1053,13 @@ _SHELL_JS = r"""
       var need = measured(wide, at, width);
       want(box, need);
       var room = roomOf(box);
-      var narrow = need > room + 0.5;
+      var narrow = need > room;
       // Its cells whose words read as one while the room allows (CELL_ROOMY), measured whole
       // once more: the box is ROOMY while the wide form fits with them whole too.
       var whole = false;
       if (!narrow) {
         box.setAttribute(ROOMY, '');
-        whole = measured(wide, at, width) <= room + 0.5;
+        whole = measured(wide, at, width) <= room;
         box.removeAttribute(ROOMY);
       }
       if (was) { box.setAttribute(NARROW, ''); }
@@ -1068,7 +1075,7 @@ _SHELL_JS = r"""
         var had = group.hasAttribute(NARROW);
         if (had) { group.removeAttribute(NARROW); }
         var space = roomOf(group);
-        stack = measured(options, ON_ONE_LINE, width) > space + 0.5;
+        stack = measured(options, ON_ONE_LINE, width) > space;
         if (had) { group.setAttribute(NARROW, ''); }
       } else if (!options || !drawn(group)) { continue; }
       if (group.hasAttribute(NARROW) !== stack) { group.toggleAttribute(NARROW, stack); }
@@ -1301,36 +1308,61 @@ _SHELL_JS = r"""
     var below = (parseFloat(s.paddingBottom) || 0) + (parseFloat(s.borderBottomWidth) || 0);
     return {top: r.top + above, bottom: r.bottom - below, height: r.height - above - below};
   }
+  // The top of the highest box (a field's, or a control's) that starts in the gap over `at`
+  // (under every line still shown above it) and ends under it, taken from the lowest up so that
+  // a box left over the edge another one gave is taken too: `at` where there is none.
+  function boxTop(el, top, at) {
+    var low = lowestLine(el, top, at), floor = low ? low.r.bottom : top, gap = [];
+    var boxes = el.querySelectorAll('.block, ' + CONTROLS);
+    for (var b = 0; b < boxes.length; b++) {
+      var q = boxes[b].getBoundingClientRect();
+      if (q.top >= floor && q.top < at) { gap.push(q); }
+    }
+    gap.sort(function (p, q) { return q.top - p.top; });
+    for (var k = 0; k < gap.length; k++) {
+      if (gap[k].top < at && gap[k].bottom > at) { at = gap[k].top; }
+    }
+    return at;
+  }
   // How far `el`'s foot gives way (px) for it to end in the gap above a lone title, or above a
   // field's box that starts in the gap its edge falls in, read whole (its current cut added
   // back): 0 for none.
+  // **One edge that holds both rules at once** (UI-SW-ER2, the external review of ffb1483): a
+  // box that starts in the gap goes under the edge whole, and that can leave the title over it
+  // alone, where the title rule was asked only before the box moved (Diagnosis at first use at
+  // 1280 x 720, the environment warning on two lines: Patient ID's input, 25 of its 43 px above
+  // the edge, went under it and left "Patient ID (optional)" over it with its one control under
+  // the edge). So the two rules are asked in turn until neither moves the edge, a title and the
+  // field it labels going under together. Each step only raises the edge (to a lone title's top,
+  // or to a box's top under the last line shown), so the steps end where neither rule moves it,
+  // or past half the region, where no cut is given; CUT_STEPS bounds them (a box, its label, the
+  // section heading over it, that heading's box: four, and the step that finds nothing to move),
+  // and a cut that would need more is not given either.
+  var CUT_STEPS = 8;
   function cutOf(el) {
     var s = getComputedStyle(el), had = parseFloat(el.getAttribute(CUT)) || 0;
     if (!scrolls(s.overflowY) || el.scrollHeight - el.clientHeight - had <= 1) { return 0; }
     var r = el.getBoundingClientRect(), top = r.top + el.clientTop, edge = top + el.clientHeight + had;
-    var at = edge;
-    for (var i = 0; i < 3; i++) {   // a title under a title (a section's heading, then its label)
-      var head = loneTitle(el, top, at);
-      if (head === null) { break; }
-      at = head;
-    }
-    if (at < edge || !fadeAt(el, top, edge)) {
-      // A field's box, or a control's, that starts in that gap (under every line still shown)
-      // goes under the edge whole: no box's top is left over it (a block's own background hid the
-      // edge cue's shadow). So too where the edge itself falls in a gap, no line faded out over it
-      // (`fadeAt`; LOOK5 of the L8 sweep: Test's Deterministic box started 12 px over the Run
-      // region's edge at 1280 x 720 and hid half its edge cue; the L8 close's final check, F3:
-      // first-use Data locations at 1366 x 768 kept the top of "Create suggested folder", a
-      // button in a row, over its edge cue).
-      var low = lowestLine(el, top, at), floor = low ? low.r.bottom : top;
-      var boxes = el.querySelectorAll('.block, ' + CONTROLS);
-      for (var b = 0; b < boxes.length; b++) {
-        var q = boxes[b].getBoundingClientRect();
-        if (q.top >= floor && q.top < at && q.bottom > at) { at = q.top; }
+    var most = (el.clientHeight + had) / 2, at = edge;
+    for (var i = 0; i < CUT_STEPS; i++) {
+      // A title under a title (a section's heading, then its label) goes one at a time.
+      var head = loneTitle(el, top, at), next = head === null ? at : head;
+      // A field's box, or a control's, that starts in the gap the edge falls in (under every
+      // line still shown) goes under the edge whole: no box's top is left over it (a block's own
+      // background hid the edge cue's shadow). So too where the edge itself falls in a gap, no
+      // line faded out over it (`fadeAt`; LOOK5 of the L8 sweep: Test's Deterministic box
+      // started 12 px over the Run region's edge at 1280 x 720 and hid half its edge cue; the L8
+      // close's final check, F3: first-use Data locations at 1366 x 768 kept the top of "Create
+      // suggested folder", a button in a row, over its edge cue).
+      if (head === null && (at < edge || !fadeAt(el, top, edge))) { next = boxTop(el, top, at); }
+      if (next === at) {
+        var cut = Math.ceil(edge - at);
+        return cut > 0 && cut <= most ? cut : 0;
       }
+      if (edge - next > most) { return 0; }
+      at = next;
     }
-    var cut = Math.ceil(edge - at);
-    return cut > 0 && cut <= (el.clientHeight + had) / 2 ? cut : 0;
+    return 0;
   }
   function recut(el) {
     var had = parseFloat(el.getAttribute(CUT)) || 0, cut = cutOf(el);

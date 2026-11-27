@@ -753,12 +753,15 @@ PAGE_CSS = f"""
    choice usable in view (9rem: its head's one line, 49 px, and its body's least, 5.75rem: the
    body's top padding, the label and the options' row; a panel that hides its overflow has no
    least height of its own in a flex column); past that its body scrolls inside, the line under
-   the options going under its edge with the shared cue, and Runtime settings' body takes the
-   rest. At 1366 x 768 that leaves Runtime settings' first field in view (an operator's: read-only,
-   its foot's reason line takes that room); at the display floor, 1280 x 720, its head and foot
-   (178 px), its facts and first field (318 px) and Display's head and choice (144 px) need
-   656 px of the column's 609, so its body shows its facts and ends above the first field's label
-   (233 px, 156 before), with the cue. */
+   the options going under its edge with the shared cue. Runtime settings' body takes the rest
+   and scrolls, with the cue: what it holds is reached in it, its foot (Apply Settings) in view.
+   How much of it shows before a scroll is the host's (its runtime facts, and the footer's
+   environment warning on one line or two), never a promise: under the deployment window a
+   region may scroll (the skill's §1; UI-SW-ER3 A). One host's measure, at the display floor
+   (1280 x 720): its head and foot (178 px), its facts and first field (318 px) and Display's
+   head and choice (144 px) needed 656 px of the column's 609, so its body showed its facts and
+   ended above the first field's label (233 px, 156 before); on a CPU-only host whose warning
+   took two lines, Memory allocator's box lay 314 px down a 233 px view at 1366 x 768. */
 {SIDE} {{
   {_PAGE} #shep-settings-cols {{ align-items: flex-start !important; }}
   {_PAGE} #shep-settings-side {{ flex: 9 1 30rem !important; min-width: var(--shep-panel-min) !important; max-width: calc(1040px + 16px + 15rem); align-self: stretch; min-height: 0; display: flex; flex-direction: row; align-items: flex-start; container: shep-settings-side / inline-size; }}

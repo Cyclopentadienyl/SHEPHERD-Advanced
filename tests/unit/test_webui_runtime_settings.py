@@ -25,6 +25,7 @@ import pytest
 
 pytest.importorskip("gradio")
 
+from src.utils.version_checker import NOTICE  # noqa: E402
 from tests.fixtures.operator_access import gradio_request  # noqa: E402
 
 #: Words that point at a reason drawn elsewhere (R-WHY; the walk's ``pointer-words``).
@@ -289,9 +290,17 @@ def test_settings_offers_the_display_choice_to_every_viewer_within_the_owners_wi
 
 #: ⚙ Settings for an operator at each window of ``argv[3]`` (``[[w, h], ...]``), its page
 #: answered and still: the arrangement, the page's own scroll, whether Display stands under
-#: Runtime settings, and against each panel body's box in view (its top and its height in view,
-#: after the shell's cut above a lone label): the bottom of Runtime settings' facts and of its
-#: first field's control (Memory allocator's box), and the bottom of Display's options.
+#: Runtime settings, whether Runtime settings' body has more under its edge at its top, Display's
+#: height against its own least, and the bottom of Display's options against its body's view
+#: (its top and its height in view). Then what Runtime settings holds, each brought into its
+#: body's view as a reader scrolls to it (`scrollIntoView`; the body is the panel's one scroll
+#: region): its facts' top and then their foot each in the body's view, and each field's
+#: control (Memory allocator's box, Compile's box and its words) in the middle of the body's
+#: view, whole in it and in the window, the control itself under its middle (nothing over it),
+#: not disabled; and after each, only the body scrolled: every other box from it up to the page
+#: (the panel too, which hides its overflow and so can be scrolled by a script, never by a
+#: reader) still at its start, and the body itself moved where the control lay outside its view;
+#: and whether the body's own overflow scrolls (auto or scroll, as a reader scrolls it).
 _UNDER_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -316,14 +325,51 @@ const QUEUE_JS = __QUEUE_JS__;
         const b = document.getElementById(bodyId), r = box(b), e = box(el);
         return { bottom: Math.round(e.bottom - r.top), view: b.clientHeight };
       };
-      const se = document.scrollingElement;
-      const runtime = box(document.getElementById('shep-settings')), shown = box(document.getElementById('shep-display'));
-      return { layout: document.documentElement.getAttribute('data-shep-layout'),
-               page: [se.scrollHeight, se.clientHeight, se.scrollWidth, se.clientWidth],
-               under: shown.top >= runtime.bottom && Math.abs(shown.left - runtime.left) < 1,
-               facts: seen('shep-settings-bd', document.getElementById('runtime_facts')),
-               allocator: seen('shep-settings-bd', document.querySelector(CONTROL('#allocator_preset'))),
-               options: seen('shep-display-bd', document.querySelector(CONTROL('#shep-display-params'))) };
+      const se = document.scrollingElement, body = document.getElementById('shep-settings-bd');
+      const display = document.getElementById('shep-display');
+      const runtime = box(document.getElementById('shep-settings')), shown = box(display);
+      const first = { layout: document.documentElement.getAttribute('data-shep-layout'),
+                      page: [se.scrollHeight, se.clientHeight, se.scrollWidth, se.clientWidth],
+                      under: shown.top >= runtime.bottom && Math.abs(shown.left - runtime.left) < 1,
+                      more: body.scrollHeight - body.clientHeight > 1,
+                      display: [shown.height, parseFloat(getComputedStyle(display).minHeight) || 0],
+                      options: seen('shep-display-bd', document.querySelector(CONTROL('#shep-display-params'))) };
+      // The body's view, and whether `e` lies in it (within half a pixel).
+      const inView = (e) => { const r = box(body), top = r.top + body.clientTop, bottom = top + body.clientHeight;
+        return { top: e.top >= top - 0.5 && e.top < bottom, bottom: e.bottom <= bottom + 0.5 && e.bottom > top,
+                 whole: e.top >= top - 0.5 && e.bottom <= bottom + 0.5 }; };
+      // Only the body scrolled to bring `el` into view: every other box from `el` up to the page
+      // keeps its scroll at its start (`scrollIntoView` scrolls a box that hides its overflow too,
+      // a panel that clips what a reader can never scroll to).
+      const only = (el) => {
+        for (let a = el.parentElement; a; a = a.parentElement) {
+          if (a !== body && (a.scrollTop !== 0 || a.scrollLeft !== 0)) { return false; }
+        }
+        return se.scrollTop === 0 && se.scrollLeft === 0;
+      };
+      // And the body is a region a reader scrolls (its overflow scrolls, not hidden: a box that
+      // hides its overflow is scrolled by a script alone).
+      first.region = ['auto', 'scroll'].includes(getComputedStyle(body).overflowY);
+      const facts = document.getElementById('runtime_facts');
+      facts.scrollIntoView({ block: 'start', inline: 'nearest' });
+      const head = inView(box(facts)).top && only(facts);
+      facts.scrollIntoView({ block: 'end', inline: 'nearest' });
+      const foot = inView(box(facts)).bottom && only(facts);
+      first.facts = { head, foot };
+      const reach = (at, input) => {
+        const control = document.querySelector(at), own = document.querySelector(input);
+        const from = body.scrollTop, away = !inView(box(control)).whole;
+        control.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const e = box(control), hit = document.elementFromPoint((e.left + e.right) / 2, (e.top + e.bottom) / 2);
+        return { whole: inView(e).whole && e.top >= 0 && e.bottom <= innerHeight,
+                 hit: !!hit && control.contains(hit), enabled: !!own && !own.disabled,
+                 // Only the body scrolled, and it did where the control lay outside its view.
+                 only: only(control) && (!away || body.scrollTop !== from) };
+      };
+      first.allocator = reach(CONTROL('#allocator_preset'), '#allocator_preset input');
+      first.compile = reach('#torch_compile label:has(input[type=checkbox])', '#torch_compile input[type=checkbox]');
+      body.scrollTop = 0;
+      return first;
     });
     await page.close();
   }
@@ -333,21 +379,53 @@ const QUEUE_JS = __QUEUE_JS__;
 """
 
 
-def test_settings_display_gives_way_first_under_runtime_settings(monkeypatch, tmp_path):
+#: A runtime report of a CPU-only host whose footer warning takes two lines at these windows (the
+#: external review of ffb1483's host: no CUDA device, cuVS without cupy), in the probe's own
+#: words, so the room the footer leaves is the same on every host (`app._runtime_footer`).
+_TWO_LINE_RUNTIME = {
+    "status": NOTICE, "python": "3.12", "platform": "Linux aarch64", "pyg_native": {}, "retrieval": {},
+    "torch": {"available": True, "version": "2.10.0", "cuda_build": "13.0", "cuda_available": False},
+    "torch_geometric": {"available": True, "version": "2.8.0"},
+    "issues": ["No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0. Check the "
+               "driver and CUDA libraries.",
+               "The GPU vector backend cannot be constructed: cuVS is installed but cupy is missing (Voyager "
+               "on the CPU is unaffected)."]}
+
+
+@pytest.mark.parametrize("footer", ["this host's", "two lines"])
+def test_settings_display_gives_way_first_under_runtime_settings(footer, monkeypatch, tmp_path):
     """The review of 36c0592 (P2): side by side in a window under about 1740 px Display stands
     under Runtime settings, and drawn whole (240 to 259 px) it left Runtime settings' body 156
     of its 588 px at the display floor (1280 x 720), neither of its fields in view, where
     bb258d1 had shown 431 px with Memory allocator; 223 px at 1366 x 768. A choice kept in
     the browser, with no Apply, pushed out the operator's server settings. Display now gives
     way first, down to its head and its choice (the label and the three options), and
-    Runtime settings' body takes the rest. For an operator with a workspace, side by side,
-    Display under Runtime settings, the page not scrolling: at 1366 x 768 Runtime settings'
-    facts and its first field's control (Memory allocator's box) are in its body's view, and
-    Display's options in its; at 1280 x 720, where both cannot be whole (Runtime settings' head,
-    foot, facts and first field and Display's head and choice need 656 px of the column's
-    609), Display's options and Runtime settings' facts are in view, the first field under the
-    edge with its cue. Fails on 36c0592 (the facts cut at 156 px, the allocator under the edge
-    at 1366 x 768)."""
+    Runtime settings' body takes the rest. For an operator with a workspace, side by side, at
+    1366 x 768 and 1280 x 720: Display under Runtime settings, the page not scrolling; while
+    Runtime settings' body has more under its edge, Display is at its least height (it gives
+    way first), its options in its body's view; and what Runtime settings holds is reached in
+    its body, its one scroll region: its facts' top and foot each brought into the body's
+    view, and each field's control (Memory allocator's, Compile's) brought into it whole,
+    nothing over it, not disabled, and only the body scrolled to bring each (no other box up
+    to the page moved, the body did where the control lay outside its view). Fails on 36c0592
+    (Display drawn whole while Runtime settings' body scrolled).
+
+    UI-SW-ER3 A (the external review of ffb1483): this test asked Memory allocator's box to be
+    in view unscrolled at 1366 x 768. How much of Runtime settings' body is in view first
+    depends on the host (its environment's facts and the footer's warning: a CPU-only host's
+    two-line warning left the allocator under the edge, reached by one scroll), and under the
+    deployment window a region may scroll (the WebUI skill's §1); the product's promise is the
+    give-way order and the reach, which the test now asks for. Where the room is is not. Run
+    with this host's own footer, and with the reviewer's two-line warning stood in
+    (`_TWO_LINE_RUNTIME`), where the old check fails on this host too (Memory allocator's box
+    314 px down a 233 px view at 1366 x 768, the reviewer's numbers).
+
+    The review of that change: `scrollIntoView` scrolls every box around its target, one that
+    hides its overflow too (the panel, `.shep-panel`), so asking only that the page did not
+    scroll let a body that no longer scrolled, its panel clipping it, pass: the control was
+    "reached" where no reader could scroll. Each reach now asks that only the body scrolled,
+    and the body that its overflow scrolls (not hidden, which a script alone scrolls)."""
+    import src.webui.app as webui_app
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import operator_mode
@@ -356,6 +434,8 @@ def test_settings_display_gives_way_first_under_runtime_settings(monkeypatch, tm
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
+    if footer == "two lines":
+        monkeypatch.setattr(webui_app, "probe_runtime", lambda: _TWO_LINE_RUNTIME)
     operator_mode(monkeypatch)
     write_demo_workspace(tmp_path / "root" / "demo")
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
@@ -370,6 +450,11 @@ def test_settings_display_gives_way_first_under_runtime_settings(monkeypatch, tm
         assert got["layout"] == "side" and got["under"], where
         assert height <= view and width <= wide, where
         assert got["options"]["bottom"] <= got["options"]["view"], where       # Display's choice
-        assert got["facts"]["bottom"] <= got["facts"]["view"], where           # Runtime's facts
-        if [w, h] == [1366, 768]:
-            assert got["allocator"]["bottom"] <= got["allocator"]["view"], where
+        tall, least = got["display"]
+        if got["more"]:                                                         # Display gave way first
+            assert least > 0 and tall <= least + 1, where
+        assert got["region"] and got["facts"] == {"head": True, "foot": True}, where
+        for field in ("allocator", "compile"):
+            assert got[field] == {"whole": True, "hit": True, "enabled": True, "only": True}, (field, where)
+    # At the display floor the two cannot both be whole, so the give-way is measured there.
+    assert seen["1280x720"]["more"], seen

@@ -3452,20 +3452,25 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
 #: footer, whose edge falls under a title with every control it heads under the edge: a field's
 #: label (``lt-label``), a heading over two buttons (``lt-head``), a heading over a field
 #: (``lt-nested``); a field's box that starts in the gap the edge falls in, 22 px under the last
-#: line, its words under the edge (``lt-gapbox``); and a region of its own fixed height
-#: (``lt-fixed``), whose height is not its column's to give.
+#: line, its words under the edge (``lt-gapbox``); a region of its own fixed height
+#: (``lt-fixed``), whose height is not its column's to give; and a field's empty input more than
+#: half above an edge that falls in the gap under its label, that box going under the edge
+#: whole, under a label alone (``lt-boxlabel``) and under a label under a heading
+#: (``lt-boxhead``): UI-SW-ER2, its label (and the heading) going under with it.
 _LONE_TITLE_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const [css, js, look] = [process.argv[2], process.argv[3], process.argv[4]].map((p) => require('fs').readFileSync(p, 'utf8'));
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 1200, height: 1000 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 1320 } })).newPage();
   const lines = (n) => Array.from({ length: n }, (_, i) => `<p class="lt-line" style="margin: 0; line-height: 20px">Line ${i} of the form.</p>`).join('');
   const panel = (id, left, top, body, footer = true) => `
     <div class="lt-panel" id="${id}-panel" style="position: absolute; left: ${left}px; top: ${top}px; width: 520px; height: 300px; display: flex; flex-direction: column; background: #fff">
       <div class="lt-bd" id="${id}" style="${footer ? 'flex: 1 1 auto; min-height: 0' : 'flex: 0 0 auto; height: 239px'}; overflow: auto; padding: 0 16px">${body}</div>
       <div class="lt-ft" id="${id}-ft" style="flex: 0 0 auto; height: 60px; border-top: 1px solid #ccc"><button type="button">Start</button></div></div>`;
   const field = (label) => `<div class="block" style="margin-top: 16px; background: #fff"><span data-testid="block-info" class="lt-title" style="display: block; margin-bottom: 10px; line-height: 20px">${label}</span><input type="text" style="display: block; height: 36px"></div>`;
+  // A field whose label sits 4 px over its empty 44 px input (Gradio's text field's room).
+  const boxed = (label) => `<div class="block" style="margin-top: 16px; background: #fff"><span data-testid="block-info" class="lt-title" style="display: block; margin-bottom: 4px; line-height: 20px">${label}</span><input type="text" style="display: block; box-sizing: border-box; height: 44px"></div>`;
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="font: 15px/20px sans-serif">
     ${panel('lt-label', 20, 20, lines(10) + field('Device') + lines(10))}
     ${panel('lt-head', 600, 20, lines(9) + '<h3 class="lt-title" style="margin: 20px 0 0; line-height: 24px">Import folder</h3><div style="margin-top: 16px"><button type="button">Change…</button> <button type="button">Check</button></div>' + lines(10))}
@@ -3473,6 +3478,8 @@ const { chromium } = require('playwright');
     ${panel('lt-fixed', 600, 360, lines(10) + field('Seed') + lines(10), false)}
     ${panel('lt-boxtop', 20, 680, lines(9) + '<h3 style="margin: 20px 0 0; line-height: 24px">Options</h3><input type="number" value="10" style="display: block; margin-top: 3px; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999">' + lines(10))}
     ${panel('lt-gapbox', 600, 680, lines(11) + '<div style="height: 7px"></div><div class="block" style="background: #fff; padding-top: 14px"><label class="lt-title" style="display: block; line-height: 20px"><input type="checkbox"> Deterministic execution</label></div>' + lines(10))}
+    ${panel('lt-boxlabel', 20, 1000, lines(8) + boxed('Patient ID') + lines(10))}
+    ${panel('lt-boxhead', 600, 1000, lines(6) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + boxed('Run name') + lines(10))}
     <script>${js}</script></body></html>`);
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const pass = async () => { await page.evaluate(() => window.ShepShell.update()); await frames(); await frames(); };
@@ -3491,7 +3498,7 @@ const { chromium } = require('playwright');
              lineAbove: before.getBoundingClientRect().bottom <= edge + 0.5,
              footDocked: Math.abs(ft.bottom - panel.bottom) <= 1 };
   }, id);
-  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop', 'lt-gapbox'], out = {};
+  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop', 'lt-gapbox', 'lt-boxlabel', 'lt-boxhead'], out = {};
   for (const id of ids) { out[id] = await read(id); }
   // Scrolled, the region keeps its height; back at its top, the same.
   for (const id of ids) {
@@ -3528,8 +3535,12 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     L8-4: Test's Run region at 1280 x 720 ended 22 px under "Register when the run ends", a fade
     over the blank, its Deterministic box 12 px over the edge). Scrolled, the region keeps its
     height. A region of its own fixed height (its height is not its column's to give) is left as
-    it is. Measured in a browser on a page of its
-    own (Node and Playwright, skipped without)."""
+    it is. **Both rules at the one edge** (UI-SW-ER2, the external review of ffb1483): where a
+    field's empty input shows more than half its box over an edge that falls in the gap under
+    its label, the box goes under the edge whole, and its label with it, and a heading over that
+    label too (``lt-boxlabel``, ``lt-boxhead``; Diagnosis' Patient ID at first use at 1280 x 720
+    had its label left alone over its moved input; both fail on c78b9fd). Measured in a browser
+    on a page of its own (Node and Playwright, skipped without)."""
     from src.webui.style import SHELL_CSS
     from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
 
@@ -3540,7 +3551,7 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     js_path.write_text(_page_shell_js(), encoding="utf-8")
     look_path.write_text(LOOK_JS, encoding="utf-8")
     seen = run_node(_LONE_TITLE_JS, tmp_path, str(css_path), str(js_path), str(look_path))
-    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop", "lt-gapbox"):
+    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop", "lt-gapbox", "lt-boxlabel", "lt-boxhead"):
         got = seen[region]
         assert got["more"] and got["titlesUnder"] and got["lineAbove"], (region, got)
         assert got["edgeCue"] and not got["mask"], (region, got)
@@ -5898,6 +5909,156 @@ def test_diagnosis_options_title_never_ends_its_column_alone(tmp_path):
         if not at or not at["region"] or not at["controls"]:
             continue
         assert not (at["titleShown"] and not any(c["shown"] for c in at["controls"])), (size, at)
+
+
+#: UI-SW-ER2 (the external review of ffb1483): Diagnosis' fields region (``#shep-dx-fields``) as
+#: its room changes, with controlled facts rather than this host's own: the footer's lead drawn as
+#: the product's own warning mark (``__WARN_LEAD__``, `renderers.status_mark`) whatever this host's
+#: runtime reports (a host with no issue draws plain words there, no mark), its environment
+#: warning stood in on one line and then on two (the product's own sentences, as many as make
+#: that many lines), and for each the footer drawn taller in 3 px steps (a stand-in padding, so
+#: the region's edge sweeps up across its Patient ID field wherever this host's fonts put it),
+#: the shell's pass run after each change. At each step, at the region's top: its edge, its cut
+#: (`data-shep-more-cut`) and the edge it would have uncut, the walk's own ``edge-heading`` and
+#: ``scroll-cue`` findings for it, any field's box or control's whose top lies in the gap under
+#: the last line shown while it ends under the edge (with the edge cue drawn: no fade over it),
+#: and Patient ID's label and input. Where Patient ID's input lies under the edge, the input is
+#: then focused as a keyboard would: the region scrolls it whole into its view, uncovered, the
+#: region's height kept, the caret drawn. Everything stood in is put back after.
+_DX_FIELDS_SWEEP_JS = r"""async () => {
+  const region = document.getElementById('shep-dx-fields'), foot = document.querySelector('.shep-rt');
+  const label = document.getElementById('shep-lbl-dx_patient_id');
+  const input = document.querySelector('#dx_patient_id input, #dx_patient_id textarea');
+  const lead = foot && foot.firstElementChild;
+  if (!region || !lead || !label || !input) { return null; }
+  // The footer's lead, this host's own, swapped for the product's warning mark; put back after.
+  const keptLead = lead.outerHTML;
+  lead.insertAdjacentHTML('beforebegin', __WARN_LEAD__);
+  lead.remove();
+  const mark = foot.firstElementChild, words = mark.querySelector('.shep-st-w');
+  const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const pass = async () => { window.ShepShell.layOut(); await frames(); await frames(); };
+  const SAID = ['No CUDA device visible: GPU training is unavailable.', 'torch is built for CUDA 13.0.',
+    'Check the driver and CUDA libraries.', 'The GPU vector backend cannot be constructed: cuVS is installed but',
+    'cupy is missing (Voyager on the CPU is unaffected).', 'The CPU vector-index backend is unavailable:',
+    'Voyager is not importable.'];
+  const lines = () => new Set([...words.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size;
+  const drawn = (e) => e.getClientRects().length > 0
+    && (!e.checkVisibility || e.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+  const name = (e) => '#' + (e.id || (e.closest('[id]') || { id: '?' }).id);
+  // The bottom of the lowest line drawn in the region shown above `edge` (half of it or more above).
+  const floorOf = (top, edge) => {
+    let low = top;
+    const take = (q) => { if (q.width >= 1 && q.height >= 1 && q.bottom > top
+                                && q.top <= edge - Math.max(1, q.height / 2)) { low = Math.max(low, q.bottom); } };
+    const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT), range = document.createRange();
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const p = n.parentElement;
+      if (!p || !n.data.trim() || !drawn(p) || p.closest('.sr-only, .shep-vh, [hidden], ul.option-list')) { continue; }
+      range.selectNodeContents(n);
+      [...range.getClientRects()].forEach(take);
+    }
+    for (const f of region.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select')) {
+      if (!(f.value || f.placeholder) || !drawn(f)) { continue; }
+      const r = f.getBoundingClientRect(), s = getComputedStyle(f);
+      const above = parseFloat(s.paddingTop) + parseFloat(s.borderTopWidth), below = parseFloat(s.paddingBottom) + parseFloat(s.borderBottomWidth);
+      take({ top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below });
+    }
+    return low;
+  };
+  const box = (e) => { const r = e.getBoundingClientRect(); return [r.top, r.bottom]; };
+  const out = { lines: [], steps: [] };
+  for (const want of [1, 2]) {
+    let k = 1;
+    words.textContent = SAID.slice(0, k).join(' ');
+    while (lines() < want && k < SAID.length) { k += 1; words.textContent = SAID.slice(0, k).join(' '); }
+    out.lines.push(lines());
+    for (let room = 0; room <= 72; room += 3) {
+      foot.style.setProperty('padding-bottom', room + 'px');
+      region.scrollTop = 0;
+      await pass();
+      const r = region.getBoundingClientRect(), top = r.top + region.clientTop, edge = top + region.clientHeight;
+      const cut = parseFloat(region.getAttribute('data-shep-more-cut')) || 0;
+      const look = window.__shepLook.check().layout, mine = (f) => f.startsWith('#shep-dx-fields ');
+      const step = { lines: out.lines[out.lines.length - 1], room, edge, whole: edge + cut, cut,
+                     more: region.scrollHeight - region.clientHeight > 1, fade: getComputedStyle(region).maskImage !== 'none',
+                     head: look.edgeHead.filter(mine), cue: look.cue.filter(mine), gap: [],
+                     label: box(label), input: box(input) };
+      if (region.hasAttribute('data-shep-more-edge')) {
+        const floor = floorOf(top, edge);
+        for (const b of region.querySelectorAll('.block, input:not([type=hidden]), textarea, select, button')) {
+          const [bt, bb] = drawn(b) ? box(b) : [0, 0];
+          if (bt >= floor - 0.5 && bt < edge - 0.5 && bb > edge + 0.5) { step.gap.push(`${name(b)} ${Math.round(edge - bt)} px over the edge`); }
+        }
+      }
+      if (step.input[0] >= edge - 0.5) {
+        const height = region.clientHeight;
+        input.focus();
+        await frames();
+        const q = input.getBoundingClientRect(), rr = region.getBoundingClientRect(), t = rr.top + region.clientTop;
+        const hit = document.elementFromPoint((q.left + q.right) / 2, (q.top + q.bottom) / 2);
+        step.focused = { scrolled: region.scrollTop, whole: q.top >= t - 0.5 && q.bottom <= t + region.clientHeight + 0.5,
+                         kept: region.clientHeight === height, hit: !!hit && (hit === input || input.contains(hit)),
+                         active: document.activeElement === input, caret: getComputedStyle(input).caretColor !== 'transparent' };
+        input.blur();
+      }
+      out.steps.push(step);
+    }
+  }
+  foot.style.removeProperty('padding-bottom');
+  mark.insertAdjacentHTML('beforebegin', keptLead);
+  mark.remove();
+  region.scrollTop = 0;
+  await pass();
+  return out;
+}"""
+
+
+def test_diagnosis_fields_never_end_at_a_title_over_its_moved_box_as_their_room_changes(tmp_path):
+    """**UI-SW-ER2** (P3, the external review of ffb1483): at first use at the display floor
+    (1280 x 720), the footer's environment warning on two lines (a CPU-only host: no CUDA device,
+    cuVS without cupy), Diagnosis' fields region ended at its "Patient ID (optional)" label with
+    the label's whole input under the edge, with the Load drawer shut and open (E1's first use:
+    the same at 1280 x 640). The shell's cut (`cutOf`) asked first whether the region ended at a
+    lone title, and only then moved a box that starts in the gap under the last line shown (the
+    input, 25 of its 43 px above the edge) under the edge whole, which left its label alone over
+    it, never asked again. Now one bounded computation gives a cut that holds both rules at once:
+    no title with every control it heads under the edge, and no box's top left over the edge in
+    the gap, a title and the field it labels under the edge together.
+
+    Controlled facts (`_DX_FIELDS_SWEEP_JS`): the footer's lead drawn as the product's warning
+    mark on every host (a host whose runtime has no issue draws plain words there, which the
+    sweep first needed to find: the review of this test), the warning stood in on one line and
+    on two, and for each the footer drawn taller in 3 px steps, so the edge sweeps across the
+    Patient ID field (the steps must cross it: the edge it would have uncut inside the field at
+    some step). At every step, the Load drawer shut and open: the walk finds no
+    ``edge-heading`` or ``scroll-cue`` finding for the region, no box's top is left over the edge
+    in the gap, and where Patient ID's input lies under the edge, focusing it scrolls the region
+    until it is whole in view, uncovered, the region's height kept and the caret drawn. Fails on
+    c78b9fd."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    stops = [{"size": [1280, 720], "page": "clinical", "check": False},
+             {"size": [1280, 720], "page": "clinical", "check": False, "open": _LOAD_DRAWER}]
+    from src.webui.components.renderers import status_mark
+
+    sweep = _DX_FIELDS_SWEEP_JS.replace("__WARN_LEAD__", json.dumps(status_mark("warn", "")))
+    seen = walk_state("first_use", tmp_path, stops, extra_js=sweep)
+    for stop in seen:
+        got, where = stop["extra"], stop.get("open", "shut")
+        assert got and got["lines"] == [1, 2], (where, got)
+        steps = got["steps"]
+        # The sweep crossed the field: the edge it would have uncut fell inside Patient ID.
+        assert any(s["label"][0] < s["whole"] < s["input"][1] for s in steps), (where, steps)
+        for s in steps:
+            at = (where, s["lines"], s["room"], s)
+            assert s["head"] == [] and s["cue"] == [] and s["gap"] == [], at
+            if "focused" in s:
+                f = s["focused"]
+                assert f["scrolled"] > 0 and f["whole"] and f["kept"] and f["hit"], at
+                assert f["active"] and f["caret"], at
 
 
 #: The L8 close, item 6: how many layout passes a change queues (the shell's script, as the

@@ -2043,8 +2043,10 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
         for size, got in sizes.items():
             where = (state, size)
             # The table where the card holds the table's own narrowest, else each child's
-            # list (V-20; OPS-FIX-R2: by the content, never a fixed width).
-            assert got["form"] == ("table" if got["narrowest"] <= got["card"]["width"] + 0.5
+            # list (V-20; OPS-FIX-R2: by the content, never a fixed width). The card draws no
+            # border or padding, so its width is its room, in fractions of a pixel as the
+            # shell's fit judges it (no slack: UI-SW-ER3 B).
+            assert got["form"] == ("table" if got["narrowest"] <= got["card"]["width"]
                                    else "list"), (where, got["form"], got["narrowest"], got["card"])
             # Both forms say the same of each child: its list's title and values are its row.
             assert got["heads"] == ["Task", "Status", "Run", "Best save", "Validation (Trainer)"], \
