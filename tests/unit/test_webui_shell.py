@@ -5052,6 +5052,91 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert [c for c in found["centred"] if "#c-grid-one" in c], found["centred"]
 
 
+#: A static page for the ``edge`` rule (`browser.LOOK_JS`' ``layout``), shown as the shell shows
+#: one: under a panel's title, texts in a row 14 px in from the title's edge (as Diagnosis'
+#: "Operator controls only" stood under its right-hand buttons), each placed its own way, four
+#: of them a line 880 px wide placed at the end of the row's 886 (its words 20 px off the
+#: title's edge, inside the rule's 2em, so only how it is placed sets it apart); a text whose
+#: words a child's margin moves 14 px in while its box starts on the edge; and two that say
+#: they are placed at their end and still start on a left edge: a line aligned right in a box
+#: shrink-wrapped round its words, and two such lines aligned right in one box.
+_EDGE_RULE_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  await page.setContent(`<!doctype html><html><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    h2 { font-size: 20px; margin: 0 0 8px; }
+    p { margin: 4px 0 0; }
+    .shep-panel { width: 900px; padding: 16px; border: 1px solid #ccc; }
+    .row { padding-left: 14px; }
+    .line { display: inline-block; flex: none; width: 880px; text-align: left; }
+    .tag { display: inline-flex; padding: 0 8px; border: 1px solid #ccc; border-radius: 999px; background: #fff; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page"><div class="shep-panel" id="p1">
+      <div class="shep-panel-hd"><h2 id="title">A panel</h2></div>
+      <div class="row"><p id="edge-left">Words that start off the title's edge.</p></div>
+      <p id="edge-child"><span style="margin-left: 14px">Words a child's margin moves in.</span></p>
+      <p id="edge-tag"><span class="tag">Not loaded</span> at 10:42</p>
+      <p id="edge-icon"><svg width="12" height="12" viewBox="0 0 12 12"><rect x="6" width="6" height="12"/></svg> Locked</p>
+      <div class="row"><p id="edge-right" style="text-align: right"><span class="line">Aligned right</span></p></div>
+      <div class="row"><p id="edge-flex" style="display: flex; justify-content: flex-end"><span class="line">Packed at the end</span></p></div>
+      <div class="row"><p id="edge-auto" style="display: flex"><span class="line" style="margin-left: auto">Pushed by an auto margin</span></p></div>
+      <div class="row" style="display: flex"><p id="edge-own" class="line" style="margin-left: auto">Pushed by its own auto margin</p></div>
+      <div class="row" style="display: flex; flex-direction: column; align-items: flex-start; text-align: right"><p id="edge-shrink">Aligned right, its box no wider</p></div>
+      <div class="row"><p id="edge-wrap" style="text-align: right"><span class="line">Aligned right</span> <span class="line">and on two lines</span></p></div>
+      <div class="row"><p class="shep-reason" id="edge-phrase" style="display: flex; justify-content: end; text-align: right; margin: 2px 0 0 auto"><span aria-hidden="true">&#128274;</span><span><button type="button" class="shep-why">Operator controls only</button></span></p></div>
+    </div></div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  console.log(JSON.stringify(layout));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_edge_rule_reads_where_a_texts_words_start_and_passes_one_placed_at_its_end(tmp_path):
+    """UI-SW-ER3 C (the external review of ffb1483): the ``edge`` rule measured a text by its
+    box, so Diagnosis' read-only "Operator controls only", aligned right under the buttons it
+    explains (R-WHY's phrase beside the dimmed controls, the owner's D6; ``text-align: right``,
+    ``justify-content: end``), was read by its paragraph's left edge, 14 px off the title's,
+    and the read-only walk failed on it. The rule now reads a text where its drawn words start
+    (their client rects) and passes a line whose placement at its end moved its words, as the
+    text itself says: aligned right, packed at the end of a flex row, or pushed by an auto
+    margin (a child's, or its own). A text placed at its start whose words stand 14 px off the
+    title's edge is still found, in a box 14 px in, and with its box on the edge and its words
+    moved in by a child's margin (which the box's measure never saw). A text starts where it
+    draws: at a tag drawn in it (its border; the first walk with words alone found Diagnosis'
+    "○ Not loaded" tag 9 px off, its words inside the tag's padding) and at an icon's box.
+
+    The review of that change: a text that says it is placed at its end was passed even where
+    that moved nothing (a box shrink-wrapped round its one line draws its words at the box's
+    left edge) and where it wraps (the text brief allows ``right`` and ``center`` on one-line
+    text only, and a wrapped line starts near its box's left edge), so a real misalignment
+    there went unseen. Both are found again, where their words start."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    found = run_node(_EDGE_RULE_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)), tmp_path,
+                     timeout=120)
+    assert [e for e in found["edge"] if e.startswith("#edge-left +14 px off #title")], found["edge"]
+    assert [e for e in found["edge"] if e.startswith("#edge-child +14 px off #title")], found["edge"]
+    for placed in ("#edge-right", "#edge-flex", "#edge-auto", "#edge-own", "#edge-phrase"):
+        assert not [e for e in found["edge"] if placed in e], (placed, found["edge"])
+    # Placed at its end, and yet on a left edge: one line in a box no wider than its words, and
+    # lines that wrap (each 6 px in from the box's edge, as the lines above).
+    assert [e for e in found["edge"] if e.startswith("#edge-shrink +14 px off #title")], found["edge"]
+    assert [e for e in found["edge"] if e.startswith("#edge-wrap +20 px off #title")], found["edge"]
+    # What a text draws starts at a tag drawn in it (its border, its words 9 px in: Diagnosis'
+    # "○ Not loaded" at first use) and at an icon (its box, whatever its drawing leaves blank).
+    for drawn in ("#edge-tag", "#edge-icon"):
+        assert not [e for e in found["edge"] if drawn in e], (drawn, found["edge"])
+
+
 #: A static page for the rules the after screenshots asked for (the sweep's L7; `browser.LOOK_JS`'s
 #: ``layout``, `seeAll`): one page shown as the shell shows one, in panels placed side by side, each
 #: rule's bad case beside its good one (each named in the test).
@@ -5989,6 +6074,256 @@ def test_a_page_that_never_holds_still_is_a_walk_finding_by_its_page_and_size():
     assert len(found) == 1 and found[0].startswith("1050x1100 training: settle: "), found
     assert "#shep-train-runview" in found[0] and "data-shep-own-line x88" in found[0], found
     assert "settle" in LAYOUT_RULES and (1050, 1100) in LAYOUT_SIZES
+
+
+#: **The walk's wait, frame by frame on a clock the script sets** (`browser.QUEUE_JS`' ``hold``
+#: and ``held``, which `UI_WALK_JS`' ``idle`` starts after each act and reads once a frame): the
+#: bookkeeping runs on a stand-in window whose requests the script asks and answers, under a
+#: stand-in of the page's Gradio config in Gradio 6.30's shapes (a ``gr.Timer`` and a button; the
+#: timer's tick, a poll that skips the queue, with a step chained after it; the button's click
+#: with a step chained after it). Each case gives its frames a second, what is asked and answered
+#: when, and the time ``held`` first says yes (``null``: never in 60 s), with each request as
+#: the bookkeeping told it apart. Nothing waits on a real clock.
+_WALK_WAIT_JS = r"""
+const vm = require('vm');
+const QUEUE_JS = __QUEUE_JS__;
+const TIMER = 1, BUTTON = 2, POLL = 0, POLL_THEN = 1, ACT = 2, ACT_THEN = 3;
+const CONFIG = {
+  components: [{ id: TIMER, type: 'timer' }, { id: BUTTON, type: 'button' }],
+  dependencies: [
+    { id: POLL, targets: [[TIMER, 'tick']], trigger_after: null },
+    { id: POLL_THEN, targets: [[null, 'then']], trigger_after: POLL },
+    { id: ACT, targets: [[BUTTON, 'click']], trigger_after: null },
+    { id: ACT_THEN, targets: [[null, 'then']], trigger_after: ACT },
+  ] };
+const flush = async () => { for (let i = 0; i < 20; i++) { await new Promise((r) => setImmediate(r)); } };
+
+// One page: its window's fetch answered by the case, its clock set by the case.
+const page = () => {
+  const clock = { now: 0 }, enc = new TextEncoder(), answers = [];
+  let sse = null, last = 0;
+  const window = { gradio_config: CONFIG, fetch: (url) => {
+    if (url.includes('/queue/data')) { return Promise.resolve(new Response(new ReadableStream({ start: (c) => { sse = c; } }))); }
+    if (url.includes('/queue/join')) { last += 1; return Promise.resolve(new Response(JSON.stringify({ event_id: `e${last}` }))); }
+    return new Promise((resolve) => { answers.push(() => resolve(new Response('{}'))); });
+  } };
+  vm.runInNewContext(QUEUE_JS, { window, document: { fonts: { status: 'loaded' } },
+                                 performance: { now: () => clock.now }, Response, TextDecoder });
+  const body = (fn, trigger) => ({ method: 'POST', body: JSON.stringify({ fn_index: fn, trigger_id: trigger, data: [], event_data: null, session_hash: 's' }) });
+  window.fetch('http://h/gradio_api/queue/data?session_hash=s');
+  return { clock, q: window.__shepQueue,
+    // A queued event joined (its event id), and its answer on the event stream.
+    join: (fn, trigger) => { window.fetch('http://h/gradio_api/queue/join', body(fn, trigger)); return `e${last}`; },
+    complete: (id) => sse.enqueue(enc.encode(`data: ${JSON.stringify({ msg: 'process_completed', event_id: id, success: true })}\n\n`)),
+    // A queue=False listener's request (its answer, to give later).
+    direct: (fn, trigger) => { window.fetch('http://h/gradio_api/run/predict', body(fn, trigger)); return answers[answers.length - 1]; } };
+};
+
+// A case: `fps` frames a second for 60 s; `acts(p)` lists what is asked and answered when
+// ([ms, () => ...], the walk's `hold` at 0 after those at 0); with `polls`, the timer's tick
+// every 1.5 s, answered 400 ms later, and the step it chains joined 50 ms after that and
+// answered 100 ms later. Returns when `held` first said yes, and each join as told apart.
+const run = async ({ fps, polls, acts }) => {
+  const p = page(), plan = [];
+  if (polls) {
+    for (let t = 0; t < 60000; t += 1500) {
+      let answer = null, id = null;
+      plan.push([t, () => { answer = p.direct(POLL, TIMER); }], [t + 400, () => answer()],
+                [t + 450, () => { id = p.join(POLL_THEN, TIMER); }], [t + 550, () => p.complete(id)]);
+    }
+  }
+  plan.push(...acts(p));
+  plan.sort((a, b) => a[0] - b[0]);
+  let k = 0;
+  const due = async (t) => {
+    let any = false;
+    for (; k < plan.length && plan[k][0] <= t; k++) { p.clock.now = plan[k][0]; plan[k][1](); any = true; }
+    if (any) { await flush(); }
+  };
+  await due(0);
+  p.q.hold();
+  let held = null;
+  for (let i = 1; i <= 60 * fps; i++) {
+    const t = i * 1000 / fps;
+    await due(t);
+    p.clock.now = t;
+    if (p.q.held()) { held = Math.round(t); break; }
+  }
+  return { held, joins: p.q.joins.map((j) => [j.fn_index, j.trigger_id, j.background]) };
+};
+
+(async () => {
+  const out = {};
+  for (const fps of [5, 60]) {
+    const frame = 1000 / fps;
+    // Polls only, the act answered before the wait starts.
+    out[`polls${fps}`] = await run({ fps, polls: true, acts: () => [] });
+    // The act answered at 300 ms; the step it chains joins nine frames later (or 150 ms, the
+    // longer), answered 300 ms after it.
+    const late = 300 + Math.max(9 * frame, 150);
+    out[`chain${fps}`] = { ...await run({ fps, polls: true, acts: (p) => {
+      let a = null, b = null;
+      return [[0, () => { a = p.join(ACT, BUTTON); }], [300, () => p.complete(a)],
+              [late, () => { b = p.join(ACT_THEN, BUTTON); }], [late + 300, () => p.complete(b)]];
+    } }), answered: late + 300 };
+    // The act's own request never answered: a queued one, a queue=False one, and one whose
+    // trigger_id is the timer's id while its listener hangs off no tick (a step Gradio sends
+    // with no event carries a listener's id, which may equal a component's).
+    out[`join${fps}`] = await run({ fps, polls: true, acts: (p) => [[0, () => p.join(ACT, BUTTON)]] });
+    out[`direct${fps}`] = await run({ fps, polls: true, acts: (p) => [[0, () => p.direct(ACT, BUTTON)]] });
+    out[`named${fps}`] = await run({ fps, polls: true, acts: (p) => [[0, () => p.join(ACT_THEN, TIMER)]] });
+  }
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def walk_wait(tmp_path_factory):
+    """`_WALK_WAIT_JS`' cases, once for the module."""
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    return run_node(_WALK_WAIT_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)),
+                    tmp_path_factory.mktemp("walk-wait"), timeout=120)
+
+
+def test_the_walks_wait_settles_at_five_frames_a_second_while_the_timers_poll(walk_wait):
+    """UI-SW-ER1 (the external review of ffb1483, P2): the walk's one wait asked for ten frames in
+    a row with nothing unanswered, the shell timers' polls included. At about 5 frames a second
+    (Diagnosis with Load/Change open late in a long run) ten frames take 2 s, and the fast
+    timer asks every 1.5 s, so with every act answered the wait never ended and the stop failed
+    at 60 s (six such failures and errors in the full suite at 4b76af9, SW-B16). The wait now
+    counts only the page's own requests: a timer's tick, and the step its tick chains, are told
+    by what triggered them (the listener's chain starts at the timer's ``tick`` and the payload
+    names the timer) and neither start nor end its window. At 5 frames a second it holds after
+    its ten frames (2 s), and at 60 after ten frames and ten frames' time at 60 a second."""
+    from tests.fixtures.browser import UI_WALK_JS
+
+    slow, fast = walk_wait["polls5"], walk_wait["polls60"]
+    assert slow["held"] is not None and slow["held"] <= 2200, slow
+    assert fast["held"] is not None and fast["held"] <= 200, fast
+    # The tick's chained step joined with the timer's trigger_id, and was told apart by it.
+    assert slow["joins"] and all(j == [1, 1, True] for j in slow["joins"]), slow["joins"]
+    # The walk waits through these two, once a frame.
+    idle = UI_WALK_JS[UI_WALK_JS.index("const idle = async"):UI_WALK_JS.index("} catch (e)")]
+    assert "window.__shepQueue.hold()" in idle and "window.__shepQueue.held()" in idle, idle
+    assert "polling: 'raf'" in idle, idle
+
+
+def test_the_walks_wait_still_waits_for_an_acts_chained_step_that_joins_late(walk_wait):
+    """UI-SW-ER1's other side: the timers' polls set aside, the walk still waits for what the
+    act asked and the steps its chain asks after it, the reason for its window of frames
+    (d746a0f: a page's opening chain, `.then` after `.then`, leaves the queue idle for an
+    instant between two of its events; Fine-tune's reason beside its disabled Start, drawn late
+    in the chain, was missed at one stop in two). An act answered, then its chained step joined
+    nine frames later (its window's last frame), at 5 and at 60 frames a second, the timers
+    polling throughout: the wait ends only a full window after that step is answered."""
+    for fps in (5, 60):
+        seen = walk_wait[f"chain{fps}"]
+        assert seen["held"] is not None, seen
+        assert seen["held"] >= seen["answered"] + 10 * 1000 / fps - 1, seen
+        assert seen["held"] >= seen["answered"] + 1000 / 6 - 1, seen
+        own = [j for j in seen["joins"] if j[0] in (2, 3)]
+        assert own == [[2, 2, False], [3, 2, False]], seen["joins"]
+
+
+def test_the_walks_wait_never_ends_while_an_acts_own_request_is_unanswered(walk_wait):
+    """UI-SW-ER1's guard: what the page itself asked is never set aside with the timers' polls.
+    An act's request never answered, queued or not, keeps the wait from ending for its 60 s at
+    5 and at 60 frames a second (the walk's 60 s bound then names it), and so does one whose
+    payload names the timer while its listener hangs off no tick: a trigger_id alone is no proof
+    of a poll (Gradio sends a step it dispatches with no event, a ``.failure`` or a load, with a
+    listener's id, which may equal a component's)."""
+    for fps in (5, 60):
+        for case in ("join", "direct", "named"):
+            seen = walk_wait[f"{case}{fps}"]
+            assert seen["held"] is None, (case, fps, seen)
+        assert [2, 2, False] in walk_wait[f"join{fps}"]["joins"]
+        assert [3, 1, False] in walk_wait[f"named{fps}"]["joins"]
+
+
+#: **What a served page's requests were told apart as** (`browser.QUEUE_JS`' ``background``, read
+#: from the page's own Gradio config and each request's payload): a tick's poll while it is in
+#: flight, and every join of the step its tick chains, of a click and of the step the click
+#: chains, and of the page's load; then whether the walk's wait holds while the timer polls on.
+_TOLD_APART_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const ids = JSON.parse(process.argv[3]);
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#act');
+  await page.waitForFunction((poll) => window.__shepQueue.directs.some((d) => d.fn_index === poll), ids.poll, { timeout: 30000 });
+  const poll = await page.evaluate((poll) => window.__shepQueue.directs.filter((d) => d.fn_index === poll)
+    .map((d) => [d.trigger_id === undefined ? null : d.trigger_id, d.background === undefined ? null : d.background]), ids.poll);
+  await page.waitForFunction((fn) => window.__shepQueue.answered(fn) >= 1, ids.pollThen, { timeout: 30000 });
+  await page.waitForFunction((fn) => window.__shepQueue.answered(fn) >= 1, ids.load, { timeout: 30000 });
+  await page.click('#act');
+  await page.waitForFunction((fn) => window.__shepQueue.answered(fn) >= 1, ids.actThen, { timeout: 30000 });
+  const held = await page.evaluate(() => { window.__shepQueue.hold(); return true; })
+    .then(() => page.waitForFunction(() => window.__shepQueue.held(), null, { timeout: 30000, polling: 'raf' }))
+    .then(() => true, () => false);
+  const joins = await page.evaluate(() => window.__shepQueue.joins.map((j) => [j.fn_index,
+    j.trigger_id === undefined ? null : j.trigger_id, j.background === undefined ? null : j.background]));
+  console.log(JSON.stringify({ poll, joins, held }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_served_pages_timer_polls_are_told_from_its_own_requests(tmp_path):
+    """UI-SW-ER1, against Gradio 6.30 itself (the shapes `_WALK_WAIT_JS` stands in for): a
+    ``gr.Timer``'s tick, a poll that skips the queue as the shell's do, is a background request
+    while it is in flight, and so is every join of the step its tick chains (Gradio sends each
+    with the timer's id as its trigger_id); a click, the step it chains (with the button's id)
+    and the page's load (with the Blocks' id) are the page's own. The walk's wait holds while the timer
+    goes on polling, each poll in flight 600 ms of every tick it does not skip."""
+    import time
+
+    import gradio as gr
+
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+
+    def _poll():
+        time.sleep(0.6)
+        return gr.update()
+
+    with gr.Blocks() as demo:
+        timer = gr.Timer(0.25)
+        polled, count = gr.Textbox(visible=False), gr.State(0)
+        button, shown = gr.Button("Act", elem_id="act"), gr.Textbox(elem_id="act-out")
+        timer.tick(_poll, None, polled, queue=False, show_progress="hidden").then(
+            lambda n: n + 1, count, count, show_progress="hidden")
+        button.click(lambda: "asked", None, shown).then(lambda: "answered", None, shown)
+        demo.load(lambda: "", None, shown)
+    fns = list(demo.fns.values())
+    on = {event: next(fn._id for fn in fns if (block, event) in fn.targets)
+          for block, event in ((timer._id, "tick"), (button._id, "click"), (demo._id, "load"))}
+    after = {fn.trigger_after: fn._id for fn in fns if fn.trigger_after is not None}
+    ids = {"poll": on["tick"], "pollThen": after[on["tick"]], "act": on["click"],
+           "actThen": after[on["click"]], "load": on["load"]}
+    script = _TOLD_APART_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(demo) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")], json.dumps(ids), timeout=120)
+    assert seen["poll"] and all(p == [timer._id, True] for p in seen["poll"]), seen
+    told = {}
+    for fn, trigger, background in seen["joins"]:
+        told.setdefault(fn, set()).add((trigger, background))
+    assert told[ids["pollThen"]] == {(timer._id, True)}, told
+    assert told[ids["act"]] == {(button._id, False)}, told
+    assert told[ids["actThen"]] == {(button._id, False)}, told
+    # A load's event is sent with the Blocks' id (null when that id is 0, the first Blocks).
+    assert told[ids["load"]] == {(demo._id or None, False)}, told
+    assert seen["held"], seen
 
 
 def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):

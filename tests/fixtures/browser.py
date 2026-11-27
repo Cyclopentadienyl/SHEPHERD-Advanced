@@ -16,8 +16,12 @@ queue join the page sends (its listener's ``fn_index``, ``trigger_id`` and
 ``inflight`` (joined, not yet answered), ``direct`` (a ``queue=False``
 listener's requests not yet answered) and ``idle()`` (nothing unanswered). A
 test counts the requests one act sent and waits for what it asked to be
-answered, never for a fixed time. `run_node` runs a script and reads the JSON
-it prints.
+answered, never for a fixed time. Each request is also told apart by what
+triggered it (``background``: a shell timer's tick or a chain its tick
+started, read from the page's Gradio config and the request's payload), and
+``ownIdle()``, ``hold()`` and ``held()`` are the walk's wait (`UI_WALK_JS`):
+none of the page's own requests asked or answered for a window of frames, the
+timers' polls aside. `run_node` runs a script and reads the JSON it prints.
 
 **What a page draws, measured where the browser draws it** (`LOOK_JS`, a page
 init script; T04, the WebUI's shared tokens): ``window.__shepLook`` reads
@@ -75,9 +79,12 @@ pushed to the line's end, a disabled button with nothing said, a token or a
 fact broken where it fits, labels of one row off one line); `layout_problems`
 turns it into lines. A walk can serve the dashboard at first use or with an
 empty workspaces folder (`walk_state`, `WALK_STATES`) and measure each page at
-the layout windows (`layout_stops`, `LAYOUT_SIZES`); a stop measures once the
-page's requests have been answered for ten frames in a row (a page's opening
-chain is idle for an instant between two of its events). **The display
+the layout windows (`layout_stops`, `LAYOUT_SIZES`); a stop measures once none
+of the page's own requests has been asked or answered for ten frames in a row,
+and for at least as long as ten frames take at 60 a second (a page's opening
+chain is idle for an instant between two of its events; the shell timers'
+polls, which tick whatever the page shows, neither start nor end that
+window: `QUEUE_JS`' ``held``). **The display
 floor** (`floor_size`, `effective_size`, `at_floor`; the owner's decisions of
 2026-11-23 and R-ARR, D11 of 2026-11-24): the floor of the arrangement a
 window takes, the display floor where a window wider than tall tries side by
@@ -121,7 +128,8 @@ def node_with_playwright() -> tuple[str, dict[str, str]] | None:
 #: ``page.addInitScript`` before the page loads.
 QUEUE_JS = r"""
 (() => {
-  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0, direct: 0, directs: [], took: {}};
+  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0, direct: 0, directs: [], took: {},
+                                  ownAt: 0, window: null};
   /* The listener `fnIndex`'s joins, and how many of them were answered. */
   q.count = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex).length;
   q.answered = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex && j.event_id !== null
@@ -132,19 +140,77 @@ QUEUE_JS = r"""
      again when its font arrives). */
   q.idle = () => q.inflight === 0 && q.direct === 0 && q.joins.every((j) => j.event_id !== null)
     && document.fonts.status === 'loaded';
+  /* **A request a shell timer asked** (``background``), told by what triggered it, from the
+     page's Gradio config and the request's payload: its listener's chain (its ``trigger_after``
+     ancestry, ``.then`` and ``.success`` steps) starts at a ``tick`` of a ``gr.Timer``, and the
+     payload's ``trigger_id`` is that timer (Gradio 6.30's client sends a chain's every event
+     with the trigger_id of the event the chain began with). The shell's timers tick every
+     1.5 s and 5 s whatever the page shows, each tick a request (`shell.build_shell`); every
+     other request is the page's own: an act's, its chain's, a load's, and a ``.change`` a
+     poll's answer started (that one redraws the page). A trigger_id alone is no proof: one sent
+     with no event (a ``.failure`` step, a load) is a listener's id, which may equal a
+     component's. */
+  let config = null, deps = null, timers = null;
+  q.background = (fn, trigger) => {
+    const cfg = window.gradio_config;
+    if (!cfg || trigger === null || trigger === undefined) { return false; }
+    if (cfg !== config) {
+      config = cfg;
+      deps = new Map((cfg.dependencies || []).map((d) => [d.id, d]));
+      timers = new Set((cfg.components || []).filter((c) => c.type === 'timer').map((c) => c.id));
+    }
+    if (!timers.has(trigger)) { return false; }
+    let d = deps.get(fn);
+    for (let i = 0; d && d.trigger_after !== null && d.trigger_after !== undefined && i < 100; i++) {
+      d = deps.get(d.trigger_after);
+    }
+    return !!d && (d.targets || []).some(([id, event]) => id === trigger && event === 'tick');
+  };
+  /* None of the page's own requests unanswered (the timers' aside), and its fonts in. */
+  q.ownIdle = () => q.directs.every((d) => d.background)
+    && q.joins.every((j) => j.background || (j.event_id !== null && j.event_id in q.done))
+    && document.fonts.status === 'loaded';
+  /* When one of the page's own requests was last asked or answered. */
+  const own = () => { q.ownAt = performance.now(); };
+  /* **The walk's wait** (`UI_WALK_JS`' ``idle``): `hold` starts a window, and `held`, read once
+     a frame, says whether none of the page's own requests has been asked or answered and its
+     fonts have been in for `FRAMES` frames in a row since, and for at least as long as that
+     many frames take at 60 a second. Frames, since a chain's next event joins in the page's
+     next turns after the one before is answered, however slowly it draws (`.then` after
+     `.then`, the queue idle for an instant between two; d746a0f: Fine-tune's reason beside its
+     disabled Start, drawn late in its chain, was missed at one stop in two); the time floor,
+     so a faster display draws no shorter window. The timers' polls neither start nor end it: a
+     window that waited for no request at all never fitted between two ticks at 5 frames a
+     second (the external review of ffb1483, UI-SW-ER1). */
+  const FRAMES = 10, MS = FRAMES * 1000 / 60;
+  q.hold = () => { q.window = {at: q.ownAt, frames: 0, from: performance.now()}; };
+  q.held = () => {
+    if (!q.window) { q.hold(); }
+    const w = q.window, now = performance.now(), calm = q.ownIdle();
+    if (!calm || w.at !== q.ownAt) {
+      Object.assign(w, {at: calm ? q.ownAt : null, frames: 0, from: now});
+      return false;
+    }
+    w.frames += 1;
+    return w.frames >= FRAMES && now - w.from >= MS;
+  };
   const original = window.fetch;
   window.fetch = function (input, init) {
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);
     const sent = original.apply(this, arguments);
     if (url.includes('/run/predict')) {
       /* Its listener kept while unanswered (`directs`), for a walk that names what it waited on. */
-      let fn = null;
-      try { fn = JSON.parse((init && init.body) || '{}').fn_index; } catch (e) { fn = null; }
-      const entry = {fn_index: fn, t0: performance.now()};
+      let body = {};
+      try { body = JSON.parse((init && init.body) || '{}'); } catch (e) { body = {}; }
+      const fn = body.fn_index === undefined ? null : body.fn_index;
+      const entry = {fn_index: fn, trigger_id: body.trigger_id, t0: performance.now(),
+                     background: q.background(fn, body.trigger_id)};
       q.direct += 1;
       q.directs.push(entry);
+      if (!entry.background) { own(); }
       sent.finally(() => {
         q.direct -= 1; q.directs.splice(q.directs.indexOf(entry), 1);
+        if (!entry.background) { own(); }
         /* How long its last answers took (ms), for the same report. */
         (q.took[fn] = q.took[fn] || []).push(Math.round(performance.now() - entry.t0));
         if (q.took[fn].length > 5) { q.took[fn].shift(); }
@@ -156,11 +222,15 @@ QUEUE_JS = r"""
          sends is counted before the first one's answer is read. */
       let body = {};
       try { body = JSON.parse((init && init.body) || '{}'); } catch (e) { body = {}; }
-      const entry = {fn_index: body.fn_index, trigger_id: body.trigger_id, event_id: null};
+      const entry = {fn_index: body.fn_index, trigger_id: body.trigger_id, event_id: null,
+                     background: q.background(body.fn_index, body.trigger_id)};
       q.joins.push(entry);
       q.inflight += 1;
-      sent.then((res) => res.clone().json()).then((j) => { entry.event_id = j.event_id; })
-        .catch(() => {});
+      if (!entry.background) { own(); }
+      sent.then((res) => res.clone().json()).then((j) => {
+        entry.event_id = j.event_id;
+        if (!entry.background) { own(); }
+      }).catch(() => {});
       return sent;
     }
     if (!url.includes('/queue/data')) { return sent; }
@@ -182,6 +252,10 @@ QUEUE_JS = r"""
               if (m.msg === 'process_completed' && !(m.event_id in q.done)) {
                 q.done[m.event_id] = m.success !== false;
                 q.inflight -= 1;
+                /* An answer read before its join's own answer (its event id not known yet)
+                   counts when that is read (above). */
+                const asked = q.joins.find((j) => j.event_id === m.event_id);
+                if (asked && !asked.background) { own(); }
               }
             } catch (e) { /* a heartbeat */ }
           }
@@ -383,7 +457,9 @@ LOOK_JS = r"""
        "Details ›" link aside);
      - edge: in a panel's left part, a heading, paragraph, reason, notice, empty state, field
        label or field box whose left edge is 1 px to 2em off the panel heading's (lists, tables,
-       term rows and the words after a status mark aside);
+       term rows and the words after a status mark aside); a text by where its drawn words
+       start, and none whose placement at its end or centre (its ``text-align``, a flex row's
+       ``justify-content``, an auto margin) moved the words of its one line;
      - clipped: a control cut by an ancestor that hides its overflow and is no scroll region (a
        box of ``display: contents`` draws no box, so it clips nothing);
      - empty: a panel with no visible words or control under its header;
@@ -479,13 +555,98 @@ LOOK_JS = r"""
     const top = layer && document.elementFromPoint(x, y);
     return !!top && layer.contains(top);
   };
-  /* Where an element's own words or box start: a box (a field, a select's wrap) at its border,
-     text at its content edge (after its padding and border). */
+  /* What a text draws, as client rects: its visible text nodes (`Range`), an icon in its line
+     (an ``svg`` or an ``img``) and a box drawn inside it (a tag or a chip, with a background or
+     a left border: Diagnosis' "○ Not loaded" tag starts at its border, its words 9 px in). */
+  const drawsBox = (x) => {
+    const cs = getComputedStyle(x);
+    return !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(cs.backgroundColor) || cs.backgroundImage !== 'none'
+      || (parseFloat(cs.borderLeftWidth) > 0 && !['none', 'hidden'].includes(cs.borderLeftStyle));
+  };
+  const marks = (e) => {
+    const out = [];
+    const take = (q) => { if (q.width > 0 && q.height > 0) { out.push(q); } };
+    // An svg is one icon: its box, never its parts.
+    const walker = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+      (x) => (x.parentElement.closest('svg') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT));
+    const range = document.createRange();
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (getComputedStyle(n.nodeType === 3 ? n.parentElement : n).visibility !== 'visible') { continue; }
+      if (n.nodeType === 1) {
+        if (n.matches('svg, img') || drawsBox(n)) { take(n.getBoundingClientRect()); }
+        continue;
+      }
+      if (!/\S/.test(n.data)) { continue; }
+      range.selectNodeContents(n);
+      for (const q of range.getClientRects()) { take(q); }
+    }
+    return out;
+  };
+  const leftOf = (q) => q.reduce((m, x) => Math.min(m, x.left), Infinity);
+  /* The width of a margin the browser read as ``auto`` on side ``k`` (``left``, ``right``), as
+     drawn; 0 for any other margin. */
+  const autoMargin = (x, k) => {
+    const m = x.computedStyleMap ? x.computedStyleMap() : null;
+    return m && String(m.get(`margin-${k}`)) === 'auto'
+      ? parseFloat(getComputedStyle(x)[k === 'left' ? 'marginLeft' : 'marginRight']) || 0 : 0;
+  };
+  /* Where an element's own words or box start: a box (a field, a select's wrap) at its border;
+     a text where what it draws starts (`marks`), never where the box holding it starts; one
+     that draws nothing at its content edge (after its padding and border). */
   const startOf = (e) => {
     const r = e.getBoundingClientRect();
     if (e.matches('input, textarea, .wrap')) { return r.left; }
+    const left = leftOf(marks(e));
+    if (left < Infinity) { return left; }
     const s = getComputedStyle(e);
     return r.left + (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.borderLeftWidth) || 0);
+  };
+  /* Where a text's content is placed along its line (``start``, ``centre`` or ``end``), as it
+     says itself: its ``text-align``; the ``justify-content`` of a flex row (its main axis
+     reversed by ``row-reverse``); or an auto margin that pushed it, its own or its first child
+     box's when no words come before that box (a margin the browser read as auto and drew wider
+     than a pixel). A text placed at its end stands by what is at its right, as R-WHY's phrase
+     under the controls it explains, never on a column's left edge. */
+  const placed = (e) => {
+    const s = getComputedStyle(e);
+    const auto = (x) => (autoMargin(x, 'left') > 1 ? (autoMargin(x, 'right') > 1 ? 'centre' : 'end') : null);
+    if (['right', '-webkit-right', 'end'].includes(s.textAlign)) { return 'end'; }
+    if (['center', '-webkit-center'].includes(s.textAlign)) { return 'centre'; }
+    if (s.display.includes('flex') && s.flexDirection.startsWith('row')) {
+      const j = s.justifyContent, reversed = s.flexDirection === 'row-reverse';
+      if (j === 'center') { return 'centre'; }
+      if (['end', 'right'].includes(j) || j === (reversed ? 'normal' : 'flex-end') || (reversed && j === 'flex-start')) { return 'end'; }
+    }
+    const own = auto(e);
+    if (own) { return own; }
+    for (const c of e.childNodes) {
+      if (c.nodeType === 3 && /\S/.test(c.data)) { break; }
+      if (c.nodeType !== 1) { continue; }
+      const cs = getComputedStyle(c);
+      if (cs.display === 'none' || cs.position === 'absolute' || cs.position === 'fixed') { continue; }
+      return auto(c) || 'start';
+    }
+    return 'start';
+  };
+  /* A text whose placement moved its words off a left edge: placed at its end or centred
+     (`placed`), drawn on one line (the middle of each thing it draws lies within the height of
+     each other: an icon or a tag beside its words is on their line, a second line's words lie
+     below the first's), and its words start right of where they would placed at its start (its
+     content edge, before a left margin the browser read as auto: one that pushed its own box).
+     A text that says it is so placed and still draws its words there (a box shrink-wrapped
+     round them, a line that fills its box) or wraps (the text brief allows ``right`` and
+     ``center`` on one-line text only, and a wrapped line starts near its box's left edge) is
+     read where its words start, as any text (the review of the UI-SW-ER3 C change). */
+  const movedOff = (e) => {
+    if (placed(e) === 'start') { return false; }
+    const q = marks(e);
+    if (!q.length) { return false; }
+    const mids = q.map((x) => (x.top + x.bottom) / 2);
+    const oneLine = Math.max(...mids) <= Math.min(...q.map((x) => x.bottom))
+      && Math.min(...mids) >= Math.max(...q.map((x) => x.top));
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    const rest = r.left - autoMargin(e, 'left') + (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.borderLeftWidth) || 0);
+    return oneLine && leftOf(q) > rest + 1;
   };
   const layout = () => {
     const shownNow = shownPage(), tab = shownNow.tab;
@@ -646,9 +807,17 @@ LOOK_JS = r"""
       if (!head || !visible(head)) { continue; }
       const pr = p.getBoundingClientRect(), edge = startOf(head);
       const em = parseFloat(getComputedStyle(head).fontSize) * 2;
+      // A text by where its drawn words start, and none whose one line its placement at its end
+      // or centre moved off its left edge (the external review of ffb1483, UI-SW-ER3 C:
+      // Diagnosis' "Operator controls only", aligned right under the buttons it explains, was
+      // read by its paragraph's left edge, 14 px off the title's); a box by its border, unless
+      // its own words are centred.
       const off = [...p.querySelectorAll(EDGE)].filter((e) => visible(e) && !e.closest(HANG) && !e.closest(SKIP))
-        .filter((e) => { const r = e.getBoundingClientRect(); return r.left < pr.left + 0.4 * pr.width && getComputedStyle(e).textAlign !== 'center'; })
-        .map((e) => [e, Math.round(startOf(e) - edge)])
+        .filter((e) => (e.matches('input, textarea, .wrap') ? getComputedStyle(e).textAlign !== 'center'
+                                                             : !movedOff(e)))
+        .map((e) => [e, startOf(e)])
+        .filter(([, x]) => x < pr.left + 0.4 * pr.width)
+        .map(([e, x]) => [e, Math.round(x - edge)])
         .filter(([, dx]) => Math.abs(dx) > 1 && Math.abs(dx) <= em);
       for (const [e, dx] of off.slice(0, 6)) { out.edge.push(`${named(e)} ${dx > 0 ? '+' : ''}${dx} px off ${named(head)}`); }
     }
@@ -1490,32 +1659,36 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
                                                  ...(HEADERS ? { extraHTTPHeaders: HEADERS } : {}) })).newPage();
   await page.addInitScript(QUEUE_JS);
   await page.addInitScript(LOOK_JS);
-  // Nothing asked is unanswered over ten frames in a row: a page's opening chain (`.then` after
-  // `.then`, each joined a moment after the one before is answered) is idle for an instant
-  // between two of its events, and a stop measured there missed what its last event drew (the
-  // L7 rules: Fine-tune's reason beside its disabled Start, drawn late in the chain).
+  // None of the page's own requests asked or answered over a window of frames (`QUEUE_JS`'
+  // `hold` and `held`: ten in a row, and as long as ten take at 60 a second): a page's opening
+  // chain (`.then` after `.then`, each joined a moment after the one before is answered) is
+  // idle for an instant between two of its events, and a stop measured there missed what its
+  // last event drew (the L7 rules: Fine-tune's reason beside its disabled Start, drawn late in
+  // the chain). The shell timers' polls, which tick whatever the page shows, are no part of it
+  // (`QUEUE_JS`' `background`): a wait for no request at all never fitted between two ticks at
+  // 5 frames a second (UI-SW-ER1).
   // A wait that runs out names where the walk was (`at`: the stop, its page and size, and the
-  // step) and what the page still had unanswered (each listener by its fn_index), so a walk
-  // that fails says which part of it failed, never only that it timed out.
+  // step) and what the page still had unanswered (each listener by its fn_index, and whether a
+  // timer asked it), so a walk that fails says which part of it failed, never only that it
+  // timed out.
   let at = 'the page load';
   const idle = async () => {
-    await page.evaluate(() => { window.__shepQuiet = 0; });
+    await page.evaluate(() => { if (window.__shepQueue) { window.__shepQueue.hold(); } });
     try {
-      await page.waitForFunction(() => {
-        if (!(window.__shepQueue && window.__shepQueue.idle())) { window.__shepQuiet = 0; return false; }
-        window.__shepQuiet += 1;
-        return window.__shepQuiet >= 10;
-      }, null, { timeout: 60000, polling: 'raf' });
+      await page.waitForFunction(() => !!window.__shepQueue && window.__shepQueue.held(),
+                                 null, { timeout: 60000, polling: 'raf' });
     } catch (e) {
       const q = await page.evaluate(() => { const Q = window.__shepQueue;
-        const now = performance.now();
+        const now = performance.now(), by = (x) => (x.background ? 'background' : 'own');
         return Q && { inflight: Q.inflight, fonts: document.fonts.status,
-                      direct: Q.directs.map((d) => [d.fn_index, Math.round(now - d.t0), Q.took[d.fn_index] || []]),
+                      held: Q.window && { frames: Q.window.frames, ms: Math.round(now - Q.window.from) },
+                      direct: Q.directs.map((d) => [d.fn_index, Math.round(now - d.t0), Q.took[d.fn_index] || [], by(d)]),
                       joins: Q.joins.filter((j) => j.event_id === null || !(j.event_id in Q.done))
-                        .map((j) => [j.fn_index, j.event_id === null ? 'not joined' : 'not answered']) }; })
+                        .map((j) => [j.fn_index, j.event_id === null ? 'not joined' : 'not answered', by(j)]) }; })
         .catch(() => null);
-      // And how the page runs then, over 3 s: its frames' gaps, how many of them had nothing
-      // unanswered, and how many elements it holds (a frame never drawn is a busy main thread).
+      // And how the page runs then, over 3 s: its frames' gaps, how many of them had none of its
+      // own requests unanswered, and how many elements it holds (a frame never drawn is a busy
+      // main thread).
       const run = await page.evaluate(() => new Promise((done) => {
         // What changes in the page meanwhile, most changed first (a mark set over and over).
         const seen = {}, mo = new MutationObserver((records) => { for (const r of records) {
@@ -1525,7 +1698,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
         mo.observe(document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
         const gaps = []; let quiet = 0, last = performance.now(); const start = last;
         const f = (t) => { gaps.push(t - last); last = t;
-          if (window.__shepQueue && window.__shepQueue.idle()) { quiet += 1; }
+          if (window.__shepQueue && window.__shepQueue.ownIdle()) { quiet += 1; }
           if (t - start < 3000) { requestAnimationFrame(f); } else {
             gaps.sort((a, b) => a - b); mo.disconnect();
             done({ frames: gaps.length, quiet, p50: Math.round(gaps[gaps.length >> 1]), max: Math.round(gaps[gaps.length - 1]),
