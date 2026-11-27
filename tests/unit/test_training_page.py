@@ -5132,7 +5132,17 @@ def test_stacked_a_readers_hide_and_show_hold_across_resizes_and_side_by_side_dr
 #: whether it can be used); ``["pick", value]`` picks that option there and reads what the
 #: browser keeps (``localStorage``) and the root element's mark; ``["fold"]`` presses
 #: Training's Hide or Show; ``["reload"]`` loads the dashboard again in the same tab (the shell
-#: brings back the page shown); ``["size", w, h]`` makes the window that size.
+#: brings back the page shown); ``["size", w, h]`` makes the window that size. Each
+#: ``["training"]`` also returns ``marks``: the order in which Training's panels were first
+#: marked placed and answered (`training_console.PLACED_ATTR`, `ANSWERED_ATTR`) in this page
+#: load, as a MutationObserver sees each set (a mark already there when the panels are first
+#: found reads "already <mark>": no order). ``process.argv[4]`` (JSON), on a reload: Training's
+#: first answers held, the queue joins of its page open's chain (the listeners up to the one
+#: that marks its panels answered, as the page's Gradio config lists them):
+#: ``{"answers": "late", "ms": n}`` each held n ms, the reader staying on Training until its
+#: panels are marked answered (a slow host); ``{"answers": "left", "ms": n}`` held until the
+#: reader, leaving for Settings as soon as Training has asked for them, has been there n ms.
+#: Either way the step ends with the panels marked answered and the page idle.
 _CHOICE_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -5157,7 +5167,24 @@ const QUEUE_JS = __QUEUE_JS__;
     const tick = () => { after.port2.postMessage(0); requestAnimationFrame(tick); };
     requestAnimationFrame(tick);
   });
-  const KEY = __KEY__, ATTR = __ATTR__;
+  await page.addInitScript(() => {
+    const marks = window.__trainMarks = [], names = [__PLACED__, __ANSWERED__];
+    const watch = (p) => {
+      for (const name of names) { if (p.hasAttribute(name)) { marks.push('already ' + name); } }
+      new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.oldValue === null && !marks.includes(r.attributeName)) { marks.push(r.attributeName); }
+        }
+      }).observe(p, { attributes: true, attributeOldValue: true, attributeFilter: names });
+    };
+    const found = new MutationObserver(() => {
+      const p = document.getElementById('shep-train-page');
+      if (p) { found.disconnect(); watch(p); }
+    });
+    found.observe(document, { childList: true, subtree: true });
+  });
+  const KEY = __KEY__, ATTR = __ATTR__, ANSWERED = __ANSWERED__;
+  const lever = process.argv[4] ? JSON.parse(process.argv[4]) : null;
   const load = async () => {
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
@@ -5184,7 +5211,8 @@ const QUEUE_JS = __QUEUE_JS__;
       await page.waitForSelector('#shep-train-charts .shep-chart', { timeout: 60000 });
       await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
       const settled = await still();
-      out.push({ step: step[0], settled, frames: await page.evaluate(() => window.__trainFrames.slice()) });
+      out.push({ step: step[0], settled, frames: await page.evaluate(() => window.__trainFrames.slice()),
+                 marks: await page.evaluate(() => window.__trainMarks.slice()) });
     }
     if (step[0] === 'settings') {
       await page.evaluate(() => { window.__trainOn = false; });
@@ -5209,9 +5237,45 @@ const QUEUE_JS = __QUEUE_JS__;
       await still();
       out.push({ step: step[0], frames: await page.evaluate(() => window.__trainFrames.slice(-1)) });
     }
-    if (step[0] === 'reload') {
+    if (step[0] === 'reload' && !lever) {
       await page.evaluate(() => { window.__trainOn = false; });
       await load();
+      out.push({ step: step[0] });
+    }
+    if (step[0] === 'reload' && lever) {
+      await page.evaluate(() => { window.__trainOn = false; });
+      const chain = await page.evaluate((mark) => {
+        const deps = window.gradio_config.dependencies, byId = new Map(deps.map((d) => [d.id, d]));
+        const ends = deps.filter((d) => typeof d.js === 'string' && d.js.includes(mark)), ids = [];
+        for (let d = ends.length === 1 ? ends[0] : null; d; d = byId.get(d.trigger_after)) { ids.push(d.id); }
+        return ids;
+      }, ANSWERED);
+      if (chain.length < 2) { throw new Error(`no page open chain ends in ${ANSWERED}: ${JSON.stringify(chain)}`); }
+      let asked, release, timer;
+      const first = new Promise((r) => { asked = r; }), released = new Promise((r) => { release = r; });
+      const hold = async (route) => {
+        let fn = null;
+        try { fn = route.request().postDataJSON().fn_index; } catch (e) { fn = null; }
+        if (chain.includes(fn)) {
+          asked();
+          await (lever.answers === 'late' ? new Promise((r) => setTimeout(r, lever.ms)) : released);
+        }
+        try { await route.continue(); } catch (e) { /* the page has gone */ }
+      };
+      await page.route('**/queue/join**', hold);
+      await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+      await Promise.race([first, new Promise((_, no) => {
+        timer = setTimeout(() => no(new Error('Training never asked for its answers')), 60000); })]);
+      clearTimeout(timer);
+      if (lever.answers === 'left') {
+        await page.$eval('#shep-tab-settings-button', (el) => el.click());
+        await page.waitForSelector('#shep-display-params label', { state: 'visible', timeout: 60000 });
+        await page.waitForTimeout(lever.ms);
+        release();
+      }
+      await page.waitForFunction((mark) => document.getElementById('shep-train-page').hasAttribute(mark)
+                                 && window.__shepQueue.idle(), ANSWERED, { timeout: 120000 });
+      await page.unroute('**/queue/join**', hold);
       out.push({ step: step[0] });
     }
     if (step[0] === 'size') {
@@ -5223,7 +5287,41 @@ const QUEUE_JS = __QUEUE_JS__;
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
-""".replace("__KEY__", json.dumps(display.PARAMS_KEY)).replace("__ATTR__", json.dumps(display.PARAMS_ATTR))
+""".replace("__KEY__", json.dumps(display.PARAMS_KEY)).replace("__ATTR__", json.dumps(display.PARAMS_ATTR)) \
+    .replace("__PLACED__", json.dumps(tc.PLACED_ATTR)) \
+    .replace("__ANSWERED__", json.dumps(tc.ANSWERED_ATTR))
+
+#: Training's panels at 1080 x 1920 as `_CHOICE_JS` reads them, the run view's place aside: the
+#: body shown ("Hide"), and folded ("Show"), the run view visible.
+_CHOICE_SHOWN, _CHOICE_FOLDED = "true Hide|true|visible", "false Show|false|visible"
+
+
+def _held_then_shown(seen, i, final):
+    """Automatic's promise, read in `_CHOICE_JS`' reading `i`: never the run view in a wrong
+    place or the body in a wrong state before the fold decides. Every frame read before the
+    run view is first seen is the start state (folded, "Show", the run view invisible: held);
+    from that frame on, one state, `final`, that never changes (the run view stays where it is
+    first seen). Zero held frames read is the promise kept when the first frame read is already
+    final: the fold decided before it, or the one held frame's reading came after the decision
+    (a page loaded again may also have decided before the reader left)."""
+    assert seen[i]["step"] == "training", seen[i]
+    got = seen[i]["frames"]
+    first = next(k for k, f in enumerate(got) if f.split("|")[2] == "visible")
+    assert all(f.startswith("false Show|false|hidden|") for f in got[:first]), got
+    assert len(set(got[first:])) == 1 and got[first].startswith(final), got
+
+
+def _reloaded_final(seen, i):
+    """What Training comes back as on a page loaded again under Automatic at 1080 x 1920 (where
+    the fold by the room shows the body), told by the order in which its panels were first
+    marked in that page load (`_CHOICE_JS`' ``marks`` of reading `i`). Answered first: the fold
+    decided by the room once the answers were in (before the reader left, or on the way back),
+    so shown. Placed first: `training_console.HOLD_MOST_MS` ran out with the reader still on
+    Training before its first answers came, the page session's first decision, so the body as
+    it stood then, folded, the run view shown; answers that come later change nothing."""
+    marks = seen[i]["marks"]
+    assert sorted(marks) == sorted([tc.ANSWERED_ATTR, tc.PLACED_ATTR]), seen[i]
+    return _CHOICE_SHOWN if marks[0] == tc.ANSWERED_ATTR else _CHOICE_FOLDED
 
 
 def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_reader_used_the_fold(
@@ -5244,7 +5342,13 @@ def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_
     folded first (or, where the fold decided before the reader left, shown where it was): its
     first version shown the run view anyway when Training's first answers came after the
     reader had left it (`HOLD_MOST_MS` ran out on Settings), so it jumped when the fold decided
-    on the way back. Automatic's promise on the way back, a choice picked while Training was
+    on the way back. Where the hold ran out instead with the reader still on Training, before
+    its first answers came (a slow host: once in ten runs under load at e32f2ed), that was the
+    page session's first decision, and Training comes back folded where it stood, the run view
+    shown: the order in which the page's panels were first marked placed and answered in that
+    page load tells which path the page took (`_reloaded_final`; each path is made sure of in
+    `test_a_reloaded_training_page_comes_back_as_its_first_decision_left_it`). Automatic's
+    promise on the way back, a choice picked while Training was
     hidden: the reader never sees the run view in a wrong place or the body in a wrong state
     before the fold decides. Every frame read before the run view is first seen is the held
     start state (folded, "Show", the run view invisible); from that frame on, one final state
@@ -5276,24 +5380,11 @@ def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_
         seen = run_node(_CHOICE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], json.dumps(steps), timeout=600)
     assert [s["step"] for s in seen] == [" ".join(step) for step in steps], seen
-    shown, folded = "true Hide|true|visible", "false Show|false|visible"
+    shown, folded = _CHOICE_SHOWN, _CHOICE_FOLDED
 
     def frames(i):
         assert seen[i]["step"] == "training", seen[i]
         return [f.rsplit("|", 1)[0] for f in seen[i]["frames"]]
-
-    def held_then_shown(i, final=shown):
-        """Automatic's promise: never the run view in a wrong place or the body in a wrong
-        state before the fold decides. Every frame read before the run view is first seen is
-        the start state (folded, "Show", the run view invisible: held); from that frame on, one
-        state, `final`, that never changes (the run view stays where it is first seen). Zero
-        held frames read is the promise kept when the first frame read is already final: the
-        fold decided before it, or the one held frame's reading came after the decision (a
-        page loaded again may also have decided before the reader left)."""
-        got = seen[i]["frames"]
-        first = next(k for k, f in enumerate(got) if f.split("|")[2] == "visible")
-        assert all(f.startswith("false Show|false|hidden|") for f in got[:first]), got
-        assert len(set(got[first:])) == 1 and got[first].startswith(final), got
 
     assert set(frames(0)) == {shown}, seen[0]
     assert seen[1] == {"step": "settings", "checked": display.SHOWN, "usable": True}, seen
@@ -5301,16 +5392,56 @@ def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_
                        "checked": display.FOLDED}, seen
     assert set(frames(3)) == {folded}, seen[3]
     assert seen[5]["kept"] == seen[5]["mark"] == display.AUTO, seen
-    held_then_shown(6)
+    _held_then_shown(seen, 6, shown)
     assert seen[8]["kept"] == display.SHOWN and set(frames(9)) == {shown}, seen
     assert seen[10]["frames"][-1].rsplit("|", 1)[0] == folded, seen        # the reader's Hide
     assert seen[12]["kept"] == display.AUTO and set(frames(13)) == {folded}, seen
     assert seen[15] == {"step": "settings", "checked": display.AUTO, "usable": True}, seen
-    held_then_shown(16)
+    _held_then_shown(seen, 16, _reloaded_final(seen, 16))
     assert seen[18]["kept"] == display.SHOWN and seen[19] == {"step": "size 1100 1050"}, seen
     assert set(frames(20)) == {shown}, seen[20]
     assert seen[22]["kept"] == display.AUTO, seen
-    held_then_shown(23, folded)
+    _held_then_shown(seen, 23, folded)
+
+
+@pytest.mark.parametrize("answers", ["late", "left"])
+def test_a_reloaded_training_page_comes_back_as_its_first_decision_left_it(
+        built, monkeypatch, tmp_path, answers):
+    """Automatic's hold on a page loaded again, each of its two paths made sure of by holding
+    Training's first answers (its page open's chain, `_CHOICE_JS`' ``process.argv[4]``). A
+    read-only viewer at 1080 x 1920 with a run's charts opens Training (shown), picks
+    Automatic in ⚙ Settings › Display, comes back (held, then shown), and loads the dashboard
+    again (the shell brings Training back). ``late``: each first answer comes
+    2 x `training_console.HOLD_MOST_MS` late while the reader stays on Training until they come
+    (a slow host), so the hold runs out first and is the page session's first decision: the
+    panels are marked placed before answered, and Training, left for Settings and opened again,
+    comes back folded where it stood, the run view shown, never moving (at e32f2ed the Settings
+    choice test asked shown there, and failed so under load once in ten runs). ``left``: the
+    reader leaves for Settings as soon as Training has asked for its answers, which come only
+    after 2 x `HOLD_MOST_MS` there (the hold runs out on Settings, and places nothing): marked
+    answered before placed, and Training comes back held, then shown, the fold decided by the
+    room."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)     # read-only: D8 refuses
+    _with_a_run(built, tmp_path, monkeypatch)
+    steps = [["training"], ["settings"], ["pick", display.AUTO], ["training"],
+             ["reload"], ["settings"], ["training"]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_CHOICE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(steps),
+                        json.dumps({"answers": answers, "ms": 2 * tc.HOLD_MOST_MS}), timeout=600)
+    assert [s["step"] for s in seen] == [" ".join(step) for step in steps], seen
+    assert seen[2]["kept"] == seen[2]["mark"] == display.AUTO, seen
+    _held_then_shown(seen, 3, _CHOICE_SHOWN)
+    assert seen[5] == {"step": "settings", "checked": display.AUTO, "usable": True}, seen
+    late = answers == "late"
+    assert seen[6]["marks"] == ([tc.PLACED_ATTR, tc.ANSWERED_ATTR] if late
+                                else [tc.ANSWERED_ATTR, tc.PLACED_ATTR]), seen[6]
+    _held_then_shown(seen, 6, _CHOICE_FOLDED if late else _CHOICE_SHOWN)
 
 
 #: Training at first use, stacked, for an operator, as the reader arrives, with the Parameters
