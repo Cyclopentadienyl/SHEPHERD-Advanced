@@ -371,6 +371,7 @@ def test_a_disabled_field_is_drawn_off_and_its_words_still_read():
     ("--shep-tab-selected-line", ("--shep-panel", "--shep-tab-hover-bg")),
     ("--shep-focus-ring", ("--shep-panel", "--shep-panel-2", "--shep-bg", "--shep-accent-50")),
     ("--shep-control-border", ("--shep-panel", "--shep-panel-2", "--shep-bg")),
+    ("--shep-more-mark", ("--shep-panel", "--shep-panel-2", "--shep-bg")),
 ])
 def test_the_cues_that_identify_a_tab_or_a_control_show_at_three_to_one(cue, surfaces):
     """D01's cues (the WebUI skill's §10; hover against rest has no 3:1 rule,
@@ -378,7 +379,9 @@ def test_the_cues_that_identify_a_tab_or_a_control_show_at_three_to_one(cue, sur
     border do): each is an alias of an existing colour, at least 3:1 on the
     surfaces it is drawn on. A tab under the pointer has no line of its own
     (the stage-hint package's N7: its grey line made a second tab look
-    selected), so its token is gone."""
+    selected), so its token is gone. The chevron a cut band draws (H01, the
+    owner's direction of 2026-11-28) is a non-text mark too, on the ground a
+    scroll region stands on (white panels in every state surveyed)."""
     declared = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*([^;]+);", style.SHELL_CSS))
     assert declared[cue].strip().startswith("var(--shep-"), "an alias, never a new hex"
     for surface in surfaces:
