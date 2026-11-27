@@ -1343,7 +1343,11 @@ _SHELL_JS = r"""
   function cutOf(el) {
     var s = getComputedStyle(el), had = parseFloat(el.getAttribute(CUT)) || 0;
     if (!scrolls(s.overflowY) || el.scrollHeight - el.clientHeight - had <= 1) { return 0; }
-    var r = el.getBoundingClientRect(), top = r.top + el.clientTop, edge = top + el.clientHeight + had;
+    // Its content read where it lies at the region's top: `cue` recuts at a scrollTop of 1 px or
+    // less, and a region recut there is measured as at 0, so the cut it gets on the way back to its
+    // top is the one it keeps there (H01's review, R2: measured 1 px up, the cut came out 1 px more
+    // at 1 px and was set again at 0, the region's height and its chevron moving twice).
+    var r = el.getBoundingClientRect(), top = r.top + el.clientTop - el.scrollTop, edge = top + el.clientHeight + had;
     var most = (el.clientHeight + had) / 2, at = edge;
     for (var i = 0; i < CUT_STEPS; i++) {
       // A title under a title (a section's heading, then its label) goes one at a time.
@@ -1384,17 +1388,19 @@ _SHELL_JS = r"""
   }
   // **A chevron in the band a cut gives up** (H01, the owner's direction of 2026-11-28: in the
   // blank band under the edge cue's shadow, a downward chevron; scrolled down, the chevron goes
-  // and the band's room is given back to show content). Where a region at its top has a cut of
-  // at least the least band (`--shep-more-band` of the style sheet, the spacing scale's 16 px)
-  // and more below, a small chevron (`--shep-more-chev`, `--shep-more-mark-w` by `-h`) is drawn
-  // in the middle of the band: under the region, centred on it, as a background layer of the
-  // box the band lies in (HOST, its nearest box: the band is the region's margin, which its own
-  // box cannot paint, and a scroll region clips what it holds). So it is drawn on the band's own
-  // ground, under anything over the band, cut by any region that hides the band, never a node of
-  // its own, never focusable and never in the way of a pointer, a wheel or a touch. A box that
-  // draws an image of its own, or that does not hold the band, draws none; one box draws one
-  // region's chevron (`owners`: the box's region and where its chevron is). The region carries
-  // MARK while its chevron is drawn.
+  // and the band's room is given back to show content). Where a region at its top has a cut that
+  // holds the chevron, its height (`--shep-more-mark-h`) with a step of the spacing scale clear
+  // above and below it (`--shep-more-gap`: 6 + 2 x 4 = 14 px; H01's review, R1: a least of the
+  // spacing scale's 16 px, a figure of its own, left the 14 and 15 px bands of Data locations and
+  // Fine-tune blank beside a chevron on the same screen), and more below, a small chevron
+  // (`--shep-more-chev`, `--shep-more-mark-w` by `-h`) is drawn in the middle of the band: under
+  // the region, centred on it, as a background layer of the box the band lies in (HOST, its
+  // nearest box: the band is the region's margin, which its own box cannot paint, and a scroll
+  // region clips what it holds). So it is drawn on the band's own ground, under anything over the
+  // band, cut by any region that hides the band, never a node of its own, never focusable and
+  // never in the way of a pointer, a wheel or a touch. A box that draws an image of its own, or
+  // that does not hold the band, draws none; one box draws one region's chevron (`owners`: the
+  // box's region and where its chevron is). The region carries MARK while its chevron is drawn.
   var MARK = 'data-shep-more-chevron', HOST = 'data-shep-more-host';
   var owners = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
   var HOST_STYLE = ['background-image', 'background-size', 'background-position', 'background-repeat',
@@ -1414,10 +1420,12 @@ _SHELL_JS = r"""
     if (host) {
       var root = getComputedStyle(document.documentElement);
       var w = parseFloat(root.getPropertyValue('--shep-more-mark-w')), h = parseFloat(root.getPropertyValue('--shep-more-mark-h'));
-      var least = parseFloat(root.getPropertyValue('--shep-more-band')), owner = owners.get(host);
+      var gap = parseFloat(root.getPropertyValue('--shep-more-gap')), owner = owners.get(host);
+      // The least band that holds it: its height and a step clear above and below it.
+      var least = h + 2 * gap;
       var own = owner ? owner.el === el
         : !host.hasAttribute(HOST) && getComputedStyle(host).backgroundImage === 'none';
-      if (own && cut >= least && w > 0 && h > 0) {
+      if (own && cut >= least && w > 0 && h > 0 && gap >= 0) {
         var r = el.getBoundingClientRect(), q = host.getBoundingClientRect();
         var left = q.left + host.clientLeft, top = q.top + host.clientTop;
         // The band, under the region's edge, its cut tall and the region's width, inside the box.

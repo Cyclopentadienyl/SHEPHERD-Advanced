@@ -1493,14 +1493,15 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
 }
 /* **A chevron in the band a cut gives up** (H01, the owner's direction of 2026-11-28: in the
    blank band under the edge cue's shadow, a downward chevron; scrolled down, it goes and the band's
-   room shows content). The shell's cue pass draws it where a region at its top has a cut of at
-   least ``--shep-more-band`` (the spacing scale's 16 px) and more below, in the middle of the
-   band, as background layers of the box the band lies in (``data-shep-more-host``; the region's
-   own box cannot paint its margin, and a scroll region clips what it holds): two strokes of the
-   one mark colour, 12 px by 6 px, at 45 degrees, no plate, no motion, nothing to press. Its place
-   is the pass's; its look is here. */
+   room shows content). The shell's cue pass draws it where a region at its top has a cut that
+   holds it, its height with ``--shep-more-gap`` (a step of the spacing scale) clear above and
+   below it (6 + 2 x 4 = 14 px; H01's review, R1, 2026-11-28: no longer the spacing scale's 16 px),
+   and more below, in the middle of the band, as background layers of the box the band lies in
+   (``data-shep-more-host``; the region's own box cannot paint its margin, and a scroll region
+   clips what it holds): two strokes of the one mark colour, 12 px by 6 px, at 45 degrees, no
+   plate, no motion, nothing to press. Its place is the pass's; its look is here. */
 :root {
-  --shep-more-band: var(--shep-space-4);
+  --shep-more-gap: var(--shep-space-1);
   --shep-more-mark-w: 12px; --shep-more-mark-h: 6px;
   --shep-more-chev:
     linear-gradient(to top right, transparent calc(50% - 1.5px), var(--shep-more-mark) calc(50% - .5px),
