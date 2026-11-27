@@ -5244,13 +5244,20 @@ def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_
     folded first (or, where the fold decided before the reader left, shown where it was): its
     first version shown the run view anyway when Training's first answers came after the
     reader had left it (`HOLD_MOST_MS` ran out on Settings), so it jumped when the fold decided
-    on the way back. Every held frame is Automatic's start state (folded, "Show", the run view
-    invisible), and a choice picked while Training is hidden is held on the way back. The review of 36c0592 (P3): picked after Shown, Automatic
+    on the way back. Automatic's promise on the way back, a choice picked while Training was
+    hidden: the reader never sees the run view in a wrong place or the body in a wrong state
+    before the fold decides. Every frame read before the run view is first seen is the held
+    start state (folded, "Show", the run view invisible); from that frame on, one final state
+    that never changes. No held frame need be read: the hold here lasts one frame (the page's
+    answers came when it was first opened, so the fold decides in the next animation frame),
+    and a frame's reading can come after that next frame's callbacks, so the first frame read
+    may already be final (requiring a held frame read failed now and then, on c78b9fd and on
+    0cf1273). The review of 36c0592 (P3): picked after Shown, Automatic
     left the button as it was, so Training came back with the body shown and the run view
     hidden for about 105 ms, then folded (1100 x 1050 with a run's charts, where Automatic
     folds): Shown picked, the window made 1100 x 1050, Training shown; then Automatic picked,
-    Training is held folded and then shown folded, in one place. At bb258d1 there was no
-    Display panel."""
+    Training is held folded (or already decided) and then shown folded, in one place. At
+    bb258d1 there was no Display panel."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
 
@@ -5275,15 +5282,16 @@ def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_
         assert seen[i]["step"] == "training", seen[i]
         return [f.rsplit("|", 1)[0] for f in seen[i]["frames"]]
 
-    def held_then_shown(i, final=shown, held=True):
-        """Automatic: from Training's first frame in its start state (folded, "Show", the run
-        view invisible) until the fold has decided, then shown where it stays: the run view's
-        place never changes once it is seen. `held`: the choice was picked while Training was
-        hidden, so its first frame back is held; else (a page loaded again) the fold may have
-        decided before the reader left, and no frame back is held."""
+    def held_then_shown(i, final=shown):
+        """Automatic's promise: never the run view in a wrong place or the body in a wrong
+        state before the fold decides. Every frame read before the run view is first seen is
+        the start state (folded, "Show", the run view invisible: held); from that frame on, one
+        state, `final`, that never changes (the run view stays where it is first seen). Zero
+        held frames read is the promise kept when the first frame read is already final: the
+        fold decided before it, or the one held frame's reading came after the decision (a
+        page loaded again may also have decided before the reader left)."""
         got = seen[i]["frames"]
         first = next(k for k, f in enumerate(got) if f.split("|")[2] == "visible")
-        assert first > 0 or not held, got
         assert all(f.startswith("false Show|false|hidden|") for f in got[:first]), got
         assert len(set(got[first:])) == 1 and got[first].startswith(final), got
 
@@ -5298,7 +5306,7 @@ def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_
     assert seen[10]["frames"][-1].rsplit("|", 1)[0] == folded, seen        # the reader's Hide
     assert seen[12]["kept"] == display.AUTO and set(frames(13)) == {folded}, seen
     assert seen[15] == {"step": "settings", "checked": display.AUTO, "usable": True}, seen
-    held_then_shown(16, held=False)
+    held_then_shown(16)
     assert seen[18]["kept"] == display.SHOWN and seen[19] == {"step": "size 1100 1050"}, seen
     assert set(frames(20)) == {shown}, seen[20]
     assert seen[22]["kept"] == display.AUTO, seen
