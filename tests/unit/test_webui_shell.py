@@ -787,12 +787,26 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_area_switch():
     assert "top: var(--shep-chips-top, var(--shep-row1-h));" in wrapped
 
 
+#: **The header a reader measures is the one its chips' answer drew** (the full suite at 77602e6
+#: read D10's 1100 x 1050 header as one line; alone it passed): the page draws the chips as the
+#: placeholder, each ``pending`` (`chips.CHIPS_PLACEHOLDER`, "… not read yet", narrower than
+#: any answer's words), and the page's first read answers them; the layout pass runs again on
+#: that change (the head script's MutationObserver). At 1100 the placeholder's header needs
+#: the window's whole width and stays on one line, the answer's wraps it; a loaded machine
+#: answered after a reader that waited for the first layout pass alone had read. So a reader
+#: of the header's layout waits for every chip answered (none ``pending``) before its frames.
+_CHIPS_ANSWERED_JS = (
+    "() => { const chips = [...document.querySelectorAll('#shep-chips .shep-chip')];"
+    " return chips.length > 0 && chips.every((c) => c.dataset.state !== 'pending'); }")
+
+
 #: Opens the dashboard with its GPU chip as wide as its cap (a long holder record: the lock's
-#: command, pid and start end in the chip's titled ellipsis), at 1850, 1366, the display floor's
-#: 1280 and 1024 below it (a resize runs the header's layout, as a load does), and reports for
-#: each area tab what ``document.elementsFromPoint`` finds on top at its centre and four inset
-#: corners: the tab itself or something inside it, or what covers it; each header chip's edges
-#: and words; and the frame's width.
+#: command, pid and start end in the chip's titled ellipsis) and its chips answered
+#: (`_CHIPS_ANSWERED_JS`), at 1850, 1366, the display floor's 1280 and 1024 below it (a resize
+#: runs the header's layout, as a load does), and reports for each area tab what
+#: ``document.elementsFromPoint`` finds on top at its centre and four inset corners: the tab
+#: itself or something inside it, or what covers it; each header chip's edges and words; and
+#: the frame's width.
 _HEADER_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
@@ -800,6 +814,7 @@ const { chromium } = require('playwright');
   const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
   await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
+  await page.waitForFunction(__CHIPS_ANSWERED__, null, { timeout: 60000 });
   await page.addStyleTag({ content: '#shep-chips .shep-chip-gpu .shep-chip-text { width: 100vw; }' });
   const out = {};
   for (const width of [1850, 1366, 1280, 1024, 864, 800]) {
@@ -837,7 +852,7 @@ const { chromium } = require('playwright');
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
-"""
+""".replace("__CHIPS_ANSWERED__", _CHIPS_ANSWERED_JS)
 
 
 def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
@@ -887,17 +902,39 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
             assert chip["whole"] or chip["capped"], (width, chip)
 
 
-#: The served dashboard at each window the test names: once the header's layout pass has run,
-#: where the brand, each chip, the Settings tab and the header row's content box are.
+#: The served dashboard at each window the test names: once its chips are answered
+#: (`_CHIPS_ANSWERED_JS`) and the header's layout pass has run, the chips' states and where the
+#: brand, each chip, the Settings tab and the header row's content box are, and how many
+#: requests a hold held. **A hold** (the optional fourth argument, ``{"listeners": [fn ids],
+#: "ms": n}``): every request of a listener that writes the chips (all ``queue=False``, so
+#: each its own ``/run/predict``) answered no sooner than `ms` after the page's first one was
+#: sent, so the chips' first answer comes that late.
 _WRAPPED_HEADER_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
+  const hold = process.argv[4] ? JSON.parse(process.argv[4]) : null;
   const out = {};
   for (const [w, h] of JSON.parse(process.argv[3])) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    let held = 0, until = null;
+    if (hold) {
+      // A function, not a glob: the page's requests carry a query (?__theme=light), which a
+      // glob ending in /run/predict does not match.
+      await page.route((url) => url.pathname.endsWith('/run/predict'), async (route) => {
+        let body = {};
+        try { body = JSON.parse(route.request().postData() || '{}'); } catch (e) { body = {}; }
+        if (hold.listeners.includes(body.fn_index)) {
+          held += 1;
+          if (until === null) { until = Date.now() + hold.ms; }
+          await new Promise((r) => setTimeout(r, Math.max(0, until - Date.now())));
+        }
+        await route.continue().catch(() => {});
+      });
+    }
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#shep-chips .shep-chips .shep-chip', { timeout: 60000 });
+    await page.waitForFunction(__CHIPS_ANSWERED__, null, { timeout: 60000 });
     await page.waitForFunction(() => document.getElementById('shep-shell').style.getPropertyValue('--shep-chips-top'),
                                null, { timeout: 30000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -907,18 +944,20 @@ const { chromium } = require('playwright');
       const row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
       const s = getComputedStyle(row);
       return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+               states: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => c.dataset.state),
                brand: box(document.querySelector('#shep-brand .shep-brand')),
                chips: [...document.querySelectorAll('#shep-chips .shep-chip')].map(box),
                settings: box(document.getElementById('shep-tab-settings-button')),
                area: box(document.getElementById('shep-tab-research-button')),
                end: row.getBoundingClientRect().right - parseFloat(s.paddingRight) - parseFloat(s.borderRightWidth) };
     });
+    out[`${w}x${h}`].held = held;
     await page.close();
   }
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
-"""
+""".replace("__CHIPS_ANSWERED__", _CHIPS_ANSWERED_JS)
 
 
 def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_path):
@@ -926,7 +965,8 @@ def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_p
     states start at the left, on the brand's edge, and Settings stays at the right. They sat
     together at the right (the chips from 488 px at 1080 wide), leaving the line's start empty
     under the brand. In the served dashboard, at a portrait window (1080 x 1920) and a
-    landscape one that stacks (1100 x 1050): the header wraps; the first chip's left is the
+    landscape one that stacks (1100 x 1050), each read once its chips are answered
+    (`_CHIPS_ANSWERED_JS`): the header wraps; the first chip's left is the
     brand's left and Settings' right the header row's content right (within a pixel); the chips
     and Settings share the second line, under the area switch, and never overlap."""
     from src.webui.app import create_gradio_app, mount_options
@@ -940,7 +980,7 @@ def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_p
         seen = run_node(_WRAPPED_HEADER_JS, tmp_path, base[:-len("gradio_api")], json.dumps(sizes),
                         timeout=300)
     for size, facts in seen.items():
-        assert facts["wrapped"] is True, size
+        assert facts["wrapped"] is True, (size, facts["states"])
         chips, settings = facts["chips"], facts["settings"]
         assert abs(chips[0]["left"] - facts["brand"]["left"]) <= 1, (size, chips[0], facts["brand"])
         assert abs(settings["right"] - facts["end"]) <= 1, (size, settings, facts["end"])
@@ -948,6 +988,38 @@ def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_p
             assert chip["top"] < settings["bottom"] and settings["top"] < chip["bottom"], (size, chip)
             assert chip["top"] >= facts["area"]["bottom"], (size, chip, facts["area"])
         assert chips[-1]["right"] < settings["left"], (size, chips[-1], settings)
+
+
+def test_the_header_is_read_once_its_chips_are_answered(tmp_path):
+    """D10's reader read 1100 x 1050 as one line once in the full suite (at 77602e6; alone it
+    passed): it read after the page's first layout pass, with the chips still the placeholder
+    (`chips.CHIPS_PLACEHOLDER`, both ``pending``), whose header fits that window; the chips'
+    answer wraps it a frame after it comes, and a loaded machine's came later than the reader's
+    two frames. With the chips' first answer held a few seconds (every listener that writes
+    them, routed in the browser), the reader reads the header its chips' answer drew: no chip
+    ``pending``, and wrapped."""
+    from src.webui.app import create_gradio_app, mount_options
+    from src.webui.components.chips import CHIPS_PLACEHOLDER
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    # The state the reader waits past is the placeholder's.
+    assert CHIPS_PLACEHOLDER.count('data-state="pending"') == 2, CHIPS_PLACEHOLDER
+    demo = create_gradio_app()
+    (chips,) = [block for block in demo.blocks.values()
+                if getattr(block, "elem_id", None) == "shep-chips"]
+    listeners = sorted(fn._id for fn in demo.fns.values()
+                       if any(out._id == chips._id for out in fn.outputs))
+    hold = {"listeners": listeners, "ms": 3000}
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_WRAPPED_HEADER_JS, tmp_path, base[:-len("gradio_api")],
+                        json.dumps([[1100, 1050]]), json.dumps(hold), timeout=300)
+    facts = seen["1100x1050"]
+    assert facts["held"] > 0, "the hold held no request: the chips were answered unheld"
+    assert "pending" not in facts["states"], (facts["states"], facts["wrapped"])
+    assert facts["wrapped"] is True, facts
 
 
 # --------------------------------------------------------------------------- a reload
@@ -3452,20 +3524,25 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
 #: footer, whose edge falls under a title with every control it heads under the edge: a field's
 #: label (``lt-label``), a heading over two buttons (``lt-head``), a heading over a field
 #: (``lt-nested``); a field's box that starts in the gap the edge falls in, 22 px under the last
-#: line, its words under the edge (``lt-gapbox``); and a region of its own fixed height
-#: (``lt-fixed``), whose height is not its column's to give.
+#: line, its words under the edge (``lt-gapbox``); a region of its own fixed height
+#: (``lt-fixed``), whose height is not its column's to give; and a field's empty input more than
+#: half above an edge that falls in the gap under its label, that box going under the edge
+#: whole, under a label alone (``lt-boxlabel``) and under a label under a heading
+#: (``lt-boxhead``): UI-SW-ER2, its label (and the heading) going under with it.
 _LONE_TITLE_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const [css, js, look] = [process.argv[2], process.argv[3], process.argv[4]].map((p) => require('fs').readFileSync(p, 'utf8'));
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 1200, height: 1000 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 1320 } })).newPage();
   const lines = (n) => Array.from({ length: n }, (_, i) => `<p class="lt-line" style="margin: 0; line-height: 20px">Line ${i} of the form.</p>`).join('');
   const panel = (id, left, top, body, footer = true) => `
     <div class="lt-panel" id="${id}-panel" style="position: absolute; left: ${left}px; top: ${top}px; width: 520px; height: 300px; display: flex; flex-direction: column; background: #fff">
       <div class="lt-bd" id="${id}" style="${footer ? 'flex: 1 1 auto; min-height: 0' : 'flex: 0 0 auto; height: 239px'}; overflow: auto; padding: 0 16px">${body}</div>
       <div class="lt-ft" id="${id}-ft" style="flex: 0 0 auto; height: 60px; border-top: 1px solid #ccc"><button type="button">Start</button></div></div>`;
   const field = (label) => `<div class="block" style="margin-top: 16px; background: #fff"><span data-testid="block-info" class="lt-title" style="display: block; margin-bottom: 10px; line-height: 20px">${label}</span><input type="text" style="display: block; height: 36px"></div>`;
+  // A field whose label sits 4 px over its empty 44 px input (Gradio's text field's room).
+  const boxed = (label) => `<div class="block" style="margin-top: 16px; background: #fff"><span data-testid="block-info" class="lt-title" style="display: block; margin-bottom: 4px; line-height: 20px">${label}</span><input type="text" style="display: block; box-sizing: border-box; height: 44px"></div>`;
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="font: 15px/20px sans-serif">
     ${panel('lt-label', 20, 20, lines(10) + field('Device') + lines(10))}
     ${panel('lt-head', 600, 20, lines(9) + '<h3 class="lt-title" style="margin: 20px 0 0; line-height: 24px">Import folder</h3><div style="margin-top: 16px"><button type="button">Change…</button> <button type="button">Check</button></div>' + lines(10))}
@@ -3473,6 +3550,8 @@ const { chromium } = require('playwright');
     ${panel('lt-fixed', 600, 360, lines(10) + field('Seed') + lines(10), false)}
     ${panel('lt-boxtop', 20, 680, lines(9) + '<h3 style="margin: 20px 0 0; line-height: 24px">Options</h3><input type="number" value="10" style="display: block; margin-top: 3px; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999">' + lines(10))}
     ${panel('lt-gapbox', 600, 680, lines(11) + '<div style="height: 7px"></div><div class="block" style="background: #fff; padding-top: 14px"><label class="lt-title" style="display: block; line-height: 20px"><input type="checkbox"> Deterministic execution</label></div>' + lines(10))}
+    ${panel('lt-boxlabel', 20, 1000, lines(8) + boxed('Patient ID') + lines(10))}
+    ${panel('lt-boxhead', 600, 1000, lines(6) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + boxed('Run name') + lines(10))}
     <script>${js}</script></body></html>`);
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const pass = async () => { await page.evaluate(() => window.ShepShell.update()); await frames(); await frames(); };
@@ -3491,7 +3570,7 @@ const { chromium } = require('playwright');
              lineAbove: before.getBoundingClientRect().bottom <= edge + 0.5,
              footDocked: Math.abs(ft.bottom - panel.bottom) <= 1 };
   }, id);
-  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop', 'lt-gapbox'], out = {};
+  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop', 'lt-gapbox', 'lt-boxlabel', 'lt-boxhead'], out = {};
   for (const id of ids) { out[id] = await read(id); }
   // Scrolled, the region keeps its height; back at its top, the same.
   for (const id of ids) {
@@ -3528,8 +3607,12 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     L8-4: Test's Run region at 1280 x 720 ended 22 px under "Register when the run ends", a fade
     over the blank, its Deterministic box 12 px over the edge). Scrolled, the region keeps its
     height. A region of its own fixed height (its height is not its column's to give) is left as
-    it is. Measured in a browser on a page of its
-    own (Node and Playwright, skipped without)."""
+    it is. **Both rules at the one edge** (UI-SW-ER2, the external review of ffb1483): where a
+    field's empty input shows more than half its box over an edge that falls in the gap under
+    its label, the box goes under the edge whole, and its label with it, and a heading over that
+    label too (``lt-boxlabel``, ``lt-boxhead``; Diagnosis' Patient ID at first use at 1280 x 720
+    had its label left alone over its moved input; both fail on c78b9fd). Measured in a browser
+    on a page of its own (Node and Playwright, skipped without)."""
     from src.webui.style import SHELL_CSS
     from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
 
@@ -3540,7 +3623,7 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     js_path.write_text(_page_shell_js(), encoding="utf-8")
     look_path.write_text(LOOK_JS, encoding="utf-8")
     seen = run_node(_LONE_TITLE_JS, tmp_path, str(css_path), str(js_path), str(look_path))
-    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop", "lt-gapbox"):
+    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop", "lt-gapbox", "lt-boxlabel", "lt-boxhead"):
         got = seen[region]
         assert got["more"] and got["titlesUnder"] and got["lineAbove"], (region, got)
         assert got["edgeCue"] and not got["mask"], (region, got)
@@ -5052,6 +5135,91 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert [c for c in found["centred"] if "#c-grid-one" in c], found["centred"]
 
 
+#: A static page for the ``edge`` rule (`browser.LOOK_JS`' ``layout``), shown as the shell shows
+#: one: under a panel's title, texts in a row 14 px in from the title's edge (as Diagnosis'
+#: "Operator controls only" stood under its right-hand buttons), each placed its own way, four
+#: of them a line 880 px wide placed at the end of the row's 886 (its words 20 px off the
+#: title's edge, inside the rule's 2em, so only how it is placed sets it apart); a text whose
+#: words a child's margin moves 14 px in while its box starts on the edge; and two that say
+#: they are placed at their end and still start on a left edge: a line aligned right in a box
+#: shrink-wrapped round its words, and two such lines aligned right in one box.
+_EDGE_RULE_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  await page.setContent(`<!doctype html><html><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    h2 { font-size: 20px; margin: 0 0 8px; }
+    p { margin: 4px 0 0; }
+    .shep-panel { width: 900px; padding: 16px; border: 1px solid #ccc; }
+    .row { padding-left: 14px; }
+    .line { display: inline-block; flex: none; width: 880px; text-align: left; }
+    .tag { display: inline-flex; padding: 0 8px; border: 1px solid #ccc; border-radius: 999px; background: #fff; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page"><div class="shep-panel" id="p1">
+      <div class="shep-panel-hd"><h2 id="title">A panel</h2></div>
+      <div class="row"><p id="edge-left">Words that start off the title's edge.</p></div>
+      <p id="edge-child"><span style="margin-left: 14px">Words a child's margin moves in.</span></p>
+      <p id="edge-tag"><span class="tag">Not loaded</span> at 10:42</p>
+      <p id="edge-icon"><svg width="12" height="12" viewBox="0 0 12 12"><rect x="6" width="6" height="12"/></svg> Locked</p>
+      <div class="row"><p id="edge-right" style="text-align: right"><span class="line">Aligned right</span></p></div>
+      <div class="row"><p id="edge-flex" style="display: flex; justify-content: flex-end"><span class="line">Packed at the end</span></p></div>
+      <div class="row"><p id="edge-auto" style="display: flex"><span class="line" style="margin-left: auto">Pushed by an auto margin</span></p></div>
+      <div class="row" style="display: flex"><p id="edge-own" class="line" style="margin-left: auto">Pushed by its own auto margin</p></div>
+      <div class="row" style="display: flex; flex-direction: column; align-items: flex-start; text-align: right"><p id="edge-shrink">Aligned right, its box no wider</p></div>
+      <div class="row"><p id="edge-wrap" style="text-align: right"><span class="line">Aligned right</span> <span class="line">and on two lines</span></p></div>
+      <div class="row"><p class="shep-reason" id="edge-phrase" style="display: flex; justify-content: end; text-align: right; margin: 2px 0 0 auto"><span aria-hidden="true">&#128274;</span><span><button type="button" class="shep-why">Operator controls only</button></span></p></div>
+    </div></div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  console.log(JSON.stringify(layout));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_edge_rule_reads_where_a_texts_words_start_and_passes_one_placed_at_its_end(tmp_path):
+    """UI-SW-ER3 C (the external review of ffb1483): the ``edge`` rule measured a text by its
+    box, so Diagnosis' read-only "Operator controls only", aligned right under the buttons it
+    explains (R-WHY's phrase beside the dimmed controls, the owner's D6; ``text-align: right``,
+    ``justify-content: end``), was read by its paragraph's left edge, 14 px off the title's,
+    and the read-only walk failed on it. The rule now reads a text where its drawn words start
+    (their client rects) and passes a line whose placement at its end moved its words, as the
+    text itself says: aligned right, packed at the end of a flex row, or pushed by an auto
+    margin (a child's, or its own). A text placed at its start whose words stand 14 px off the
+    title's edge is still found, in a box 14 px in, and with its box on the edge and its words
+    moved in by a child's margin (which the box's measure never saw). A text starts where it
+    draws: at a tag drawn in it (its border; the first walk with words alone found Diagnosis'
+    "○ Not loaded" tag 9 px off, its words inside the tag's padding) and at an icon's box.
+
+    The review of that change: a text that says it is placed at its end was passed even where
+    that moved nothing (a box shrink-wrapped round its one line draws its words at the box's
+    left edge) and where it wraps (the text brief allows ``right`` and ``center`` on one-line
+    text only, and a wrapped line starts near its box's left edge), so a real misalignment
+    there went unseen. Both are found again, where their words start."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    found = run_node(_EDGE_RULE_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)), tmp_path,
+                     timeout=120)
+    assert [e for e in found["edge"] if e.startswith("#edge-left +14 px off #title")], found["edge"]
+    assert [e for e in found["edge"] if e.startswith("#edge-child +14 px off #title")], found["edge"]
+    for placed in ("#edge-right", "#edge-flex", "#edge-auto", "#edge-own", "#edge-phrase"):
+        assert not [e for e in found["edge"] if placed in e], (placed, found["edge"])
+    # Placed at its end, and yet on a left edge: one line in a box no wider than its words, and
+    # lines that wrap (each 6 px in from the box's edge, as the lines above).
+    assert [e for e in found["edge"] if e.startswith("#edge-shrink +14 px off #title")], found["edge"]
+    assert [e for e in found["edge"] if e.startswith("#edge-wrap +20 px off #title")], found["edge"]
+    # What a text draws starts at a tag drawn in it (its border, its words 9 px in: Diagnosis'
+    # "○ Not loaded" at first use) and at an icon (its box, whatever its drawing leaves blank).
+    for drawn in ("#edge-tag", "#edge-icon"):
+        assert not [e for e in found["edge"] if drawn in e], (drawn, found["edge"])
+
+
 #: A static page for the rules the after screenshots asked for (the sweep's L7; `browser.LOOK_JS`'s
 #: ``layout``, `seeAll`): one page shown as the shell shows one, in panels placed side by side, each
 #: rule's bad case beside its good one (each named in the test).
@@ -5815,6 +5983,156 @@ def test_diagnosis_options_title_never_ends_its_column_alone(tmp_path):
         assert not (at["titleShown"] and not any(c["shown"] for c in at["controls"])), (size, at)
 
 
+#: UI-SW-ER2 (the external review of ffb1483): Diagnosis' fields region (``#shep-dx-fields``) as
+#: its room changes, with controlled facts rather than this host's own: the footer's lead drawn as
+#: the product's own warning mark (``__WARN_LEAD__``, `renderers.status_mark`) whatever this host's
+#: runtime reports (a host with no issue draws plain words there, no mark), its environment
+#: warning stood in on one line and then on two (the product's own sentences, as many as make
+#: that many lines), and for each the footer drawn taller in 3 px steps (a stand-in padding, so
+#: the region's edge sweeps up across its Patient ID field wherever this host's fonts put it),
+#: the shell's pass run after each change. At each step, at the region's top: its edge, its cut
+#: (`data-shep-more-cut`) and the edge it would have uncut, the walk's own ``edge-heading`` and
+#: ``scroll-cue`` findings for it, any field's box or control's whose top lies in the gap under
+#: the last line shown while it ends under the edge (with the edge cue drawn: no fade over it),
+#: and Patient ID's label and input. Where Patient ID's input lies under the edge, the input is
+#: then focused as a keyboard would: the region scrolls it whole into its view, uncovered, the
+#: region's height kept, the caret drawn. Everything stood in is put back after.
+_DX_FIELDS_SWEEP_JS = r"""async () => {
+  const region = document.getElementById('shep-dx-fields'), foot = document.querySelector('.shep-rt');
+  const label = document.getElementById('shep-lbl-dx_patient_id');
+  const input = document.querySelector('#dx_patient_id input, #dx_patient_id textarea');
+  const lead = foot && foot.firstElementChild;
+  if (!region || !lead || !label || !input) { return null; }
+  // The footer's lead, this host's own, swapped for the product's warning mark; put back after.
+  const keptLead = lead.outerHTML;
+  lead.insertAdjacentHTML('beforebegin', __WARN_LEAD__);
+  lead.remove();
+  const mark = foot.firstElementChild, words = mark.querySelector('.shep-st-w');
+  const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const pass = async () => { window.ShepShell.layOut(); await frames(); await frames(); };
+  const SAID = ['No CUDA device visible: GPU training is unavailable.', 'torch is built for CUDA 13.0.',
+    'Check the driver and CUDA libraries.', 'The GPU vector backend cannot be constructed: cuVS is installed but',
+    'cupy is missing (Voyager on the CPU is unaffected).', 'The CPU vector-index backend is unavailable:',
+    'Voyager is not importable.'];
+  const lines = () => new Set([...words.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size;
+  const drawn = (e) => e.getClientRects().length > 0
+    && (!e.checkVisibility || e.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+  const name = (e) => '#' + (e.id || (e.closest('[id]') || { id: '?' }).id);
+  // The bottom of the lowest line drawn in the region shown above `edge` (half of it or more above).
+  const floorOf = (top, edge) => {
+    let low = top;
+    const take = (q) => { if (q.width >= 1 && q.height >= 1 && q.bottom > top
+                                && q.top <= edge - Math.max(1, q.height / 2)) { low = Math.max(low, q.bottom); } };
+    const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT), range = document.createRange();
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const p = n.parentElement;
+      if (!p || !n.data.trim() || !drawn(p) || p.closest('.sr-only, .shep-vh, [hidden], ul.option-list')) { continue; }
+      range.selectNodeContents(n);
+      [...range.getClientRects()].forEach(take);
+    }
+    for (const f of region.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select')) {
+      if (!(f.value || f.placeholder) || !drawn(f)) { continue; }
+      const r = f.getBoundingClientRect(), s = getComputedStyle(f);
+      const above = parseFloat(s.paddingTop) + parseFloat(s.borderTopWidth), below = parseFloat(s.paddingBottom) + parseFloat(s.borderBottomWidth);
+      take({ top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below });
+    }
+    return low;
+  };
+  const box = (e) => { const r = e.getBoundingClientRect(); return [r.top, r.bottom]; };
+  const out = { lines: [], steps: [] };
+  for (const want of [1, 2]) {
+    let k = 1;
+    words.textContent = SAID.slice(0, k).join(' ');
+    while (lines() < want && k < SAID.length) { k += 1; words.textContent = SAID.slice(0, k).join(' '); }
+    out.lines.push(lines());
+    for (let room = 0; room <= 72; room += 3) {
+      foot.style.setProperty('padding-bottom', room + 'px');
+      region.scrollTop = 0;
+      await pass();
+      const r = region.getBoundingClientRect(), top = r.top + region.clientTop, edge = top + region.clientHeight;
+      const cut = parseFloat(region.getAttribute('data-shep-more-cut')) || 0;
+      const look = window.__shepLook.check().layout, mine = (f) => f.startsWith('#shep-dx-fields ');
+      const step = { lines: out.lines[out.lines.length - 1], room, edge, whole: edge + cut, cut,
+                     more: region.scrollHeight - region.clientHeight > 1, fade: getComputedStyle(region).maskImage !== 'none',
+                     head: look.edgeHead.filter(mine), cue: look.cue.filter(mine), gap: [],
+                     label: box(label), input: box(input) };
+      if (region.hasAttribute('data-shep-more-edge')) {
+        const floor = floorOf(top, edge);
+        for (const b of region.querySelectorAll('.block, input:not([type=hidden]), textarea, select, button')) {
+          const [bt, bb] = drawn(b) ? box(b) : [0, 0];
+          if (bt >= floor - 0.5 && bt < edge - 0.5 && bb > edge + 0.5) { step.gap.push(`${name(b)} ${Math.round(edge - bt)} px over the edge`); }
+        }
+      }
+      if (step.input[0] >= edge - 0.5) {
+        const height = region.clientHeight;
+        input.focus();
+        await frames();
+        const q = input.getBoundingClientRect(), rr = region.getBoundingClientRect(), t = rr.top + region.clientTop;
+        const hit = document.elementFromPoint((q.left + q.right) / 2, (q.top + q.bottom) / 2);
+        step.focused = { scrolled: region.scrollTop, whole: q.top >= t - 0.5 && q.bottom <= t + region.clientHeight + 0.5,
+                         kept: region.clientHeight === height, hit: !!hit && (hit === input || input.contains(hit)),
+                         active: document.activeElement === input, caret: getComputedStyle(input).caretColor !== 'transparent' };
+        input.blur();
+      }
+      out.steps.push(step);
+    }
+  }
+  foot.style.removeProperty('padding-bottom');
+  mark.insertAdjacentHTML('beforebegin', keptLead);
+  mark.remove();
+  region.scrollTop = 0;
+  await pass();
+  return out;
+}"""
+
+
+def test_diagnosis_fields_never_end_at_a_title_over_its_moved_box_as_their_room_changes(tmp_path):
+    """**UI-SW-ER2** (P3, the external review of ffb1483): at first use at the display floor
+    (1280 x 720), the footer's environment warning on two lines (a CPU-only host: no CUDA device,
+    cuVS without cupy), Diagnosis' fields region ended at its "Patient ID (optional)" label with
+    the label's whole input under the edge, with the Load drawer shut and open (E1's first use:
+    the same at 1280 x 640). The shell's cut (`cutOf`) asked first whether the region ended at a
+    lone title, and only then moved a box that starts in the gap under the last line shown (the
+    input, 25 of its 43 px above the edge) under the edge whole, which left its label alone over
+    it, never asked again. Now one bounded computation gives a cut that holds both rules at once:
+    no title with every control it heads under the edge, and no box's top left over the edge in
+    the gap, a title and the field it labels under the edge together.
+
+    Controlled facts (`_DX_FIELDS_SWEEP_JS`): the footer's lead drawn as the product's warning
+    mark on every host (a host whose runtime has no issue draws plain words there, which the
+    sweep first needed to find: the review of this test), the warning stood in on one line and
+    on two, and for each the footer drawn taller in 3 px steps, so the edge sweeps across the
+    Patient ID field (the steps must cross it: the edge it would have uncut inside the field at
+    some step). At every step, the Load drawer shut and open: the walk finds no
+    ``edge-heading`` or ``scroll-cue`` finding for the region, no box's top is left over the edge
+    in the gap, and where Patient ID's input lies under the edge, focusing it scrolls the region
+    until it is whole in view, uncovered, the region's height kept and the caret drawn. Fails on
+    c78b9fd."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    stops = [{"size": [1280, 720], "page": "clinical", "check": False},
+             {"size": [1280, 720], "page": "clinical", "check": False, "open": _LOAD_DRAWER}]
+    from src.webui.components.renderers import status_mark
+
+    sweep = _DX_FIELDS_SWEEP_JS.replace("__WARN_LEAD__", json.dumps(status_mark("warn", "")))
+    seen = walk_state("first_use", tmp_path, stops, extra_js=sweep)
+    for stop in seen:
+        got, where = stop["extra"], stop.get("open", "shut")
+        assert got and got["lines"] == [1, 2], (where, got)
+        steps = got["steps"]
+        # The sweep crossed the field: the edge it would have uncut fell inside Patient ID.
+        assert any(s["label"][0] < s["whole"] < s["input"][1] for s in steps), (where, steps)
+        for s in steps:
+            at = (where, s["lines"], s["room"], s)
+            assert s["head"] == [] and s["cue"] == [] and s["gap"] == [], at
+            if "focused" in s:
+                f = s["focused"]
+                assert f["scrolled"] > 0 and f["whole"] and f["kept"] and f["hit"], at
+                assert f["active"] and f["caret"], at
+
+
 #: The L8 close, item 6: how many layout passes a change queues (the shell's script, as the
 #: dashboard's head carries it, counted by the frames it asks for), a change inside Gradio's
 #: status tracker and a change of a block's own content
@@ -5989,6 +6307,256 @@ def test_a_page_that_never_holds_still_is_a_walk_finding_by_its_page_and_size():
     assert len(found) == 1 and found[0].startswith("1050x1100 training: settle: "), found
     assert "#shep-train-runview" in found[0] and "data-shep-own-line x88" in found[0], found
     assert "settle" in LAYOUT_RULES and (1050, 1100) in LAYOUT_SIZES
+
+
+#: **The walk's wait, frame by frame on a clock the script sets** (`browser.QUEUE_JS`' ``hold``
+#: and ``held``, which `UI_WALK_JS`' ``idle`` starts after each act and reads once a frame): the
+#: bookkeeping runs on a stand-in window whose requests the script asks and answers, under a
+#: stand-in of the page's Gradio config in Gradio 6.30's shapes (a ``gr.Timer`` and a button; the
+#: timer's tick, a poll that skips the queue, with a step chained after it; the button's click
+#: with a step chained after it). Each case gives its frames a second, what is asked and answered
+#: when, and the time ``held`` first says yes (``null``: never in 60 s), with each request as
+#: the bookkeeping told it apart. Nothing waits on a real clock.
+_WALK_WAIT_JS = r"""
+const vm = require('vm');
+const QUEUE_JS = __QUEUE_JS__;
+const TIMER = 1, BUTTON = 2, POLL = 0, POLL_THEN = 1, ACT = 2, ACT_THEN = 3;
+const CONFIG = {
+  components: [{ id: TIMER, type: 'timer' }, { id: BUTTON, type: 'button' }],
+  dependencies: [
+    { id: POLL, targets: [[TIMER, 'tick']], trigger_after: null },
+    { id: POLL_THEN, targets: [[null, 'then']], trigger_after: POLL },
+    { id: ACT, targets: [[BUTTON, 'click']], trigger_after: null },
+    { id: ACT_THEN, targets: [[null, 'then']], trigger_after: ACT },
+  ] };
+const flush = async () => { for (let i = 0; i < 20; i++) { await new Promise((r) => setImmediate(r)); } };
+
+// One page: its window's fetch answered by the case, its clock set by the case.
+const page = () => {
+  const clock = { now: 0 }, enc = new TextEncoder(), answers = [];
+  let sse = null, last = 0;
+  const window = { gradio_config: CONFIG, fetch: (url) => {
+    if (url.includes('/queue/data')) { return Promise.resolve(new Response(new ReadableStream({ start: (c) => { sse = c; } }))); }
+    if (url.includes('/queue/join')) { last += 1; return Promise.resolve(new Response(JSON.stringify({ event_id: `e${last}` }))); }
+    return new Promise((resolve) => { answers.push(() => resolve(new Response('{}'))); });
+  } };
+  vm.runInNewContext(QUEUE_JS, { window, document: { fonts: { status: 'loaded' } },
+                                 performance: { now: () => clock.now }, Response, TextDecoder });
+  const body = (fn, trigger) => ({ method: 'POST', body: JSON.stringify({ fn_index: fn, trigger_id: trigger, data: [], event_data: null, session_hash: 's' }) });
+  window.fetch('http://h/gradio_api/queue/data?session_hash=s');
+  return { clock, q: window.__shepQueue,
+    // A queued event joined (its event id), and its answer on the event stream.
+    join: (fn, trigger) => { window.fetch('http://h/gradio_api/queue/join', body(fn, trigger)); return `e${last}`; },
+    complete: (id) => sse.enqueue(enc.encode(`data: ${JSON.stringify({ msg: 'process_completed', event_id: id, success: true })}\n\n`)),
+    // A queue=False listener's request (its answer, to give later).
+    direct: (fn, trigger) => { window.fetch('http://h/gradio_api/run/predict', body(fn, trigger)); return answers[answers.length - 1]; } };
+};
+
+// A case: `fps` frames a second for 60 s; `acts(p)` lists what is asked and answered when
+// ([ms, () => ...], the walk's `hold` at 0 after those at 0); with `polls`, the timer's tick
+// every 1.5 s, answered 400 ms later, and the step it chains joined 50 ms after that and
+// answered 100 ms later. Returns when `held` first said yes, and each join as told apart.
+const run = async ({ fps, polls, acts }) => {
+  const p = page(), plan = [];
+  if (polls) {
+    for (let t = 0; t < 60000; t += 1500) {
+      let answer = null, id = null;
+      plan.push([t, () => { answer = p.direct(POLL, TIMER); }], [t + 400, () => answer()],
+                [t + 450, () => { id = p.join(POLL_THEN, TIMER); }], [t + 550, () => p.complete(id)]);
+    }
+  }
+  plan.push(...acts(p));
+  plan.sort((a, b) => a[0] - b[0]);
+  let k = 0;
+  const due = async (t) => {
+    let any = false;
+    for (; k < plan.length && plan[k][0] <= t; k++) { p.clock.now = plan[k][0]; plan[k][1](); any = true; }
+    if (any) { await flush(); }
+  };
+  await due(0);
+  p.q.hold();
+  let held = null;
+  for (let i = 1; i <= 60 * fps; i++) {
+    const t = i * 1000 / fps;
+    await due(t);
+    p.clock.now = t;
+    if (p.q.held()) { held = Math.round(t); break; }
+  }
+  return { held, joins: p.q.joins.map((j) => [j.fn_index, j.trigger_id, j.background]) };
+};
+
+(async () => {
+  const out = {};
+  for (const fps of [5, 60]) {
+    const frame = 1000 / fps;
+    // Polls only, the act answered before the wait starts.
+    out[`polls${fps}`] = await run({ fps, polls: true, acts: () => [] });
+    // The act answered at 300 ms; the step it chains joins nine frames later (or 150 ms, the
+    // longer), answered 300 ms after it.
+    const late = 300 + Math.max(9 * frame, 150);
+    out[`chain${fps}`] = { ...await run({ fps, polls: true, acts: (p) => {
+      let a = null, b = null;
+      return [[0, () => { a = p.join(ACT, BUTTON); }], [300, () => p.complete(a)],
+              [late, () => { b = p.join(ACT_THEN, BUTTON); }], [late + 300, () => p.complete(b)]];
+    } }), answered: late + 300 };
+    // The act's own request never answered: a queued one, a queue=False one, and one whose
+    // trigger_id is the timer's id while its listener hangs off no tick (a step Gradio sends
+    // with no event carries a listener's id, which may equal a component's).
+    out[`join${fps}`] = await run({ fps, polls: true, acts: (p) => [[0, () => p.join(ACT, BUTTON)]] });
+    out[`direct${fps}`] = await run({ fps, polls: true, acts: (p) => [[0, () => p.direct(ACT, BUTTON)]] });
+    out[`named${fps}`] = await run({ fps, polls: true, acts: (p) => [[0, () => p.join(ACT_THEN, TIMER)]] });
+  }
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def walk_wait(tmp_path_factory):
+    """`_WALK_WAIT_JS`' cases, once for the module."""
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    return run_node(_WALK_WAIT_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)),
+                    tmp_path_factory.mktemp("walk-wait"), timeout=120)
+
+
+def test_the_walks_wait_settles_at_five_frames_a_second_while_the_timers_poll(walk_wait):
+    """UI-SW-ER1 (the external review of ffb1483, P2): the walk's one wait asked for ten frames in
+    a row with nothing unanswered, the shell timers' polls included. At about 5 frames a second
+    (Diagnosis with Load/Change open late in a long run) ten frames take 2 s, and the fast
+    timer asks every 1.5 s, so with every act answered the wait never ended and the stop failed
+    at 60 s (six such failures and errors in the full suite at 4b76af9, SW-B16). The wait now
+    counts only the page's own requests: a timer's tick, and the step its tick chains, are told
+    by what triggered them (the listener's chain starts at the timer's ``tick`` and the payload
+    names the timer) and neither start nor end its window. At 5 frames a second it holds after
+    its ten frames (2 s), and at 60 after ten frames and ten frames' time at 60 a second."""
+    from tests.fixtures.browser import UI_WALK_JS
+
+    slow, fast = walk_wait["polls5"], walk_wait["polls60"]
+    assert slow["held"] is not None and slow["held"] <= 2200, slow
+    assert fast["held"] is not None and fast["held"] <= 200, fast
+    # The tick's chained step joined with the timer's trigger_id, and was told apart by it.
+    assert slow["joins"] and all(j == [1, 1, True] for j in slow["joins"]), slow["joins"]
+    # The walk waits through these two, once a frame.
+    idle = UI_WALK_JS[UI_WALK_JS.index("const idle = async"):UI_WALK_JS.index("} catch (e)")]
+    assert "window.__shepQueue.hold()" in idle and "window.__shepQueue.held()" in idle, idle
+    assert "polling: 'raf'" in idle, idle
+
+
+def test_the_walks_wait_still_waits_for_an_acts_chained_step_that_joins_late(walk_wait):
+    """UI-SW-ER1's other side: the timers' polls set aside, the walk still waits for what the
+    act asked and the steps its chain asks after it, the reason for its window of frames
+    (d746a0f: a page's opening chain, `.then` after `.then`, leaves the queue idle for an
+    instant between two of its events; Fine-tune's reason beside its disabled Start, drawn late
+    in the chain, was missed at one stop in two). An act answered, then its chained step joined
+    nine frames later (its window's last frame), at 5 and at 60 frames a second, the timers
+    polling throughout: the wait ends only a full window after that step is answered."""
+    for fps in (5, 60):
+        seen = walk_wait[f"chain{fps}"]
+        assert seen["held"] is not None, seen
+        assert seen["held"] >= seen["answered"] + 10 * 1000 / fps - 1, seen
+        assert seen["held"] >= seen["answered"] + 1000 / 6 - 1, seen
+        own = [j for j in seen["joins"] if j[0] in (2, 3)]
+        assert own == [[2, 2, False], [3, 2, False]], seen["joins"]
+
+
+def test_the_walks_wait_never_ends_while_an_acts_own_request_is_unanswered(walk_wait):
+    """UI-SW-ER1's guard: what the page itself asked is never set aside with the timers' polls.
+    An act's request never answered, queued or not, keeps the wait from ending for its 60 s at
+    5 and at 60 frames a second (the walk's 60 s bound then names it), and so does one whose
+    payload names the timer while its listener hangs off no tick: a trigger_id alone is no proof
+    of a poll (Gradio sends a step it dispatches with no event, a ``.failure`` or a load, with a
+    listener's id, which may equal a component's)."""
+    for fps in (5, 60):
+        for case in ("join", "direct", "named"):
+            seen = walk_wait[f"{case}{fps}"]
+            assert seen["held"] is None, (case, fps, seen)
+        assert [2, 2, False] in walk_wait[f"join{fps}"]["joins"]
+        assert [3, 1, False] in walk_wait[f"named{fps}"]["joins"]
+
+
+#: **What a served page's requests were told apart as** (`browser.QUEUE_JS`' ``background``, read
+#: from the page's own Gradio config and each request's payload): a tick's poll while it is in
+#: flight, and every join of the step its tick chains, of a click and of the step the click
+#: chains, and of the page's load; then whether the walk's wait holds while the timer polls on.
+_TOLD_APART_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const ids = JSON.parse(process.argv[3]);
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#act');
+  await page.waitForFunction((poll) => window.__shepQueue.directs.some((d) => d.fn_index === poll), ids.poll, { timeout: 30000 });
+  const poll = await page.evaluate((poll) => window.__shepQueue.directs.filter((d) => d.fn_index === poll)
+    .map((d) => [d.trigger_id === undefined ? null : d.trigger_id, d.background === undefined ? null : d.background]), ids.poll);
+  await page.waitForFunction((fn) => window.__shepQueue.answered(fn) >= 1, ids.pollThen, { timeout: 30000 });
+  await page.waitForFunction((fn) => window.__shepQueue.answered(fn) >= 1, ids.load, { timeout: 30000 });
+  await page.click('#act');
+  await page.waitForFunction((fn) => window.__shepQueue.answered(fn) >= 1, ids.actThen, { timeout: 30000 });
+  const held = await page.evaluate(() => { window.__shepQueue.hold(); return true; })
+    .then(() => page.waitForFunction(() => window.__shepQueue.held(), null, { timeout: 30000, polling: 'raf' }))
+    .then(() => true, () => false);
+  const joins = await page.evaluate(() => window.__shepQueue.joins.map((j) => [j.fn_index,
+    j.trigger_id === undefined ? null : j.trigger_id, j.background === undefined ? null : j.background]));
+  console.log(JSON.stringify({ poll, joins, held }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_served_pages_timer_polls_are_told_from_its_own_requests(tmp_path):
+    """UI-SW-ER1, against Gradio 6.30 itself (the shapes `_WALK_WAIT_JS` stands in for): a
+    ``gr.Timer``'s tick, a poll that skips the queue as the shell's do, is a background request
+    while it is in flight, and so is every join of the step its tick chains (Gradio sends each
+    with the timer's id as its trigger_id); a click, the step it chains (with the button's id)
+    and the page's load (with the Blocks' id) are the page's own. The walk's wait holds while the timer
+    goes on polling, each poll in flight 600 ms of every tick it does not skip."""
+    import time
+
+    import gradio as gr
+
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+
+    def _poll():
+        time.sleep(0.6)
+        return gr.update()
+
+    with gr.Blocks() as demo:
+        timer = gr.Timer(0.25)
+        polled, count = gr.Textbox(visible=False), gr.State(0)
+        button, shown = gr.Button("Act", elem_id="act"), gr.Textbox(elem_id="act-out")
+        timer.tick(_poll, None, polled, queue=False, show_progress="hidden").then(
+            lambda n: n + 1, count, count, show_progress="hidden")
+        button.click(lambda: "asked", None, shown).then(lambda: "answered", None, shown)
+        demo.load(lambda: "", None, shown)
+    fns = list(demo.fns.values())
+    on = {event: next(fn._id for fn in fns if (block, event) in fn.targets)
+          for block, event in ((timer._id, "tick"), (button._id, "click"), (demo._id, "load"))}
+    after = {fn.trigger_after: fn._id for fn in fns if fn.trigger_after is not None}
+    ids = {"poll": on["tick"], "pollThen": after[on["tick"]], "act": on["click"],
+           "actThen": after[on["click"]], "load": on["load"]}
+    script = _TOLD_APART_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(demo) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")], json.dumps(ids), timeout=120)
+    assert seen["poll"] and all(p == [timer._id, True] for p in seen["poll"]), seen
+    told = {}
+    for fn, trigger, background in seen["joins"]:
+        told.setdefault(fn, set()).add((trigger, background))
+    assert told[ids["pollThen"]] == {(timer._id, True)}, told
+    assert told[ids["act"]] == {(button._id, False)}, told
+    assert told[ids["actThen"]] == {(button._id, False)}, told
+    # A load's event is sent with the Blocks' id (null when that id is 0, the first Blocks).
+    assert told[ids["load"]] == {(demo._id or None, False)}, told
+    assert seen["held"], seen
 
 
 def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
