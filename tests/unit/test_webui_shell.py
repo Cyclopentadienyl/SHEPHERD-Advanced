@@ -3649,21 +3649,25 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
 #: **H01: a cut band's chevron and its room given back** (the owner's direction of 2026-11-28),
 #: on a page of its own with the shell's style sheet and head script: stand-in panels (a region over
 #: a docked footer, as `_LONE_TITLE_JS`'s) whose region gets a cut of 99 px (``ch-big``, a heading,
-#: a label and an empty box under the edge), 12 px (``ch-small``: a label 12 px over the edge), 23 px
-#: (``ch-focus``, ``ch-resize``), none (``ch-fits``: it fits), and 9 px over content that runs only
-#: 2 px past the region's whole height (``ch-edge2``: a box that starts in the gap). What the page
+#: a label and an empty box under the edge), 14 px (``ch-least``) and 13 px (``ch-small``), a label
+#: that far over the edge (the least band that holds the chevron, 14 px at the tokens of 2026-11-28,
+#: and one pixel under it), 23 px (``ch-focus``, ``ch-resize``), none (``ch-fits``: it fits), and 9 px
+#: over content that runs only 2 px past the region's whole height (``ch-edge2``: a box that starts
+#: in the gap). What the page
 #: draws in a band is read from its pixels (a screenshot of the band, decoded by the page's own
 #: image decoder): the chevron's ink, its box, inside the band and centred on it, or none. Each act
 #: is the reader's: a wheel over the region, a script's scroll, a Tab press onto a field under its
 #: edge, a scroll to its end (the room left to scroll smaller than its cut), a resize while
-#: scrolled, its content emptied, its panel grown. The cut's attribute is counted over 20 frames
-#: after a release (a flicker loop would toggle it again).
+#: scrolled, its content emptied, its panel grown, and a scroll back to the top by way of 1 px. The
+#: cut's attribute is counted over 20 frames after a release (a flicker loop would toggle it again)
+#: and on that way back (H01's review, R2: measured 1 px up from its top, the cut came out 1 px more
+#: at 1 px and was set again at 0).
 _CHEVRON_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const [css, js] = [process.argv[2], process.argv[3]].map((p) => require('fs').readFileSync(p, 'utf8'));
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 1700, height: 1320 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1700, height: 1420 } })).newPage();
   const lines = (n) => Array.from({ length: n }, (_, i) => `<p class="lt-line" style="margin: 0; line-height: 20px">Line ${i} of the form.</p>`).join('');
   const panel = (id, left, top, body, height = 300) => `
     <div class="lt-panel" id="${id}-panel" style="position: absolute; left: ${left}px; top: ${top}px; width: 520px; height: ${height}px; display: flex; flex-direction: column; background: #fff">
@@ -3674,7 +3678,7 @@ const { chromium } = require('playwright');
   const heavy = lines(6) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + boxed('Run name') + lines(10);
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin: 0; font: 15px/20px sans-serif; background: #f3f4f7">
     ${panel('ch-big', 20, 20, heavy)}
-    ${panel('ch-small', 560, 20, lines(10) + '<div style="height: 11px"></div>' + field('Device') + lines(10))}
+    ${panel('ch-small', 560, 20, lines(10) + '<div style="height: 10px"></div>' + field('Device') + lines(10))}
     ${panel('ch-fits', 1100, 20, lines(5))}
     ${panel('ch-edge2', 20, 360, lines(11) + '<div style="height: 10px"></div><div class="block" style="height: 11px; background: #fff"></div>')}
     <button type="button" id="ch-before" style="position: absolute; left: 560px; top: 330px">Before</button>
@@ -3683,6 +3687,7 @@ const { chromium } = require('playwright');
     ${panel('ch-twin', 20, 720, lines(10) + field('Device') + lines(10), 330)}
     ${panel('ch-empty', 560, 720, heavy)}
     ${panel('ch-grow', 1100, 720, heavy)}
+    ${panel('ch-least', 20, 1080, lines(10) + '<div style="height: 9px"></div>' + field('Device') + lines(10))}
     <script>${js}</script></body></html>`);
   const nodes = () => page.evaluate(() => document.getElementsByTagName('*').length);
   const before = await nodes();
@@ -3699,7 +3704,7 @@ const { chromium } = require('playwright');
                   max: el.scrollHeight - el.clientHeight, left: r.left, right: r.right, bottom: r.bottom, ft: ft.top,
                   docked: Math.abs(ft.bottom - document.getElementById(id + '-panel').getBoundingClientRect().bottom) <= 1,
                   w: parseFloat(root.getPropertyValue('--shep-more-mark-w')), h: parseFloat(root.getPropertyValue('--shep-more-mark-h')),
-                  least: parseFloat(root.getPropertyValue('--shep-more-band')) };
+                  gap: parseFloat(root.getPropertyValue('--shep-more-gap')) };
     if (out.host) {
       const [x, y] = hs.backgroundPosition.split(',')[0].trim().split(/\s+/).map(parseFloat), q = host.getBoundingClientRect();
       const left = q.left + host.clientLeft + x - host.scrollLeft, top = q.top + host.clientTop + y - host.scrollTop;
@@ -3761,7 +3766,18 @@ const { chromium } = require('playwright');
   out.big.end = await read('ch-big');
   await scroll('ch-big', 0);
   out.big.endBack = await read('ch-big');
-  // ch-small: a 12 px band, under the least: no chevron, given back all the same.
+  // Back to its top by way of 1 px (as a smooth scroll or a slow wheel comes): the cut it gets at
+  // 1 px is the one at its top, set once on the way.
+  await scroll('ch-big', 40);
+  out.big.oneToggles = await toggles('ch-big', async () => {
+    await scroll('ch-big', 1);
+    out.big.one = await read('ch-big');
+    await page.evaluate(() => { document.getElementById('ch-big').scrollTop = 0; });
+  });
+  out.big.zero = await read('ch-big');
+  // ch-least: a band of the least that holds the chevron, drawn; ch-small: one pixel under it, no
+  // chevron, given back all the same.
+  out.least = { top: await read('ch-least'), ink: await band('ch-least') };
   out.small = { top: await read('ch-small'), ink: await band('ch-small') };
   await scroll('ch-small', 30);
   out.small.scrolled = await read('ch-small');
@@ -3815,19 +3831,25 @@ def test_a_cut_band_draws_a_chevron_at_the_regions_top_and_gives_its_room_back_a
     """**H01** (the owner's direction of 2026-11-28: in the blank band under a scroll region's edge
     cue, a downward chevron; once the reader scrolls down, the chevron goes and the band's room is
     given back to show content), on a page of its own (`_CHEVRON_JS`; Node and Playwright, skipped
-    without). At the region's top with a cut of at least the least band (`--shep-more-band`, the
-    spacing scale's 16 px) and more below, the chevron's ink (12 by 6 px, `--shep-more-mark-w` by
-    `-h`) is drawn inside the band, centred under the region, on the band's own box (nothing over
-    it), and no node is added. None is drawn in a band under the least (12 px), and a region that
-    fits has no cut and no band. Scrolled by a wheel, by a script or by a Tab press onto a field
+    without). At the region's top with a cut of at least the least band that holds the chevron
+    (the mark's height, `--shep-more-mark-h`, and `--shep-more-gap` clear above and below it) and
+    more below, the chevron's ink (`--shep-more-mark-w` by `-h`) is drawn inside the band, centred
+    under the region, on the band's own box (nothing over it), and no node is added: in a band of
+    exactly the least too (``ch-least``; H01's review, R1: a least of the spacing scale's 16 px had
+    left 14 and 15 px bands blank). None is drawn in a band one pixel under the least, and a region
+    that fits has no cut and no band. Scrolled by a wheel, by a script or by a Tab press onto a field
     under its edge, the region gives its cut back in the same pass: no chevron, taller by exactly
     its cut, ending on its footer, which has not moved; the field focused whole in view. Back at
-    its top, the cut and the chevron return. Scrolled to its end (no room left to scroll, under
+    its top, the cut and the chevron return, and by way of 1 px (as a smooth scroll comes) the cut
+    there is the one at its top, set once (H01's review, R2: it was 1 px more at 1 px and set again
+    at 0). Scrolled to its end (no room left to scroll, under
     its cut) the release takes the view up by the cut, once (one change of the cut over 20
     frames), and where the content runs only 2 px past the region's whole height the view stops at
     2 px, never at the top. A resize while scrolled leaves no cut; back at the top the cut is the
     one its new size gives. Its content emptied, or its panel grown to hold it all: no cut, no
-    chevron, no band. Fails at ``dc94cf2`` (no chevron; a scrolled region kept its cut)."""
+    chevron, no band. Fails at ``dc94cf2`` (no chevron; a scrolled region kept its cut) and at
+    ``36f4000`` with ``--shep-more-gap`` declared (the cut 1 px more at 1 px: '100' for '99'; with
+    `cutOf` fixed alone, no chevron in ``ch-least``)."""
     from src.webui.style import SHELL_CSS
     from tests.fixtures.browser import node_with_playwright, run_node
 
@@ -3847,19 +3869,21 @@ def test_a_cut_band_draws_a_chevron_at_the_regions_top_and_gives_its_room_back_a
     def drawn(s, ink, at):
         assert s["mark"] and s["host"] and "linear-gradient" in s["image"] and s["hit"], at
         cut, (x0, y0, x1, y1) = int(s["cut"]), s["chevron"]
-        assert (x1 - x0, y1 - y0) == (s["w"], s["h"]) == (12, 6), at
+        assert s["w"] > 0 and s["h"] > 0 and (x1 - x0, y1 - y0) == (s["w"], s["h"]), at
         assert s["left"] <= x0 and x1 <= s["right"] and s["bottom"] <= y0 and y1 <= s["bottom"] + cut, at
         assert abs((x0 + x1) / 2 - (s["left"] + s["right"]) / 2) <= 1, at
         assert abs((y0 + y1) / 2 - (s["bottom"] + cut / 2)) <= 1, at
         # What the band shows: the chevron's ink and nothing else, inside its box (anti-aliased
         # edges a pixel past it at most).
         a, b, p, q = ink["box"]
-        assert ink["n"] >= 12 and x0 - 1 <= a and p <= x1 + 1 and y0 - 1 <= b and q <= y1 + 1, (at, ink)
+        assert ink["n"] >= s["w"] and x0 - 1 <= a and p <= x1 + 1 and y0 - 1 <= b and q <= y1 + 1, (at, ink)
         assert abs((a + p) / 2 - (s["left"] + s["right"]) / 2) <= 1, (at, ink)
 
     big = seen["big"]
     top = big["top"]
-    assert int(top["cut"]) == 99 and top["least"] == 16 and top["docked"], top
+    # The least band that holds the chevron: its height and a step clear above and below it.
+    least = top["h"] + 2 * top["gap"]
+    assert int(top["cut"]) == 99 and top["gap"] > 0 and top["docked"], top
     drawn(top, big["ink"], "big at its top")
     released(big["wheel"], top, ("big after a wheel", big["wheel"]))
     released(big["script"], top, ("big after a script's scroll", big["script"]))
@@ -3872,9 +3896,18 @@ def test_a_cut_band_draws_a_chevron_at_the_regions_top_and_gives_its_room_back_a
     end = big["end"]
     released(end, top, ("big at its end", end))
     assert big["endToggles"] == 1 and end["scrollTop"] == end["max"] == top["max"] - int(top["cut"]), big
+    # Back by way of 1 px: the cut there is the one at its top (measured as at 0), set once.
+    one = big["one"]
+    assert one["scrollTop"] == 1 and one["cut"] == top["cut"] and one["mark"], (one, top)
+    assert one["chevron"] == top["chevron"] and big["oneToggles"] == 1, big
+    assert big["zero"]["scrollTop"] == 0 and big["zero"]["cut"] == top["cut"], big
 
-    small = seen["small"]
-    assert 0 < int(small["top"]["cut"]) < 16 and small["top"]["more"], small
+    # The boundary: a band of the least draws the chevron; one a pixel under it draws none.
+    small, at_least = seen["small"], seen["least"]
+    assert 0 < int(small["top"]["cut"]) < least <= int(at_least["top"]["cut"]), (least, small, at_least)
+    assert int(at_least["top"]["cut"]) - int(small["top"]["cut"]) == 1, (small, at_least)
+    drawn(at_least["top"], at_least["ink"], "a band of the least")
+    assert small["top"]["more"], small
     assert not small["top"]["mark"] and not small["top"]["host"] and small["ink"]["n"] == 0, small
     released(small["scrolled"], small["top"], ("small scrolled", small))
     fits = seen["fits"]
@@ -3910,32 +3943,37 @@ def test_a_cut_band_draws_a_chevron_at_the_regions_top_and_gives_its_room_back_a
 
 
 def test_the_chevrons_look_is_one_mark_token_on_the_spacing_scale_and_its_place_is_the_passes():
-    """H01's chevron (the owner's direction of 2026-11-28) in the style sheet: the least band it is
-    drawn in is the spacing scale's 16 px (``--shep-more-band: var(--shep-space-4)``), its size 12
-    by 6 px, and its two strokes are drawn in one token (``--shep-more-mark``, an alias of an
-    existing grey; its 3:1 is `test_webui_button_contrast`'s) and transparent, no raw colour, no
-    animation; the shell's pass reads those three and places it (its box's layers, ``local`` to
-    what the box scrolls), and gives a scrolled region's cut back in the same pass as it recuts one
-    at its top. Fails at ``dc94cf2`` (none of these)."""
+    """H01's chevron (the owner's direction of 2026-11-28) in the style sheet: its size 12 by 6 px,
+    the room it keeps clear above and below it in a band the spacing scale's least step
+    (``--shep-more-gap: var(--shep-space-1)``, 4 px), so the least band it is drawn in is its own:
+    6 + 2 x 4 = 14 px (H01's review, R1: not the spacing scale's 16 px, a figure of its own that
+    left 14 and 15 px bands blank), and its two strokes are drawn in one token
+    (``--shep-more-mark``, an alias of an existing grey; its 3:1 is `test_webui_button_contrast`'s)
+    and transparent, no raw colour, no animation; the shell's pass reads those and places it (its
+    box's layers, ``local`` to what the box scrolls), and gives a scrolled region's cut back in the
+    same pass as it recuts one at its top. Fails at ``dc94cf2`` (none of these) and at ``36f4000``
+    (no ``--shep-more-gap``)."""
     from src.webui.style import SHELL_CSS
 
     declared = dict(re.findall(r"(--shep-more-[a-z-]+)\s*:\s*([^;]+);", SHELL_CSS))
-    assert declared["--shep-more-band"].strip() == "var(--shep-space-4)"
-    assert "--shep-space-4: 16px" in SHELL_CSS
+    assert "--shep-more-band" not in declared
+    assert declared["--shep-more-gap"].strip() == "var(--shep-space-1)"
+    assert "--shep-space-1: 4px" in SHELL_CSS
     assert (declared["--shep-more-mark-w"].strip(), declared["--shep-more-mark-h"].strip()) == ("12px", "6px")
     assert declared["--shep-more-mark"].strip() == "var(--shep-grey-500)"
     chev = " ".join(declared["--shep-more-chev"].split())
     assert chev.count("linear-gradient(") == 2
     assert set(re.findall(r"(transparent|var\(--[a-z0-9-]+\)|#[0-9a-fA-F]+|rgba?\()", chev)) == {
         "transparent", "var(--shep-more-mark)"}
-    assert "animation" not in SHELL_CSS[SHELL_CSS.index("--shep-more-band"):SHELL_CSS.index("--shep-more-chev")]
+    assert "animation" not in SHELL_CSS[SHELL_CSS.index("--shep-more-gap:"):SHELL_CSS.index("--shep-more-chev:")]
     head = shell.SHELL_HEAD
     cue = head[head.index("function cue(el)"):head.index("var watched")]
     assert "if (el.scrollTop <= 1) { recut(el); } else if (el.hasAttribute(CUT)) { release(el); }" in cue
     assert "mark(el, more);" in cue
     mark = head[head.index("function mark(el, more)"):head.index("function cue(el)")]
-    for name in ("--shep-more-band", "--shep-more-mark-w", "--shep-more-mark-h", "var(--shep-more-chev)"):
+    for name in ("--shep-more-gap", "--shep-more-mark-w", "--shep-more-mark-h", "var(--shep-more-chev)"):
         assert name in mark, name
+    assert "least = h + 2 * gap" in mark and "cut >= least" in mark
     assert "'background-attachment', 'local', 'important'" in mark
 
 
@@ -6447,22 +6485,24 @@ def test_diagnosis_fields_never_end_at_a_title_over_its_moved_box_as_their_room_
 
 
 #: **H01 on the real app** (`test_real_regions_draw_the_chevron_and_give_the_band_back_as_they_scroll`):
-#: the shown page's cut region (Diagnosis' fields, ``#shep-dx-fields``, or Runtime settings'
-#: body, ``#shep-settings-bd``), at its top, scrolled by a script, back at its top, scrolled by
-#: the focus moving to a control under its edge, and scrolled to its end (the cut's attribute
-#: counted over 20 frames after). On Diagnosis the footer's environment warning is stood in on two
-#: lines first, as `_DX_FIELDS_SWEEP_JS` does (the product's warning mark, ``__WARN_LEAD__``, and
-#: its own sentences), and put back after. At each step: the cut, the chevron's mark and its box's
-#: layers, the chevron's box (from those layers) against the band, what is drawn at its middle,
-#: the region's height and the top of the block after it.
+#: each of the shown page's cut regions in turn (Diagnosis' fields, ``#shep-dx-fields``; Runtime
+#: settings' body, ``#shep-settings-bd``, and Data locations' body, ``#shep-dl-bd``), at its top,
+#: scrolled by a script, back at its top, scrolled by the focus moving to a control under its edge,
+#: and scrolled to its end (the cut's attribute counted over 20 frames after). On Diagnosis the
+#: footer's environment warning is stood in on two lines first, as `_DX_FIELDS_SWEEP_JS` does (the
+#: product's warning mark, ``__WARN_LEAD__``, and its own sentences), and put back after. At each
+#: step: the cut, the chevron's mark and its box's layers, the chevron's box (from those layers)
+#: against the band, what is drawn at its middle, the region's height and the top of what follows
+#: it (the next block shown, or where none is, the foot of the box it lies in), and the tokens the
+#: chevron is drawn from.
 _CHEVRON_REAL_JS = r"""async () => {
-  const region = ['shep-dx-fields', 'shep-settings-bd'].map((id) => document.getElementById(id))
-    .find((e) => e && e.getClientRects().length > 0);
-  if (!region) { return null; }
+  const regions = ['shep-dx-fields', 'shep-settings-bd', 'shep-dl-bd'].map((id) => document.getElementById(id))
+    .filter((e) => e && e.getClientRects().length > 0);
+  if (!regions.length) { return null; }
   const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const pass = async () => { window.ShepShell.layOut(); await frames(); await frames(); };
   let restore = () => {}, lines = 0;
-  if (region.id === 'shep-dx-fields') {
+  if (regions[0].id === 'shep-dx-fields') {
     const foot = document.querySelector('.shep-rt'), lead = foot && foot.firstElementChild;
     if (!lead) { return null; }
     const kept = lead.outerHTML;
@@ -6480,59 +6520,68 @@ _CHEVRON_REAL_JS = r"""async () => {
     lines = count();
     restore = () => { mark.insertAdjacentHTML('beforebegin', kept); mark.remove(); };
   }
-  region.scrollTop = 0;
-  await pass();
-  const host = region.parentElement, next = region.nextElementSibling;
-  const read = () => {
-    const r = region.getBoundingClientRect(), hs = getComputedStyle(host), root = getComputedStyle(document.documentElement);
-    const out = { cut: parseFloat(region.getAttribute('data-shep-more-cut')) || 0, mark: region.hasAttribute('data-shep-more-chevron'),
-                  host: host.hasAttribute('data-shep-more-host'), layers: /linear-gradient/.test(hs.backgroundImage),
-                  height: region.clientHeight, scrollTop: region.scrollTop, max: region.scrollHeight - region.clientHeight,
-                  left: r.left, right: r.right, bottom: r.bottom, next: next.getBoundingClientRect().top,
-                  w: parseFloat(root.getPropertyValue('--shep-more-mark-w')), h: parseFloat(root.getPropertyValue('--shep-more-mark-h')) };
-    if (out.host) {
-      const [x, y] = hs.backgroundPosition.split(',')[0].trim().split(/\s+/).map(parseFloat), q = host.getBoundingClientRect();
-      const left = q.left + host.clientLeft + x - host.scrollLeft, top = q.top + host.clientTop + y - host.scrollTop;
-      out.chevron = [left, top, left + out.w, top + out.h];
-      out.hit = document.elementFromPoint(left + out.w / 2, top + out.h / 2) === host;
-    }
-    return out;
-  };
-  const out = { region: region.id, lines, top: read() };
-  region.scrollTop = 40;
-  await frames(); await frames();
-  out.scrolled = read();
-  region.scrollTop = 0;
-  await frames(); await frames();
-  out.back = read();
-  // A control under the edge, focused as a keyboard would: the region scrolls it into view.
-  const edge = region.getBoundingClientRect().top + region.clientTop + region.clientHeight;
-  const field = [...region.querySelectorAll('input:not([type=hidden]), textarea, select, button')]
-    .find((c) => c.getClientRects().length > 0 && !c.disabled && c.getBoundingClientRect().top >= edge - 0.5);
-  if (field) {
-    field.focus();
-    await frames(); await frames();
-    const q = field.getBoundingClientRect(), r = region.getBoundingClientRect(), t = r.top + region.clientTop;
-    out.focused = { ...read(), active: document.activeElement === field,
-                    whole: q.top >= t - 0.5 && q.bottom <= t + region.clientHeight + 0.5 };
-    field.blur();
+  const one = async (region) => {
     region.scrollTop = 0;
     await pass();
-  }
-  // Scrolled to its end: the room left to scroll (none) under its cut.
-  let toggles = 0;
-  const mo = new MutationObserver((rs) => { toggles += rs.length; });
-  mo.observe(region, { attributes: true, attributeFilter: ['data-shep-more-cut'] });
-  region.scrollTop = region.scrollHeight;
-  for (let i = 0; i < 20; i++) { await new Promise((r) => requestAnimationFrame(r)); }
-  mo.disconnect();
-  out.end = { ...read(), toggles };
-  region.scrollTop = 0;
-  await pass();
-  out.after = read();
+    const host = region.parentElement;
+    let next = region.nextElementSibling;
+    while (next && next.getClientRects().length === 0) { next = next.nextElementSibling; }
+    const read = () => {
+      const r = region.getBoundingClientRect(), hs = getComputedStyle(host), root = getComputedStyle(document.documentElement);
+      const out = { cut: parseFloat(region.getAttribute('data-shep-more-cut')) || 0, mark: region.hasAttribute('data-shep-more-chevron'),
+                    host: host.hasAttribute('data-shep-more-host'), layers: /linear-gradient/.test(hs.backgroundImage),
+                    height: region.clientHeight, scrollTop: region.scrollTop, max: region.scrollHeight - region.clientHeight,
+                    left: r.left, right: r.right, bottom: r.bottom,
+                    next: next ? next.getBoundingClientRect().top : host.getBoundingClientRect().bottom,
+                    w: parseFloat(root.getPropertyValue('--shep-more-mark-w')), h: parseFloat(root.getPropertyValue('--shep-more-mark-h')),
+                    gap: parseFloat(root.getPropertyValue('--shep-more-gap')) };
+      if (out.host) {
+        const [x, y] = hs.backgroundPosition.split(',')[0].trim().split(/\s+/).map(parseFloat), q = host.getBoundingClientRect();
+        const left = q.left + host.clientLeft + x - host.scrollLeft, top = q.top + host.clientTop + y - host.scrollTop;
+        out.chevron = [left, top, left + out.w, top + out.h];
+        out.hit = document.elementFromPoint(left + out.w / 2, top + out.h / 2) === host;
+      }
+      return out;
+    };
+    const out = { region: region.id, top: read() };
+    region.scrollTop = 40;
+    await frames(); await frames();
+    out.scrolled = read();
+    region.scrollTop = 0;
+    await frames(); await frames();
+    out.back = read();
+    // A control under the edge, focused as a keyboard would: the region scrolls it into view.
+    const edge = region.getBoundingClientRect().top + region.clientTop + region.clientHeight;
+    const field = [...region.querySelectorAll('input:not([type=hidden]), textarea, select, button')]
+      .find((c) => c.getClientRects().length > 0 && !c.disabled && c.getBoundingClientRect().top >= edge - 0.5);
+    if (field) {
+      field.focus();
+      await frames(); await frames();
+      const q = field.getBoundingClientRect(), r = region.getBoundingClientRect(), t = r.top + region.clientTop;
+      out.focused = { ...read(), active: document.activeElement === field,
+                      whole: q.top >= t - 0.5 && q.bottom <= t + region.clientHeight + 0.5 };
+      field.blur();
+      region.scrollTop = 0;
+      await pass();
+    }
+    // Scrolled to its end: the room left to scroll (none) under its cut.
+    let toggles = 0;
+    const mo = new MutationObserver((rs) => { toggles += rs.length; });
+    mo.observe(region, { attributes: true, attributeFilter: ['data-shep-more-cut'] });
+    region.scrollTop = region.scrollHeight;
+    for (let i = 0; i < 20; i++) { await new Promise((r) => requestAnimationFrame(r)); }
+    mo.disconnect();
+    out.end = { ...read(), toggles };
+    region.scrollTop = 0;
+    await pass();
+    out.after = read();
+    return out;
+  };
+  const seen = [];
+  for (const region of regions) { seen.push(await one(region)); }
   restore();
   await pass();
-  return out;
+  return { lines, regions: seen };
 }"""
 
 
@@ -6540,14 +6589,19 @@ def test_real_regions_draw_the_chevron_and_give_the_band_back_as_they_scroll(tmp
     """**H01 on the real app** (the owner's direction of 2026-11-28; `_CHEVRON_REAL_JS`), at first
     use at the display floor (1280 x 720): Diagnosis' fields with the environment warning on two
     lines (UI-SW-ER2's case: the fields' region cut above Patient ID's label), the Load drawer shut
-    and open, and Runtime settings' body (cut above its first field). At its top the region has a
-    cut of at least the least band (`--shep-more-band`) and its chevron: its box's layers drawn,
-    the chevron inside the band, centred under the region, its middle the box's own (nothing over
-    it). Scrolled by a script, or by the focus moving to a control under its edge (the control then
-    whole in view), it has no cut and no chevron and is taller by exactly its cut, the block after
-    it unmoved; back at its top, its cut and its chevron return. Scrolled to its end (no room left,
-    under its cut), one change of the cut over 20 frames, the view stopping at the end of the
-    region at its whole height. Fails at ``dc94cf2`` (no chevron; a scrolled region kept its cut)."""
+    and open, and on Settings both Runtime settings' body (cut above its first field) and Data
+    locations' body (a band of the least that holds the chevron, H01's review, R1: no chevron there
+    at ``36f4000``, whose least was the spacing scale's 16 px, beside Runtime settings' chevron on
+    one screen). At its top each region has a cut of at least the least band (the chevron's height,
+    `--shep-more-mark-h`, and `--shep-more-gap` clear above and below it) and its chevron: its box's
+    layers drawn, the chevron (`--shep-more-mark-w` by `-h`) inside the band, centred under the
+    region, its middle the box's own (nothing over it). Scrolled by a script, or by the focus
+    moving to a control under its edge (the control then whole in view), it has no cut and no
+    chevron and is taller by exactly its cut, what follows it unmoved; back at its top, its cut and
+    its chevron return. Scrolled to its end (no room left, under its cut), one change of the cut
+    over 20 frames, the view stopping at the end of the region at its whole height. Fails at
+    ``dc94cf2`` (no chevron; a scrolled region kept its cut) and at ``36f4000`` with
+    ``--shep-more-gap`` declared (Data locations: a cut of 14 px, the least, and no chevron)."""
     from src.webui.components.renderers import status_mark
     from tests.fixtures.browser import node_with_playwright, walk_state
 
@@ -6558,36 +6612,40 @@ def test_real_regions_draw_the_chevron_and_give_the_band_back_as_they_scroll(tmp
              {"size": [1280, 720], "page": "settings", "check": False}]
     script = _CHEVRON_REAL_JS.replace("__WARN_LEAD__", json.dumps(status_mark("warn", "")))
     seen = walk_state("first_use", tmp_path, stops, extra_js=script)
-    assert [(s["page"], (s["extra"] or {}).get("region")) for s in seen] == [
-        ("clinical", "shep-dx-fields"), ("clinical", "shep-dx-fields"), ("settings", "shep-settings-bd")], seen
+    assert [(s["page"], [g["region"] for g in (s["extra"] or {}).get("regions", [])]) for s in seen] == [
+        ("clinical", ["shep-dx-fields"]), ("clinical", ["shep-dx-fields"]),
+        ("settings", ["shep-settings-bd", "shep-dl-bd"])], seen
     for stop in seen:
-        got = stop["extra"]
-        where = (stop["page"], stop.get("open", "shut"))
-        top = got["top"]
-        if got["region"] == "shep-dx-fields":
-            assert got["lines"] == 2, (where, got)
-        # At its top: a cut of the least band or more, and its chevron inside the band, centred.
-        assert top["cut"] >= 16 and top["mark"] and top["host"] and top["layers"] and top["hit"], (where, top)
-        x0, y0, x1, y1 = top["chevron"]
-        assert (x1 - x0, y1 - y0) == (top["w"], top["h"]) == (12, 6), (where, top)
-        assert top["left"] <= x0 and x1 <= top["right"], (where, top)
-        assert top["bottom"] <= y0 and y1 <= top["bottom"] + top["cut"], (where, top)
-        assert abs((x0 + x1) / 2 - (top["left"] + top["right"]) / 2) <= 1, (where, top)
-        assert abs((y0 + y1) / 2 - (top["bottom"] + top["cut"] / 2)) <= 1, (where, top)
-        # Scrolled (a script; the focus on a control under the edge; to its end): the cut given back.
-        for step in ("scrolled", "focused", "end"):
-            s = got[step]
-            at = (where, step, s, top)
-            assert s["scrollTop"] > 1 and s["cut"] == 0 and not s["mark"] and not s["host"] and not s["layers"], at
-            assert s["height"] == top["height"] + top["cut"] and s["next"] == top["next"], at
-        assert got["focused"]["active"] and got["focused"]["whole"], (where, got["focused"])
-        end = got["end"]
-        assert end["toggles"] == 1 and end["scrollTop"] == end["max"] == top["max"] - top["cut"], (where, end, top)
-        # Back at its top, each time: the cut and the chevron again.
-        for step in ("back", "after"):
-            s = got[step]
-            assert s["scrollTop"] == 0 and s["cut"] == top["cut"] and s["mark"], (where, step, s, top)
-            assert s["height"] == top["height"] and s["chevron"] == top["chevron"], (where, step, s, top)
+        if stop["page"] == "clinical":
+            assert stop["extra"]["lines"] == 2, stop["extra"]
+        for got in stop["extra"]["regions"]:
+            where = (stop["page"], stop.get("open", "shut"), got["region"])
+            top = got["top"]
+            # The least band that holds the chevron: its height and a step clear above and below it.
+            least = top["h"] + 2 * top["gap"]
+            # At its top: a cut of the least band or more, and its chevron inside the band, centred.
+            assert top["gap"] > 0 and top["w"] > 0 and top["h"] > 0, (where, top)
+            assert top["cut"] >= least and top["mark"] and top["host"] and top["layers"] and top["hit"], (where, least, top)
+            x0, y0, x1, y1 = top["chevron"]
+            assert (x1 - x0, y1 - y0) == (top["w"], top["h"]), (where, top)
+            assert top["left"] <= x0 and x1 <= top["right"], (where, top)
+            assert top["bottom"] <= y0 and y1 <= top["bottom"] + top["cut"], (where, top)
+            assert abs((x0 + x1) / 2 - (top["left"] + top["right"]) / 2) <= 1, (where, top)
+            assert abs((y0 + y1) / 2 - (top["bottom"] + top["cut"] / 2)) <= 1, (where, top)
+            # Scrolled (a script; the focus on a control under the edge; to its end): the cut given back.
+            for step in ("scrolled", "focused", "end"):
+                s = got[step]
+                at = (where, step, s, top)
+                assert s["scrollTop"] > 1 and s["cut"] == 0 and not s["mark"] and not s["host"] and not s["layers"], at
+                assert s["height"] == top["height"] + top["cut"] and s["next"] == top["next"], at
+            assert got["focused"]["active"] and got["focused"]["whole"], (where, got["focused"])
+            end = got["end"]
+            assert end["toggles"] == 1 and end["scrollTop"] == end["max"] == top["max"] - top["cut"], (where, end, top)
+            # Back at its top, each time: the cut and the chevron again.
+            for step in ("back", "after"):
+                s = got[step]
+                assert s["scrollTop"] == 0 and s["cut"] == top["cut"] and s["mark"], (where, step, s, top)
+                assert s["height"] == top["height"] and s["chevron"] == top["chevron"], (where, step, s, top)
 
 #: The L8 close, item 6: how many layout passes a change queues (the shell's script, as the
 #: dashboard's head carries it, counted by the frames it asks for), a change inside Gradio's
