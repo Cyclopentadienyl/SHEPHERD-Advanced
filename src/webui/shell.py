@@ -1222,7 +1222,8 @@ _SHELL_JS = r"""
   // (`fadeOf`) is drawn over the lines above it or, in a gap, as the edge cue. Never a fade over
   // the title, and never more than half the region. It is measured with the region read whole
   // at its top (its content never moves with the region's height), so the cut never depends on
-  // the state it sets; scrolled, the region keeps its height (no jump under the reader's hand).
+  // the state it sets. The cut is the region's top state only: scrolled down, the region gives
+  // the room back (`cue`, H01), and back at its top the cut is measured again.
   var CUT = 'data-shep-more-cut';
   var HEADS = 'h1, h2, h3, h4, h5, h6, [role=heading], legend, [data-testid="block-info"]';
   var LABEL = '[data-testid="block-info"]';
@@ -1342,7 +1343,11 @@ _SHELL_JS = r"""
   function cutOf(el) {
     var s = getComputedStyle(el), had = parseFloat(el.getAttribute(CUT)) || 0;
     if (!scrolls(s.overflowY) || el.scrollHeight - el.clientHeight - had <= 1) { return 0; }
-    var r = el.getBoundingClientRect(), top = r.top + el.clientTop, edge = top + el.clientHeight + had;
+    // Its content read where it lies at the region's top: `cue` recuts at a scrollTop of 1 px or
+    // less, and a region recut there is measured as at 0, so the cut it gets on the way back to its
+    // top is the one it keeps there (H01's review, R2: measured 1 px up, the cut came out 1 px more
+    // at 1 px and was set again at 0, the region's height and its chevron moving twice).
+    var r = el.getBoundingClientRect(), top = r.top + el.clientTop - el.scrollTop, edge = top + el.clientHeight + had;
     var most = (el.clientHeight + had) / 2, at = edge;
     for (var i = 0; i < CUT_STEPS; i++) {
       // A title under a title (a section's heading, then its label) goes one at a time.
@@ -1364,19 +1369,106 @@ _SHELL_JS = r"""
     }
     return 0;
   }
+  // The region's foot given back: the margin that held the cut goes, and the region is its
+  // column's whole height again.
+  function release(el) {
+    el.style.removeProperty('margin-bottom');
+    el.removeAttribute(CUT);
+  }
   function recut(el) {
     var had = parseFloat(el.getAttribute(CUT)) || 0, cut = cutOf(el);
     if (cut === had) { return; }
     var base = (parseFloat(getComputedStyle(el).marginBottom) || 0) - had, height = el.clientHeight + had;
-    if (had) { el.style.removeProperty('margin-bottom'); el.removeAttribute(CUT); }
+    if (had) { release(el); }
     if (!cut) { return; }
     el.style.setProperty('margin-bottom', (base + cut) + 'px', 'important');
     // A region whose height is not its column's to give (its own height or maximum) keeps it.
     if (height - el.clientHeight < cut - 1) { el.style.removeProperty('margin-bottom'); return; }
     el.setAttribute(CUT, String(cut));
   }
+  // **A chevron in the band a cut gives up** (H01, the owner's direction of 2026-11-28: in the
+  // blank band under the edge cue's shadow, a downward chevron; scrolled down, the chevron goes
+  // and the band's room is given back to show content). Where a region at its top has a cut that
+  // holds the chevron, its height (`--shep-more-mark-h`) with a step of the spacing scale clear
+  // above and below it (`--shep-more-gap`: 6 + 2 x 4 = 14 px; H01's review, R1: a least of the
+  // spacing scale's 16 px, a figure of its own, left the 14 and 15 px bands of Data locations and
+  // Fine-tune blank beside a chevron on the same screen), and more below, a small chevron
+  // (`--shep-more-chev`, `--shep-more-mark-w` by `-h`) is drawn in the middle of the band: under
+  // the region, centred on it, as a background layer of the box the band lies in (HOST, its
+  // nearest box: the band is the region's margin, which its own box cannot paint, and a scroll
+  // region clips what it holds). So it is drawn on the band's own ground, under anything over the
+  // band, cut by any region that hides the band, never a node of its own, never focusable and
+  // never in the way of a pointer, a wheel or a touch. A box that draws an image of its own, or
+  // that does not hold the band, draws none; one box draws one region's chevron (`owners`: the
+  // box's region and where its chevron is). The region carries MARK while its chevron is drawn.
+  var MARK = 'data-shep-more-chevron', HOST = 'data-shep-more-host';
+  var owners = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+  var HOST_STYLE = ['background-image', 'background-size', 'background-position', 'background-repeat',
+                    'background-attachment', 'background-origin'];
+  function hostOf(el) {
+    var h = el.parentElement;
+    while (h && getComputedStyle(h).display === 'contents') { h = h.parentElement; }
+    return h;
+  }
+  function unhost(h) {
+    if (owners) { owners.delete(h); }
+    for (var i = 0; i < HOST_STYLE.length; i++) { h.style.removeProperty(HOST_STYLE[i]); }
+    h.removeAttribute(HOST);
+  }
+  function mark(el, more) {
+    var cut = parseFloat(el.getAttribute(CUT)) || 0, host = cut && more && owners ? hostOf(el) : null, at = '';
+    if (host) {
+      var root = getComputedStyle(document.documentElement);
+      var w = parseFloat(root.getPropertyValue('--shep-more-mark-w')), h = parseFloat(root.getPropertyValue('--shep-more-mark-h'));
+      var gap = parseFloat(root.getPropertyValue('--shep-more-gap')), owner = owners.get(host);
+      // The least band that holds it: its height and a step clear above and below it.
+      var least = h + 2 * gap;
+      var own = owner ? owner.el === el
+        : !host.hasAttribute(HOST) && getComputedStyle(host).backgroundImage === 'none';
+      if (own && cut >= least && w > 0 && h > 0 && gap >= 0) {
+        var r = el.getBoundingClientRect(), q = host.getBoundingClientRect();
+        var left = q.left + host.clientLeft, top = q.top + host.clientTop;
+        // The band, under the region's edge, its cut tall and the region's width, inside the box.
+        if (r.left >= left - 0.5 && r.right <= left + host.clientWidth + 0.5
+            && r.bottom >= top - 0.5 && r.bottom + cut <= top + host.clientHeight + 0.5) {
+          // On whole pixels of the page, in the box's scrolled content (`local`: the layer moves
+          // with what the box scrolls).
+          var x = Math.round(r.left + (r.width - w) / 2) - left + host.scrollLeft;
+          var y = Math.round(r.bottom + (cut - h) / 2) - top + host.scrollTop;
+          at = x + 'px ' + y + 'px, ' + (x + w / 2) + 'px ' + y + 'px';
+          if (!owner) {
+            host.setAttribute(HOST, '');
+            host.style.setProperty('background-image', 'var(--shep-more-chev)', 'important');
+            host.style.setProperty('background-size', (w / 2) + 'px ' + h + 'px', 'important');
+            host.style.setProperty('background-repeat', 'no-repeat', 'important');
+            host.style.setProperty('background-attachment', 'local', 'important');
+            host.style.setProperty('background-origin', 'padding-box', 'important');
+          }
+          if (!owner || owner.at !== at) {
+            owners.set(host, {el: el, at: at});
+            host.style.setProperty('background-position', at, 'important');
+          }
+        }
+      }
+    }
+    if (!at) {
+      var was = el.hasAttribute(MARK) ? hostOf(el) : null, held = was && owners && owners.get(was);
+      if (held && held.el === el) { unhost(was); }
+    }
+    if (el.hasAttribute(MARK) !== !!at) { el.toggleAttribute(MARK, !!at); }
+  }
+  // **The cut is the top state only** (H01): at its top (scrollTop 1 px or less) the region's cut
+  // is measured again from what it holds and its size now (`recut`): none where it fits, or once
+  // what it holds is gone. Scrolled down by any means (a wheel, a key, its scrollbar, the focus
+  // bringing a field into view, a script), it gives the cut back in the same pass (`release`):
+  // its chevron goes and the region is taller by its cut, the box under it in place, the
+  // reader's place kept (its top where it was; where less than the cut was left to scroll, the
+  // browser takes the view up by the difference, every line it showed still in view), so content
+  // passes its edge as it scrolls, and a resize while scrolled leaves no cut behind. A release
+  // never lands at the top: a cut is given only where the region at its whole height still runs
+  // more than 1 px past its edge (`cutOf`), so the view it is taken up to is more than 1 px down.
   function cue(el) {
-    if (el.scrollTop <= 1) { recut(el); }
+    if (el.scrollTop <= 1) { recut(el); } else if (el.hasAttribute(CUT)) { release(el); }
     var s = getComputedStyle(el);
     var more = scrolls(s.overflowY) && el.scrollHeight - el.scrollTop - el.clientHeight > 1;
     var side = scrolls(s.overflowX) && el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
@@ -1388,6 +1480,7 @@ _SHELL_JS = r"""
     if (el.hasAttribute(MORE) !== more) { el.toggleAttribute(MORE, more); }
     if (el.hasAttribute(EDGE) !== (more && !length)) { el.toggleAttribute(EDGE, more && !length); }
     if (el.hasAttribute(MORE_X) !== side) { el.toggleAttribute(MORE_X, side); }
+    mark(el, more);
     // Its content may change size with no change this pass listens to (a chart drawn again at
     // its new width): a region marked once is watched for that too.
     if ((more || side) && ro && !watched.has(el)) {
@@ -1397,14 +1490,21 @@ _SHELL_JS = r"""
   }
   var watched = typeof WeakSet !== 'undefined' ? new WeakSet() : { has: function () { return true; } };
   // Every element that holds more than its box (a cheap read first; most hold none), and every
-  // element still marked (its content shrank), is looked at again on each pass.
+  // element still marked (its content shrank), is looked at again on each pass; then every box
+  // still drawing a chevron for a region that no longer has it (the region gone from the page,
+  // or moved) draws it no more.
   function cues() {
     var all = document.body ? document.body.getElementsByTagName('*') : [];
     for (var i = 0; i < all.length; i++) {
       var e = all[i];
       if ((e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1
-           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X) || e.hasAttribute(CUT))
+           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X) || e.hasAttribute(CUT) || e.hasAttribute(MARK))
           && !e.matches(NOT_REGION)) { cue(e); }
+    }
+    var hosts = document.querySelectorAll('[' + HOST + ']');
+    for (var j = 0; j < hosts.length; j++) {
+      var o = owners && owners.get(hosts[j]);
+      if (!o || !o.el.isConnected || !o.el.hasAttribute(MARK) || hostOf(o.el) !== hosts[j]) { unhost(hosts[j]); }
     }
   }
   document.addEventListener('scroll', function (e) {

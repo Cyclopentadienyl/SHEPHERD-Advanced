@@ -221,6 +221,9 @@ SHELL_CSS = """
   --shep-tab-selected-line: var(--shep-accent); --shep-tab-selected-text: var(--shep-accent-text);
   --shep-focus-ring: var(--shep-accent-600);
   --shep-control-border: var(--shep-grey-500); --shep-control-border-hover: var(--shep-grey-600);
+  /* The chevron in a cut band (H01; the edge cue below): a non-text mark, 3:1 on every surface
+     a scroll region stands on. */
+  --shep-more-mark: var(--shep-grey-500);
   --shep-disabled-bg: var(--shep-grey-50); --shep-disabled-border: var(--shep-grey-200);
   --shep-disabled-text: var(--shep-grey-600);
   /* The one type scale (the WebUI skill's §2): a region's title, body and
@@ -1473,7 +1476,9 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
    lone title (a heading or a field's label, every control it heads under the edge) ends in the
    gap above it instead (``data-shep-more-cut``: the shell's ``recut`` gives its foot that much, a
    footer after it staying put) and draws this cue; so does one whose edge falls in a gap a field's
-   box starts in, above that box (its ground would hide the cue). A fade sideways
+   box starts in, above that box (its ground would hide the cue). The cut is the region's top
+   state only: scrolled down, the region gives that room back and is its column's whole height
+   (the chevron below goes with it). A fade sideways
    stays. The cue is drawn on whatever region ``fadeOf`` marks, whatever else styles it: a
    ``gr.HTML`` block's container rule (Gradio's ``.hide-container…:not(.fullscreen)``, three classes)
    clears every block's shadow, so the cue's shadow is ``!important`` (it was never drawn on a
@@ -1485,6 +1490,24 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
 [data-shep-more][data-shep-more-edge][data-shep-more-x] {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+/* **A chevron in the band a cut gives up** (H01, the owner's direction of 2026-11-28: in the
+   blank band under the edge cue's shadow, a downward chevron; scrolled down, it goes and the band's
+   room shows content). The shell's cue pass draws it where a region at its top has a cut that
+   holds it, its height with ``--shep-more-gap`` (a step of the spacing scale) clear above and
+   below it (6 + 2 x 4 = 14 px; H01's review, R1, 2026-11-28: no longer the spacing scale's 16 px),
+   and more below, in the middle of the band, as background layers of the box the band lies in
+   (``data-shep-more-host``; the region's own box cannot paint its margin, and a scroll region
+   clips what it holds): two strokes of the one mark colour, 12 px by 6 px, at 45 degrees, no
+   plate, no motion, nothing to press. Its place is the pass's; its look is here. */
+:root {
+  --shep-more-gap: var(--shep-space-1);
+  --shep-more-mark-w: 12px; --shep-more-mark-h: 6px;
+  --shep-more-chev:
+    linear-gradient(to top right, transparent calc(50% - 1.5px), var(--shep-more-mark) calc(50% - .5px),
+                    var(--shep-more-mark) calc(50% + .5px), transparent calc(50% + 1.5px)),
+    linear-gradient(to top left, transparent calc(50% - 1.5px), var(--shep-more-mark) calc(50% - .5px),
+                    var(--shep-more-mark) calc(50% + .5px), transparent calc(50% + 1.5px));
 }
 /* **A box folded** (`FOLD`, OPS-FIX-N1): its column has not the room for it whole beside the region
    at its floor (`FOLD_FLOOR`), so its long parts are not drawn; the box's own details hold them. */
