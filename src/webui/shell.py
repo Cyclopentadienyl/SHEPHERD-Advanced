@@ -984,9 +984,17 @@ _SHELL_JS = r"""
     }
     return value;
   }
+  // **The room a box gives what it holds**, in fractions of a pixel as that is laid out in it:
+  // its border box less its borders, its padding and the scrollbar it draws beside content that
+  // runs past its foot. Every fit is judged against it with no slack: a form is drawn whole only
+  // while its narrowest is no wider. Its client width is rounded to a whole pixel, and judged by
+  // it with half a pixel's slack a whole table up to half a pixel wider than its box was drawn in
+  // it and cut, at some windows and not at the next (UI-SW-ER3 B's other direction, Datasets).
   function roomOf(box) {
-    var s = getComputedStyle(box);
-    return box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+    var s = getComputedStyle(box), sides = px(s.borderLeftWidth) + px(s.borderRightWidth);
+    var scrolls = s.overflowY === 'scroll' || (s.overflowY === 'auto' && box.scrollHeight > box.clientHeight);
+    var bar = scrolls ? Math.max(0, box.offsetWidth - box.clientWidth - sides) : 0;
+    return box.getBoundingClientRect().width - sides - bar - px(s.paddingLeft) - px(s.paddingRight);
   }
   function width(el) { return el.getBoundingClientRect().width; }
   // Each box is measured with its own mark taken off (put back before anything is painted; an
@@ -1022,8 +1030,7 @@ _SHELL_JS = r"""
   function want(box, need) {
     var panel = panelOf(box);
     if (!panel) { return; }
-    var row = panel.parentElement, s = getComputedStyle(row), n = 0;
-    var spare = row.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+    var row = panel.parentElement, s = getComputedStyle(row), n = 0, spare = roomOf(row);
     var kids = Array.prototype.filter.call(row.children, drawn);
     for (var j = 0; j < kids.length; j++) {
       var min = kids[j] === panel ? 0 : lengthPx(kids[j], '--shep-panel-min');
@@ -1046,13 +1053,13 @@ _SHELL_JS = r"""
       var need = measured(wide, at, width);
       want(box, need);
       var room = roomOf(box);
-      var narrow = need > room + 0.5;
+      var narrow = need > room;
       // Its cells whose words read as one while the room allows (CELL_ROOMY), measured whole
       // once more: the box is ROOMY while the wide form fits with them whole too.
       var whole = false;
       if (!narrow) {
         box.setAttribute(ROOMY, '');
-        whole = measured(wide, at, width) <= room + 0.5;
+        whole = measured(wide, at, width) <= room;
         box.removeAttribute(ROOMY);
       }
       if (was) { box.setAttribute(NARROW, ''); }
@@ -1068,7 +1075,7 @@ _SHELL_JS = r"""
         var had = group.hasAttribute(NARROW);
         if (had) { group.removeAttribute(NARROW); }
         var space = roomOf(group);
-        stack = measured(options, ON_ONE_LINE, width) > space + 0.5;
+        stack = measured(options, ON_ONE_LINE, width) > space;
         if (had) { group.setAttribute(NARROW, ''); }
       } else if (!options || !drawn(group)) { continue; }
       if (group.hasAttribute(NARROW) !== stack) { group.toggleAttribute(NARROW, stack); }

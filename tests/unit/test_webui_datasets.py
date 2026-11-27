@@ -1071,15 +1071,43 @@ const QUEUE_JS = __QUEUE_JS__;
     if (kept === null) { table.removeAttribute('style'); } else { table.setAttribute('style', kept); }
     marks.forEach((a) => wrap.setAttribute(a, ''));
     const ws = getComputedStyle(wrap), room = wrap.clientWidth - parseFloat(ws.paddingLeft) - parseFloat(ws.paddingRight);
+    // The same room in fractions of a pixel (the box's own width less its borders, its scrollbar
+    // and its padding; its client width is rounded to a whole pixel), and how far the table drawn
+    // runs past it (over 0: cut, which the box's whole-pixel scroll width need not show).
+    const bl = parseFloat(ws.borderLeftWidth), br = parseFloat(ws.borderRightWidth);
+    const inner = wrap.getBoundingClientRect().width - bl - br - (wrap.offsetWidth - wrap.clientWidth - bl - br)
+      - parseFloat(ws.paddingLeft) - parseFloat(ws.paddingRight);
+    const past = table.getBoundingClientRect().width - inner;
     const spare = det.width - parseFloat(getComputedStyle(details).getPropertyValue('--shep-panel-min'));
-    return { w, layout: document.documentElement.getAttribute('data-shep-layout'), need, room, spare,
+    return { w, layout: document.documentElement.getAttribute('data-shep-layout'), need, room, inner, past, spare,
              mark: [...wrap.querySelectorAll('.shep-mark')].filter(drawn).map((m) => m.getClientRects().length),
              over: wrap.scrollWidth - wrap.clientWidth, narrow: wrap.hasAttribute('data-shep-narrow'),
              optional: [...wrap.querySelectorAll('.shep-col-opt')].filter(drawn).length,
              optkv: drawn(document.querySelector('#shep-ds-details .shep-ds-optkv')),
              beside: Math.abs(main.top - det.top) < 1 && det.left >= main.right };
   }, w);
-  const out = { sweep: [], edge: [], fraction: null };
+  // The whole table set `more` px wider (its first column's cells' padding changed by that), the
+  // shell's pass run; and put back.
+  const cells = '#shep-ds-table table tr > :first-child';
+  const widen = async (more) => {
+    await page.evaluate(([cells, more]) => {
+      window.__kept = new Map();
+      for (const c of document.querySelectorAll(cells)) {
+        window.__kept.set(c, c.getAttribute('style'));
+        c.style.setProperty('padding-right', (parseFloat(getComputedStyle(c).paddingRight) + more) + 'px', 'important');
+      }
+      window.ShepShell.layOut();
+    }, [cells, more]);
+    await frames(); await page.evaluate(() => window.ShepShell.layOut()); await frames();
+  };
+  const putBack = async () => {
+    await page.evaluate(() => {
+      for (const [c, kept] of window.__kept) { if (kept === null) { c.removeAttribute('style'); } else { c.setAttribute('style', kept); } }
+      window.ShepShell.layOut();
+    });
+    await frames();
+  };
+  const out = { sweep: [], edge: [], fraction: null, wider: [] };
   for (let w = __FLOOR_W__; w <= 1700; w += 20) {
     await page.setViewportSize({ width: w, height: 960 });
     // The shell lays the page out in the frame after a resize (`update`): two frames on, it has.
@@ -1096,29 +1124,28 @@ const QUEUE_JS = __QUEUE_JS__;
       out.edge.push(await facts(w));
     }
     // At the last window that draws the narrow form, the whole table set a fraction over the
-    // most room the list can have (controlled: its first column's cells' padding changed by what
-    // puts it there), the shell's pass run, then put back.
+    // most room the list can have, then put back.
     const at = [...out.edge].reverse().find((s) => s.narrow);
     if (at) {
       await page.setViewportSize({ width: at.w, height: 960 });
       await frames();
-      const more = at.room + at.spare - at.need + 0.21875;
-      const cells = '#shep-ds-table table tr > :first-child';
-      await page.evaluate(([cells, more]) => {
-        window.__kept = new Map();
-        for (const c of document.querySelectorAll(cells)) {
-          window.__kept.set(c, c.getAttribute('style'));
-          c.style.setProperty('padding-right', (parseFloat(getComputedStyle(c).paddingRight) + more) + 'px', 'important');
-        }
-        window.ShepShell.layOut();
-      }, [cells, more]);
-      await frames(); await page.evaluate(() => window.ShepShell.layOut()); await frames();
+      const now = await facts(at.w);
+      await widen(now.inner + now.spare - now.need + 0.21875);
       out.fraction = await facts(at.w);
-      await page.evaluate((cells) => {
-        for (const [c, kept] of window.__kept) { if (kept === null) { c.removeAttribute('style'); } else { c.setAttribute('style', kept); } }
-        window.ShepShell.layOut();
-      }, cells);
-      await frames();
+      await putBack();
+    }
+    // And from the whole form: at the first windows of the scan that draw the whole table, the
+    // table set from a fraction of a pixel to half of one over the most room the list can have
+    // (that room in fractions, as the table is laid out in it), each then put back.
+    for (const whole of out.edge.filter((s) => !s.narrow).slice(0, 3)) {
+      for (const by of [1 / 64, 0.25, 0.5]) {
+        await page.setViewportSize({ width: whole.w, height: 960 });
+        await frames();
+        const now = await facts(whole.w);
+        await widen(now.inner + now.spare - now.need + by);
+        out.wider.push({ by, ...(await facts(whole.w)) });
+        await putBack();
+      }
     }
   }
   // At the narrowest window that sets the page side by side, a row still opens its details.
@@ -1140,9 +1167,10 @@ const QUEUE_JS = __QUEUE_JS__;
 """
 
 
-#: Within this of the most room the list can have, a table may be drawn whole or narrow (px): the
-#: shell asks for a wide form's width in whole pixels (`shell.py`'s `want`, `Math.ceil`) while the
-#: widths it compares are fractions of one, so at the switch either form is right.
+#: Up to this under the most room the list can have, a table may be drawn whole or narrow (px):
+#: the shell asks for a wide form's width in whole pixels (`shell.py`'s `want`, `Math.ceil`) while
+#: the widths it compares are fractions of one, so just under that room either form is right.
+#: Over it, only the narrow form is.
 _FORM_BAND = 1
 
 
@@ -1178,15 +1206,28 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
     the reviewer's host a table 860.21875 px wide against 860 px drawn in its
     narrow form, nothing cut or lost, failed it. The test no longer decides
     the form for the product: where the whole table clearly fits (``need``
-    at least `_FORM_BAND` under the most room) it is drawn; where it clearly
-    does not (more than `_FORM_BAND` over), the narrow form is; within the
-    band either form passes, and at every step the form drawn is safe (no
+    at least `_FORM_BAND` under the most room) it is drawn; within the band
+    under it either form passes, and at every step the form drawn is safe (no
     sideways overflow) and complete (the optional columns either in the
     table or said by the details, never both, never neither). The switch is
     also scanned one pixel at a time, and at the last window there that
     draws the narrow form the whole table is set 0.21875 px over the most
     room (its first column's padding changed), the reviewer's case: drawn
-    safe and complete (on this host narrow, which the old check failed)."""
+    safe and complete (on this host narrow, which the old check failed).
+
+    Its other direction (the review of that fix): the shell judged the fit
+    against the box's client width, rounded to a whole pixel, with half a
+    pixel's slack, so a whole table up to half a pixel wider than its box
+    was drawn whole and cut (at 1437 and 1438 px windows, not at 1439; at
+    0.5 px over, a one-pixel sideways scroll). The room is now the box's own,
+    in fractions of a pixel, with no slack (`shell.py`'s `roomOf`). Every
+    step's room and the most room are read so too; over the most room only
+    the narrow form is drawn; and the table drawn never runs past its box,
+    by any fraction of a pixel (``past``; the box's whole-pixel scroll width
+    does not show a fraction). At the first windows of the scan that draw
+    the whole table, it is set from 1/64 px to half a pixel over the most
+    room (a fraction its box's client width rounds away): drawn narrow and
+    whole in its box. Fails before (whole, 1/64 px past its box)."""
     from src.webui.app import create_gradio_app, mount_options
     from src.webui.style import FLOOR_WIDTH
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
@@ -1212,19 +1253,25 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
     # K3: the served mark is drawn, on one line; the table is narrow only where its whole form
     # would not fit even with the details at their minimum, and whole where it would.
     assert all(s["mark"] == [1] for s in side), [(s["w"], s["mark"]) for s in side]
-    edge, fraction = seen["edge"], seen["fraction"]
-    assert edge and fraction, seen                              # the switch was scanned
-    for s in sweep + edge + [fraction]:
-        # The whole table against the most room the list can have (the details at their minimum).
-        excess = s["need"] - (s["room"] + s["spare"])
-        assert s["layout"] == "side" and s["beside"] and s["over"] <= 0, s          # safe
+    edge, fraction, wider = seen["edge"], seen["fraction"], seen["wider"]
+    assert edge and fraction and wider, seen                    # the switch was scanned
+
+    def excess(s):
+        """The whole table against the most room the list can have (the details at their
+        minimum), both in fractions of a pixel, as the table is laid out in it."""
+        return s["need"] - (s["inner"] + s["spare"])
+
+    for s in sweep + edge + [fraction] + wider:
+        assert s["layout"] == "side" and s["beside"], s
+        assert s["over"] <= 0 and s["past"] <= 0, s                                 # safe
         assert (s["optional"] == 0) == s["narrow"] and s["optkv"] == s["narrow"], s  # complete
-        if excess <= -_FORM_BAND:
+        if excess(s) <= -_FORM_BAND:
             assert not s["narrow"], s                           # clearly fits: the whole table
-        elif excess > _FORM_BAND:
-            assert s["narrow"], s                               # clearly not: the narrow form
-    # The controlled fraction lies in the band (either form passes there).
-    assert 0 < fraction["need"] - (fraction["room"] + fraction["spare"]) <= _FORM_BAND, fraction
+        elif excess(s) > 0:
+            assert s["narrow"], s                               # cannot fit: the narrow form
+    # The controlled fractions lie over the most room, by no more than each was set.
+    assert 0 < excess(fraction), fraction
+    assert all(0 < excess(s) <= s["by"] for s in wider), wider
     picked = seen["picked"]
     assert picked["head"].startswith(dsp.DETAILS_TITLE) and picked["fingerprint"], picked
     assert picked["layout"] == "side" and picked["over"] == 0, picked
