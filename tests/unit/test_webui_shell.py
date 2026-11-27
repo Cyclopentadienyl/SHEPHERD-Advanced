@@ -787,12 +787,26 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_area_switch():
     assert "top: var(--shep-chips-top, var(--shep-row1-h));" in wrapped
 
 
+#: **The header a reader measures is the one its chips' answer drew** (the full suite at 77602e6
+#: read D10's 1100 x 1050 header as one line; alone it passed): the page draws the chips as the
+#: placeholder, each ``pending`` (`chips.CHIPS_PLACEHOLDER`, "… not read yet", narrower than
+#: any answer's words), and the page's first read answers them; the layout pass runs again on
+#: that change (the head script's MutationObserver). At 1100 the placeholder's header needs
+#: the window's whole width and stays on one line, the answer's wraps it; a loaded machine
+#: answered after a reader that waited for the first layout pass alone had read. So a reader
+#: of the header's layout waits for every chip answered (none ``pending``) before its frames.
+_CHIPS_ANSWERED_JS = (
+    "() => { const chips = [...document.querySelectorAll('#shep-chips .shep-chip')];"
+    " return chips.length > 0 && chips.every((c) => c.dataset.state !== 'pending'); }")
+
+
 #: Opens the dashboard with its GPU chip as wide as its cap (a long holder record: the lock's
-#: command, pid and start end in the chip's titled ellipsis), at 1850, 1366, the display floor's
-#: 1280 and 1024 below it (a resize runs the header's layout, as a load does), and reports for
-#: each area tab what ``document.elementsFromPoint`` finds on top at its centre and four inset
-#: corners: the tab itself or something inside it, or what covers it; each header chip's edges
-#: and words; and the frame's width.
+#: command, pid and start end in the chip's titled ellipsis) and its chips answered
+#: (`_CHIPS_ANSWERED_JS`), at 1850, 1366, the display floor's 1280 and 1024 below it (a resize
+#: runs the header's layout, as a load does), and reports for each area tab what
+#: ``document.elementsFromPoint`` finds on top at its centre and four inset corners: the tab
+#: itself or something inside it, or what covers it; each header chip's edges and words; and
+#: the frame's width.
 _HEADER_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
@@ -800,6 +814,7 @@ const { chromium } = require('playwright');
   const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
   await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
+  await page.waitForFunction(__CHIPS_ANSWERED__, null, { timeout: 60000 });
   await page.addStyleTag({ content: '#shep-chips .shep-chip-gpu .shep-chip-text { width: 100vw; }' });
   const out = {};
   for (const width of [1850, 1366, 1280, 1024, 864, 800]) {
@@ -837,7 +852,7 @@ const { chromium } = require('playwright');
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
-"""
+""".replace("__CHIPS_ANSWERED__", _CHIPS_ANSWERED_JS)
 
 
 def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
@@ -887,17 +902,39 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
             assert chip["whole"] or chip["capped"], (width, chip)
 
 
-#: The served dashboard at each window the test names: once the header's layout pass has run,
-#: where the brand, each chip, the Settings tab and the header row's content box are.
+#: The served dashboard at each window the test names: once its chips are answered
+#: (`_CHIPS_ANSWERED_JS`) and the header's layout pass has run, the chips' states and where the
+#: brand, each chip, the Settings tab and the header row's content box are, and how many
+#: requests a hold held. **A hold** (the optional fourth argument, ``{"listeners": [fn ids],
+#: "ms": n}``): every request of a listener that writes the chips (all ``queue=False``, so
+#: each its own ``/run/predict``) answered no sooner than `ms` after the page's first one was
+#: sent, so the chips' first answer comes that late.
 _WRAPPED_HEADER_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
+  const hold = process.argv[4] ? JSON.parse(process.argv[4]) : null;
   const out = {};
   for (const [w, h] of JSON.parse(process.argv[3])) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    let held = 0, until = null;
+    if (hold) {
+      // A function, not a glob: the page's requests carry a query (?__theme=light), which a
+      // glob ending in /run/predict does not match.
+      await page.route((url) => url.pathname.endsWith('/run/predict'), async (route) => {
+        let body = {};
+        try { body = JSON.parse(route.request().postData() || '{}'); } catch (e) { body = {}; }
+        if (hold.listeners.includes(body.fn_index)) {
+          held += 1;
+          if (until === null) { until = Date.now() + hold.ms; }
+          await new Promise((r) => setTimeout(r, Math.max(0, until - Date.now())));
+        }
+        await route.continue().catch(() => {});
+      });
+    }
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#shep-chips .shep-chips .shep-chip', { timeout: 60000 });
+    await page.waitForFunction(__CHIPS_ANSWERED__, null, { timeout: 60000 });
     await page.waitForFunction(() => document.getElementById('shep-shell').style.getPropertyValue('--shep-chips-top'),
                                null, { timeout: 30000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -907,18 +944,20 @@ const { chromium } = require('playwright');
       const row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
       const s = getComputedStyle(row);
       return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+               states: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => c.dataset.state),
                brand: box(document.querySelector('#shep-brand .shep-brand')),
                chips: [...document.querySelectorAll('#shep-chips .shep-chip')].map(box),
                settings: box(document.getElementById('shep-tab-settings-button')),
                area: box(document.getElementById('shep-tab-research-button')),
                end: row.getBoundingClientRect().right - parseFloat(s.paddingRight) - parseFloat(s.borderRightWidth) };
     });
+    out[`${w}x${h}`].held = held;
     await page.close();
   }
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
-"""
+""".replace("__CHIPS_ANSWERED__", _CHIPS_ANSWERED_JS)
 
 
 def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_path):
@@ -926,7 +965,8 @@ def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_p
     states start at the left, on the brand's edge, and Settings stays at the right. They sat
     together at the right (the chips from 488 px at 1080 wide), leaving the line's start empty
     under the brand. In the served dashboard, at a portrait window (1080 x 1920) and a
-    landscape one that stacks (1100 x 1050): the header wraps; the first chip's left is the
+    landscape one that stacks (1100 x 1050), each read once its chips are answered
+    (`_CHIPS_ANSWERED_JS`): the header wraps; the first chip's left is the
     brand's left and Settings' right the header row's content right (within a pixel); the chips
     and Settings share the second line, under the area switch, and never overlap."""
     from src.webui.app import create_gradio_app, mount_options
@@ -940,7 +980,7 @@ def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_p
         seen = run_node(_WRAPPED_HEADER_JS, tmp_path, base[:-len("gradio_api")], json.dumps(sizes),
                         timeout=300)
     for size, facts in seen.items():
-        assert facts["wrapped"] is True, size
+        assert facts["wrapped"] is True, (size, facts["states"])
         chips, settings = facts["chips"], facts["settings"]
         assert abs(chips[0]["left"] - facts["brand"]["left"]) <= 1, (size, chips[0], facts["brand"])
         assert abs(settings["right"] - facts["end"]) <= 1, (size, settings, facts["end"])
@@ -948,6 +988,38 @@ def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_p
             assert chip["top"] < settings["bottom"] and settings["top"] < chip["bottom"], (size, chip)
             assert chip["top"] >= facts["area"]["bottom"], (size, chip, facts["area"])
         assert chips[-1]["right"] < settings["left"], (size, chips[-1], settings)
+
+
+def test_the_header_is_read_once_its_chips_are_answered(tmp_path):
+    """D10's reader read 1100 x 1050 as one line once in the full suite (at 77602e6; alone it
+    passed): it read after the page's first layout pass, with the chips still the placeholder
+    (`chips.CHIPS_PLACEHOLDER`, both ``pending``), whose header fits that window; the chips'
+    answer wraps it a frame after it comes, and a loaded machine's came later than the reader's
+    two frames. With the chips' first answer held a few seconds (every listener that writes
+    them, routed in the browser), the reader reads the header its chips' answer drew: no chip
+    ``pending``, and wrapped."""
+    from src.webui.app import create_gradio_app, mount_options
+    from src.webui.components.chips import CHIPS_PLACEHOLDER
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    # The state the reader waits past is the placeholder's.
+    assert CHIPS_PLACEHOLDER.count('data-state="pending"') == 2, CHIPS_PLACEHOLDER
+    demo = create_gradio_app()
+    (chips,) = [block for block in demo.blocks.values()
+                if getattr(block, "elem_id", None) == "shep-chips"]
+    listeners = sorted(fn._id for fn in demo.fns.values()
+                       if any(out._id == chips._id for out in fn.outputs))
+    hold = {"listeners": listeners, "ms": 3000}
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_WRAPPED_HEADER_JS, tmp_path, base[:-len("gradio_api")],
+                        json.dumps([[1100, 1050]]), json.dumps(hold), timeout=300)
+    facts = seen["1100x1050"]
+    assert facts["held"] > 0, "the hold held no request: the chips were answered unheld"
+    assert "pending" not in facts["states"], (facts["states"], facts["wrapped"])
+    assert facts["wrapped"] is True, facts
 
 
 # --------------------------------------------------------------------------- a reload
