@@ -59,12 +59,14 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   under the edge whole, so its ground never hides the cue. Words kept for a screen reader are no line. Where its last line in view would be a title (a
   heading or a field's label) with every control it heads under the edge, the region ends in the gap above that
   title, with the edge cue. A group title is drawn as a heading so that rule can see it. That cut is the region's
-  top state only (H01, the owner's direction of 2026-11-28): a band of the spacing scale's 16 px or more
-  (`--shep-more-band`) shows a small downward chevron in its middle, under the region, while more lies below (one
+  top state only (H01, the owner's direction of 2026-11-28): a band that holds the chevron, its height with a step
+  of the spacing scale clear above and below it (`--shep-more-gap`; 14 px, a least of the mark's own, never a
+  figure of its own), shows a small downward chevron in its middle, under the region, while more lies below (one
   mark token at 3:1, no plate, no motion, nothing to press or focus; drawn on the band's own ground by the shared
   pass, never a node); scrolled down by any means, the chevron goes and the region takes the band's room back in
   the same pass (taller by its cut, the block under it unmoved), content passing its edge with the fade or the edge
-  cue; back at its top the cut is measured again from what it holds now. The new look awaits the owner.
+  cue; back at its top the cut is measured again from what it holds now, read as at its top (a scrollTop of 1 px
+  sets the same cut as 0, once). The new look, and what a band under the least should show, await the owner.
 - **A message never shares a row with fields or buttons.** Beside a dimmed control stands only its reason's short
   phrase or one line in the page's words (R-WHY, §9: "Needs a workspaces folder", "Choose a dataset to start.");
   anything longer is the full-width note under its group (`.shep-bar-note`), from the group's left edge, at the
