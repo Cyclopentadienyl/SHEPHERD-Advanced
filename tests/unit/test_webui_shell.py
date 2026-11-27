@@ -5052,6 +5052,76 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert [c for c in found["centred"] if "#c-grid-one" in c], found["centred"]
 
 
+#: A static page for the ``edge`` rule (`browser.LOOK_JS`' ``layout``), shown as the shell shows
+#: one: under a panel's title, texts in a row 14 px in from the title's edge (as Diagnosis'
+#: "Operator controls only" stood under its right-hand buttons), each placed its own way, three
+#: of them a line 880 px wide placed at the end of the row's 886 (its words 20 px off the
+#: title's edge, inside the rule's 2em, so only how it is placed sets it apart); and a text
+#: whose words a child's margin moves 14 px in while its box starts on the edge.
+_EDGE_RULE_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  await page.setContent(`<!doctype html><html><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    h2 { font-size: 20px; margin: 0 0 8px; }
+    p { margin: 4px 0 0; }
+    .shep-panel { width: 900px; padding: 16px; border: 1px solid #ccc; }
+    .row { padding-left: 14px; }
+    .line { display: inline-block; flex: none; width: 880px; text-align: left; }
+    .tag { display: inline-flex; padding: 0 8px; border: 1px solid #ccc; border-radius: 999px; background: #fff; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page"><div class="shep-panel" id="p1">
+      <div class="shep-panel-hd"><h2 id="title">A panel</h2></div>
+      <div class="row"><p id="edge-left">Words that start off the title's edge.</p></div>
+      <p id="edge-child"><span style="margin-left: 14px">Words a child's margin moves in.</span></p>
+      <p id="edge-tag"><span class="tag">Not loaded</span> at 10:42</p>
+      <p id="edge-icon"><svg width="12" height="12" viewBox="0 0 12 12"><rect x="6" width="6" height="12"/></svg> Locked</p>
+      <div class="row"><p id="edge-right" style="text-align: right"><span class="line">Aligned right</span></p></div>
+      <div class="row"><p id="edge-flex" style="display: flex; justify-content: flex-end"><span class="line">Packed at the end</span></p></div>
+      <div class="row"><p id="edge-auto" style="display: flex"><span class="line" style="margin-left: auto">Pushed by an auto margin</span></p></div>
+      <div class="row"><p class="shep-reason" id="edge-phrase" style="display: flex; justify-content: end; text-align: right; margin: 2px 0 0 auto"><span aria-hidden="true">&#128274;</span><span><button type="button" class="shep-why">Operator controls only</button></span></p></div>
+    </div></div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  console.log(JSON.stringify(layout));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_edge_rule_reads_where_a_texts_words_start_and_passes_one_placed_at_its_end(tmp_path):
+    """UI-SW-ER3 C (the external review of ffb1483): the ``edge`` rule measured a text by its
+    box, so Diagnosis' read-only "Operator controls only", aligned right under the buttons it
+    explains (R-WHY's phrase beside the dimmed controls, the owner's D6; ``text-align: right``,
+    ``justify-content: end``), was read by its paragraph's left edge, 14 px off the title's,
+    and the read-only walk failed on it. The rule now reads a text where its drawn words start
+    (their client rects) and passes one placed at its end, as the text itself says: aligned
+    right, packed at the end of a flex row, or pushed by an auto margin. A text placed at its
+    start whose words stand 14 px off the title's edge is still found, in a box 14 px in, and
+    with its box on the edge and its words moved in by a child's margin (which the box's
+    measure never saw). A text starts where it draws: at a tag drawn in it (its border; the
+    first walk with words alone found Diagnosis' "○ Not loaded" tag 9 px off, its words inside
+    the tag's padding) and at an icon's box."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    found = run_node(_EDGE_RULE_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)), tmp_path,
+                     timeout=120)
+    assert [e for e in found["edge"] if e.startswith("#edge-left +14 px off #title")], found["edge"]
+    assert [e for e in found["edge"] if e.startswith("#edge-child +14 px off #title")], found["edge"]
+    for placed in ("#edge-right", "#edge-flex", "#edge-auto", "#edge-phrase"):
+        assert not [e for e in found["edge"] if placed in e], (placed, found["edge"])
+    # What a text draws starts at a tag drawn in it (its border, its words 9 px in: Diagnosis'
+    # "○ Not loaded" at first use) and at an icon (its box, whatever its drawing leaves blank).
+    for drawn in ("#edge-tag", "#edge-icon"):
+        assert not [e for e in found["edge"] if drawn in e], (drawn, found["edge"])
+
+
 #: A static page for the rules the after screenshots asked for (the sweep's L7; `browser.LOOK_JS`'s
 #: ``layout``, `seeAll`): one page shown as the shell shows one, in panels placed side by side, each
 #: rule's bad case beside its good one (each named in the test).
